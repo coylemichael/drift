@@ -2,7 +2,7 @@
   <img src="assets/drift-logo.svg" alt="Drift" width="400"/>
 </p>
 
-<h3 align="center"><em>Context drifts if you don't pin it down.</em></h3>
+<h3 align="center"><em>Context drifts if you don't pin it down</em></h3>
 
 <p align="center">
   A lightweight system for maintaining context continuity across LLM sessions.
@@ -21,23 +21,14 @@ Three prompt files that create natural checkpoints across your workflow. Each se
 ### Workflow
 
 ```
-research-codebase.md          Investigate. Document what exists.
+research-codebase.md       Investigate. Document what exists.
         │
         ▼
-from-research.md               Plan. Turn findings into an actionable starting point.
+from-research.md           Plan. Turn findings into an actionable starting point.
         │
         ▼
-mid-work-handover.md           Continue. Snapshot state so the next session picks up where you left off.
-                                (Repeat as needed until work is complete.)
+mid-work-handover.md       Continue. Snapshot so the next session picks up where you left off.
 ```
-
-### The Files
-
-| File | When to use | What it produces |
-|---|---|---|
-| `research-codebase.md` | Starting a new question or investigation | A research doc saved to `research/` |
-| `from-research.md` | After research is done, before implementation begins | A handoff doc saved to `.handoffs/` |
-| `mid-work-handover.md` | When stopping mid-implementation or refreshing context | A continuation doc saved to `.handoffs/` |
 
 ## Getting Started
 
@@ -51,7 +42,7 @@ Copy [research-codebase.md](research-codebase.md) into a new LLM session, then a
 > *"What happens when a user submits an endorsement?"*
 > *"Map out the data flow from API request to database write for policy creation."*
 
-The prompt constrains the LLM to document what exists — no unsolicited suggestions, no refactoring advice. If you want the findings saved, ask it to write to `research/`.
+The prompt constrains the agent to document what exists — no unsolicited suggestions, no refactoring advice. If running locally the findings will be written to `research/`.
 
 ### 2. Planning — turning research into a plan
 
@@ -75,12 +66,4 @@ Repeat as many times as needed until the work is complete.
 
 ### Where these work
 
-These are plain markdown. Paste them into any LLM tool — VS Code Copilot, Cursor, ChatGPT, Claude, Windsurf, or anything that accepts a system prompt. The YAML frontmatter at the top of each file is recognized by tools that support it and harmlessly ignored by those that don't.
-
-## Design Principles
-
-- **Document what IS, not what SHOULD BE.** Research documents the codebase as it exists. Handoffs document the implementation as it stands — including broken or incomplete state. No editorializing.
-- **File references over prose.** `src/db/schema.py:84` beats "the schema file." Every output format emphasizes concrete `file:line` references so the next session can navigate directly to what matters.
-- **Don't re-investigate.** Each session trusts the previous session's output. The planning prompt doesn't re-read the codebase. The continuation prompt doesn't re-derive the plan. Context is preserved, not rebuilt.
-- **Carry forward open questions.** Unresolved questions never get silently dropped between sessions. Every handoff format includes an explicit Open Questions section.
-- **Small and verifiable steps.** Implementation sequences are broken into tasks small enough to confirm independently before moving on.
+These are plain markdown. Paste them into any agent or LLM — VS Code Copilot, Cursor, ChatGPT, Claude, Windsurf, or anything that accepts a system prompt. The YAML frontmatter at the top of each file is recognized by tools that support it and harmlessly ignored by those that don't.
