@@ -51,9 +51,11 @@ You are tasked with turning a research document into an actionable handoff for a
 
 ## Writing to Disk
 
-Save to: `.handoffs/<TICKET>/YYYY-MM-DD_HH-MM-SS_<TICKET>_from-research.md`
+Save to: `.handoffs/<TICKET>/YYYY-MM-DD_HH-MM-SS_<TICKET>_from-research.md` at the **repository root**.
 
-If no ticket identifier is provided, use the research topic as the folder name instead.
+If no ticket identifier is provided, use the research topic as the folder name instead. Create the `.handoffs/` directory at the repository root if it doesn't exist.
+
+Do not write to editor memory systems, temp directories, or user-profile paths — these are project artifacts that live in the repo.
 
 Include frontmatter:
 

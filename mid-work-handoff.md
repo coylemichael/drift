@@ -15,7 +15,7 @@ You are tasked with writing a handoff document that snapshots where you are so t
 
 - Review the changes you made this session
 - Check the source research doc and/or previous handoff to confirm what was planned vs. what actually happened
-- Run `git diff --stat` to get a concrete list of changed files
+- Run `git diff HEAD --stat` to review uncommitted changes, or `git log --stat -1` if changes are already committed
 
 ## Output Format
 
@@ -56,9 +56,11 @@ You are tasked with writing a handoff document that snapshots where you are so t
 
 ## Writing to Disk
 
-Save to: `.handoffs/<TICKET>/YYYY-MM-DD_HH-MM-SS_<TICKET>_<description>.md`
+Save to: `.handoffs/<TICKET>/YYYY-MM-DD_HH-MM-SS_<TICKET>_<description>.md` at the **repository root**.
 
-If no ticket identifier is provided, use the research topic as the folder name instead.
+If no ticket identifier is provided, use the research topic as the folder name instead. Create the `.handoffs/` directory at the repository root if it doesn't exist.
+
+Do not write to editor memory systems, temp directories, or user-profile paths — these are project artifacts that live in the repo.
 
 Include frontmatter:
 
@@ -81,3 +83,15 @@ type: mid_work
 - Don't repeat the research doc. Reference it, don't restate it. The next session will read both documents.
 - Avoid code snippets. Use file:line references instead. The one exception is if you're debugging something and the next session needs to see the exact error or the exact problematic code.
 - If there are 3+ previous handoffs in the chain, summarize completed phases in the Status section rather than requiring the next session to read the full chain.
+
+## Resuming from a Handoff
+
+If you are pointed at an existing handoff document to **continue** work (rather than write a new handoff):
+
+1. Read the handoff document
+2. Read the source research document it references
+3. If the handoff references a previous handoff, read that too — but focus on the most recent one
+4. Pick up at the **Next Steps** section of the handoff
+5. Do not re-investigate the codebase or re-research. Trust the handoff's description of current state
+6. If a file reference in the handoff no longer matches what's on disk, note the discrepancy and adapt — don't halt
+7. When you finish or need to stop, write a new handoff using the format above, referencing the one you resumed from as `previous_handoff`

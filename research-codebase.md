@@ -40,7 +40,9 @@ When presenting findings, use this structure:
 
 ## Writing to Disk
 
-Only save research documents if the user asks. When they do:
-- Save to `research/YYYY-MM-DD-<topic>.md`
-- Create the `research/` folder if it doesn't exist
+Save research documents to disk by default. Skip saving only if the user explicitly asks for a quick or informal answer.
+
+- Save to `research/YYYY-MM-DD-<topic>.md` at the **repository root**
+- Create the `research/` directory at the repository root if it doesn't exist
 - Use the output format above
+- Do not write to editor memory systems, temp directories, or user-profile paths — these are project artifacts that live in the repo

@@ -27,7 +27,7 @@ research-codebase.md       Investigate. Document what exists.
 from-research.md           Plan. Turn findings into an actionable starting point.
         │
         ▼
-mid-work-handover.md       Continue. Snapshot so the next session picks up where you left off.
+mid-work-handoff.md        Continue. Snapshot so the next session picks up where you left off.
 ```
 
 ## Getting Started
@@ -54,7 +54,7 @@ This produces a concrete plan: which files to touch, in what order, with what co
 
 ### 3. Continuing — picking up where you left off
 
-When a session runs long or you need to refresh context, copy [mid-work-handover.md](mid-work-handover.md) into the current session:
+When a session runs long or you need to refresh context, copy [mid-work-handoff.md](mid-work-handoff.md) into the current session:
 
 > *"Write a mid-work handoff."*
 
@@ -63,6 +63,12 @@ Then start a **new session**, paste the same prompt, and point it at the handoff
 > *"Read .handoffs/auth-refactor/2026-03-30_14-30-00_auth-refactor_session-2.md and continue."*
 
 Repeat as many times as needed until the work is complete.
+
+### Where files are stored
+
+`research/` and `.handoffs/` directories are created at the root of your repository. These are project artifacts — they travel with the repo, not with your editor or user profile.
+
+Whether you commit them is up to you. They may contain useful context for your team, or they may be ephemeral working notes. Add them to `.gitignore` if you prefer to keep them local.
 
 ### Where these work
 
