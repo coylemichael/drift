@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed (breaking)
+- **Prompt filenames shortened** to `research.md`, `plan.md`, `handoff.md` (from `research-codebase.md`, `plan-from-research.md`, `mid-work-handoff.md`). Frontmatter `name:` values updated to match. Slash-command invocations are now `/research`, `/plan`, `/handoff` across all supported tools.
+- **Artifact paths restructured to `drift/<feature>/research/` and `drift/<feature>/handoffs/`** — replaces the previous top-level `research/` and `.handoffs/<TICKET>/` layout. Each feature now gets a single folder containing both research and handoff subfolders. Existing artifacts will need to be moved manually if you want them under the new layout.
+- All three prompts now require the agent to confirm/derive a **feature identifier** before writing. Ticket reference or descriptive slug — anything unique.
+
+### Changed
+- Renamed `from-research.md` → `plan-from-research.md` (subsequently shortened to `plan.md` — see above)
+- Frontmatter `name:` values match filenames so VS Code prompt-file tooling resolves them correctly
+- `research.md` — research output now includes `date` / `branch` / `git_commit` / `type` frontmatter, matching the handoff prompts
+- All three prompts — "Writing to Disk" sections now include an explicit **Path verification** subsection enumerating forbidden destinations (editor memory, temp dirs, user-profile paths, absolute paths outside the repo)
+
+### Added
+- `README.md` — "When not to use Drift" section
+- `README.md` — "Installing as slash commands" table covering VS Code Copilot, Claude Code, Cursor, and paste-into-chat
+- `README.md` — explicit guidance to summarize completed phases when handoff chains exceed three documents
+- `README.md` — illustrated `drift/<feature>/` directory layout in "Where files are stored"
+- `examples/` directory (placeholder for future example artifacts)
+
 
 ## [0.2.0] - 2026-04-01
 

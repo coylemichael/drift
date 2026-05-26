@@ -1,9 +1,9 @@
 ---
-name: handoff-from-research
+name: plan
 description: Use after a research document has been produced to create an actionable handoff that sets up the first implementation session
 ---
 
-# Handoff from Research
+# Plan
 
 You are tasked with turning a research document into an actionable handoff for an implementation session. The research doc describes what needs to happen. Your job is to produce a document that tells the next session where to start and what to do first.
 
@@ -13,10 +13,11 @@ You are tasked with turning a research document into an actionable handoff for a
 
 ## Before Writing
 
+- Identify the **feature identifier** from the source research path (`drift/<feature>/research/...`). All artifacts for this work share that `<feature>` folder. If the research path doesn't follow the convention, ask the user for the feature identifier rather than guessing.
 - Read the research document provided
 - Read any critical files it references (schemas, existing extraction code, prompts, etc.) to confirm they still match what the research describes. If a referenced file has changed significantly, note the discrepancy in Open Questions — do not re-research, but flag it so the implementation session can assess.
-- Check `.handoffs/` for any existing handoffs on the same topic
-- The source research document follows the `research/YYYY-MM-DD-<topic>.md` convention
+- Check `drift/<feature>/handoffs/` for any existing handoffs on this feature
+- The source research document follows the `drift/<feature>/research/YYYY-MM-DD-<topic>.md` convention
 
 ## Output Format
 
@@ -25,7 +26,7 @@ You are tasked with turning a research document into an actionable handoff for a
 [One-sentence summary of what this implementation achieves]
 
 ## Source Research
-- path/to/research/YYYY-MM-DD-topic.md
+- drift/<feature>/research/YYYY-MM-DD-topic.md
 
 ## Starting Point
 [Which phase/step from the research to begin with and why. If the research has a recommended order, follow it. Call out any dependencies that must be done first.]
@@ -51,11 +52,13 @@ You are tasked with turning a research document into an actionable handoff for a
 
 ## Writing to Disk
 
-Save to: `.handoffs/<TICKET>/YYYY-MM-DD_HH-MM-SS_<TICKET>_from-research.md` at the **repository root**.
+Save to: `drift/<feature>/handoffs/YYYY-MM-DD_HH-MM-SS_plan.md` at the **repository root**, where `<feature>` is the identifier inferred from the source research path.
 
-If no ticket identifier is provided, use the research topic as the folder name instead. Create the `.handoffs/` directory at the repository root if it doesn't exist.
+Create `drift/<feature>/handoffs/` if it doesn't exist.
 
-Do not write to editor memory systems, temp directories, or user-profile paths — these are project artifacts that live in the repo.
+### Path verification
+
+Before writing, confirm the resolved path is **inside the repository** and matches `drift/<feature>/handoffs/...`. Do not write to editor memory systems, temp directories, user-profile paths, or any absolute path outside the repository root. If you cannot resolve the repository root, ask the user rather than guess.
 
 Include frontmatter:
 
@@ -65,7 +68,7 @@ date: [ISO 8601 datetime with timezone]
 branch: [Current branch name]
 git_commit: [Current commit hash]
 source_research: [Path to the research document]
-type: from_research
+type: plan
 ---
 ```
 

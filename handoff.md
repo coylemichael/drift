@@ -1,9 +1,9 @@
 ---
-name: handoff-mid-work
+name: handoff
 description: Use when stopping mid-implementation to snapshot current state and set up the next session to continue
 ---
 
-# Mid-Work Handoff
+# Handoff
 
 You are tasked with writing a handoff document that snapshots where you are so the next session can continue your work. Document what you did, what you learned, and what's next — nothing more.
 
@@ -13,6 +13,7 @@ You are tasked with writing a handoff document that snapshots where you are so t
 
 ## Before Writing
 
+- Identify the **feature identifier** from the source research or prior handoff path (`drift/<feature>/...`). All artifacts for this work share that `<feature>` folder. If you can't determine it from context, ask the user.
 - Review the changes you made this session
 - Check the source research doc and/or previous handoff to confirm what was planned vs. what actually happened
 - Run `git diff HEAD --stat` to review uncommitted changes, or `git log --stat -1` if changes are already committed
@@ -24,8 +25,8 @@ You are tasked with writing a handoff document that snapshots where you are so t
 [One-sentence summary of the broader task]
 
 ## Source Documents
-- path/to/research/YYYY-MM-DD-topic.md
-- path/to/previous-handoff.md (if continuing from one)
+- drift/<feature>/research/YYYY-MM-DD-topic.md
+- drift/<feature>/handoffs/previous-handoff.md (if continuing from one)
 
 ## Status
 [Which phase/step you're on from the research doc. What's done, what's in progress, what's untouched.]
@@ -56,11 +57,13 @@ You are tasked with writing a handoff document that snapshots where you are so t
 
 ## Writing to Disk
 
-Save to: `.handoffs/<TICKET>/YYYY-MM-DD_HH-MM-SS_<TICKET>_<description>.md` at the **repository root**.
+Save to: `drift/<feature>/handoffs/YYYY-MM-DD_HH-MM-SS_<description>.md` at the **repository root**, where `<feature>` is the identifier inferred from the source research or prior handoff path.
 
-If no ticket identifier is provided, use the research topic as the folder name instead. Create the `.handoffs/` directory at the repository root if it doesn't exist.
+Create `drift/<feature>/handoffs/` if it doesn't exist.
 
-Do not write to editor memory systems, temp directories, or user-profile paths — these are project artifacts that live in the repo.
+### Path verification
+
+Before writing, confirm the resolved path is **inside the repository** and matches `drift/<feature>/handoffs/...`. Do not write to editor memory systems, temp directories, user-profile paths, or any absolute path outside the repository root. If you cannot resolve the repository root, ask the user rather than guess.
 
 Include frontmatter:
 
@@ -71,7 +74,7 @@ branch: [Current branch name]
 git_commit: [Current commit hash]
 source_research: [Path to the research document]
 previous_handoff: [Path to previous handoff, if any]
-type: mid_work
+type: handoff
 ---
 ```
 
