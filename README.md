@@ -36,35 +36,37 @@ Each prompt file is self-contained. Copy the one you need, paste it into your LL
 
 ### 1. Research — understanding the codebase
 
-Copy [research.md](research.md) into a new LLM session, then ask your question:
+**Paste [research.md](research.md), then ask your question.**
 
-> *"How does the authentication flow work?"*
-> *"What happens when a user submits an endorsement?"*
-> *"Map out the data flow from API request to database write for policy creation."*
+Example prompts:
 
-The prompt constrains the agent to document what exists — no unsolicited suggestions, no refactoring advice. The agent will ask you to confirm a feature identifier (ticket ref or descriptive slug) and write findings to `drift/<feature>/research/`.
+- *"How does the authentication flow work?"*
+- *"What happens when a user submits an endorsement?"*
+- *"Map out the data flow from API request to database write for policy creation."*
+
+The agent documents what exists — no unsolicited suggestions, no refactoring advice. It will ask for a feature identifier (ticket ref or slug) and save findings to `drift/<feature>/research/`.
 
 ### 2. Planning — turning research into a plan
 
-Once you have a research document, open a **new session**. Copy [plan.md](plan.md) into it, then point it at your research:
+**In a new session, paste [plan.md](plan.md), then point it at your research.**
 
 > *"Read drift/auth-refactor/research/2026-03-30-auth-flow.md and create an implementation handoff."*
 
-This produces a concrete plan: which files to touch, in what order, with what constraints. It trusts the research — it won't re-read the entire codebase.
+You get a concrete plan: which files to touch, in what order, with what constraints. The plan trusts the research — it won't re-read the codebase.
 
 ### 3. Continuing — picking up where you left off
 
-When a session runs long or you need to refresh context, copy [handoff.md](handoff.md) into the current session:
+Two actions, same prompt file.
+
+**To snapshot the current session** — paste [handoff.md](handoff.md) into the running session:
 
 > *"Write a handoff."*
 
-Then start a **new session**, paste the same prompt, and point it at the handoff document to continue:
+**To resume in a new session** — paste [handoff.md](handoff.md) again, then point it at the snapshot:
 
 > *"Read drift/auth-refactor/handoffs/2026-03-30_14-30-00_session-2.md and continue."*
 
-Repeat as many times as needed until the work is complete.
-
-If the handoff chain grows past three documents, summarize the completed phases in the new handoff's `Status` section rather than asking the next session to read every prior link. The whole point of Drift is to keep context lean — apply that to the handoffs themselves.
+Repeat until done. If the handoff chain exceeds three documents, summarize completed phases in the new handoff's `Status` section rather than asking the next session to read every prior link — the whole point of Drift is to keep context lean.
 
 ## When not to use Drift
 
