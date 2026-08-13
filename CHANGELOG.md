@@ -16,8 +16,9 @@ All notable changes to this project will be documented in this file.
 - All three prompts — "Writing to Disk" sections now include an explicit **Path verification** subsection enumerating forbidden destinations (editor memory, temp dirs, user-profile paths, absolute paths outside the repo)
 
 ### Added
+- `SKILL.md` — reusable skill entrypoint for agents that support global skill directories such as `~/.agents/skills`
 - `README.md` — "When not to use Drift" section
-- `README.md` — "Installing as slash commands" table covering VS Code Copilot, Claude Code, Cursor, and paste-into-chat
+- `README.md` — reusable skill installation instructions and "Installing as reusable commands or skills" table covering Zed Agent, VS Code Copilot, Claude Code, Cursor, and paste-into-chat
 - `README.md` — explicit guidance to summarize completed phases when handoff chains exceed three documents
 - `README.md` — illustrated `drift/<feature>/` directory layout in "Where files are stored"
 - `examples/` directory (placeholder for future example artifacts)

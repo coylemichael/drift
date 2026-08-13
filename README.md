@@ -32,7 +32,24 @@ handoff.md        Continue. Snapshot so the next session picks up where you left
 
 ## Getting Started
 
-Each prompt file is self-contained. Copy the one you need, paste it into your LLM conversation, and follow it with your actual request. No dependencies, no setup, no cloning required.
+Each prompt file is self-contained. For manual use, copy the one you need, paste it into your LLM conversation, and follow it with your actual request. No dependencies, no setup, no cloning required.
+
+## Installing as a reusable skill
+
+Some agents can load reusable skills from `~/.agents/skills`. For those tools, install Drift once:
+
+```sh
+mkdir -p ~/.agents/skills
+git clone https://github.com/coylemichael/drift ~/.agents/skills/drift
+```
+
+Once installed, any agent that supports `~/.agents/skills` can load Drift from that location. For tools that use commands, rules, or prompt libraries instead, see the installation table below.
+
+The model is intentionally split:
+
+- The reusable Drift prompts live outside your target projects.
+- Generated Drift artifacts live locally in each target project under `drift/<feature>/`.
+- This avoids cloning Drift into every project you work on.
 
 ### 1. Research — understanding the codebase
 
@@ -104,14 +121,15 @@ These are project artifacts — they travel with the repo, not with your editor 
 
 ### Where these work
 
-These are plain markdown. Paste them into any agent or LLM — VS Code Copilot, Cursor, ChatGPT, Claude, Windsurf, or anything that accepts a system prompt. The YAML frontmatter at the top of each file is recognized by tools that support it and harmlessly ignored by those that don't.
+These are plain markdown. Paste them into any agent or LLM — Zed, VS Code Copilot, Cursor, ChatGPT, Claude, Windsurf, or anything that accepts a system prompt. The YAML frontmatter at the top of each file is recognized by tools that support it and harmlessly ignored by those that don't.
 
-### Installing as slash commands
+### Installing as reusable commands or skills
 
-Drift works pasted into any chat, but most tools support installing the prompts as reusable slash commands. Copy the three `.md` files into your tool's command directory:
+Drift works pasted into any chat, and many tools support installing the prompts as reusable skills, slash commands, or rules:
 
 | Tool | Location | Invocation |
 |------|----------|------------|
+| **Zed Agent** | `~/.agents/skills/drift` — clone the repo as-is so `SKILL.md`, `research.md`, `plan.md`, and `handoff.md` stay together | Ask the agent to use the Drift skill |
 | **VS Code Copilot Chat** | `.github/prompts/` — rename with the `.prompt.md` suffix (e.g. `research.md` → `.github/prompts/research.prompt.md`) | `/research`, `/plan`, `/handoff` |
 | **Claude Code** | `.claude/commands/` — copy as-is (e.g. `research.md` → `.claude/commands/research.md`) | `/research`, `/plan`, `/handoff` |
 | **Cursor** | `.cursor/rules/` — rename with the `.mdc` suffix (e.g. `research.md` → `.cursor/rules/research.mdc`) and adjust frontmatter to Cursor's `globs:` / `alwaysApply:` keys | Triggered by rule scope |
