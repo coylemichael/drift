@@ -43,7 +43,9 @@ mkdir -p ~/.agents/skills
 git clone https://github.com/coylemichael/drift ~/.agents/skills/drift
 ```
 
-Once installed, any agent that supports `~/.agents/skills` can load Drift from that location. For tools that use commands, rules, or prompt libraries instead, see the installation table below.
+Once installed, any agent that supports `~/.agents/skills` can load Drift from that location. The root `SKILL.md` acts as a router to `research.md`, `plan.md`, and `handoff.md`, so you manage one Drift skill directory instead of separate prompt installs.
+
+For tools that use commands, rules, or prompt libraries instead, see the installation table below.
 
 The model is intentionally split:
 
@@ -129,7 +131,7 @@ Drift works pasted into any chat, and many tools support installing the prompts 
 
 | Tool | Location | Invocation |
 |------|----------|------------|
-| **Zed Agent** | `~/.agents/skills/drift` — clone the repo as-is so `SKILL.md`, `research.md`, `plan.md`, and `handoff.md` stay together | Ask the agent to use the Drift skill |
+| **Zed Agent** | `~/.agents/skills/drift` — clone the repo as-is so `SKILL.md` can route to `research.md`, `plan.md`, and `handoff.md` | Ask the agent to use the Drift skill |
 | **VS Code Copilot Chat** | `.github/prompts/` — rename with the `.prompt.md` suffix (e.g. `research.md` → `.github/prompts/research.prompt.md`) | `/research`, `/plan`, `/handoff` |
 | **Claude Code** | `.claude/commands/` — copy as-is (e.g. `research.md` → `.claude/commands/research.md`) | `/research`, `/plan`, `/handoff` |
 | **Cursor** | `.cursor/rules/` — rename with the `.mdc` suffix (e.g. `research.md` → `.cursor/rules/research.mdc`) and adjust frontmatter to Cursor's `globs:` / `alwaysApply:` keys | Triggered by rule scope |

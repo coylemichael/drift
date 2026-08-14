@@ -7,6 +7,23 @@ description: Use Drift for multi-session codebase research, implementation plann
 
 Drift is a context-continuity workflow for multi-session agentic coding. It helps preserve the useful parts of a session — research, implementation plans, and handoffs — so future agent sessions can continue without re-discovering the same context.
 
+## Skill Router
+
+This skill is the single entrypoint for Drift. Do not split Drift into separate global skills for research, planning, and handoffs. Instead, route the user's request to the appropriate prompt file in this skill directory:
+
+- **Research request** — codebase research, architecture questions, data flow, feature discovery, or documenting what exists: read and follow `research.md`.
+- **Planning request** — turning completed research into an actionable implementation plan or starting handoff: read and follow `plan.md`.
+- **Handoff request** — writing a session snapshot, stopping mid-work, resuming from a previous handoff, continuing from `drift/<feature>/handoffs/...`, or preparing the next session: read and follow `handoff.md`.
+
+If the user invokes Drift but the mode is unclear, ask whether they want research, planning, or handoff/resume.
+
+When routing to a prompt file:
+
+1. Treat that file as the active workflow instructions.
+2. Follow its output format, disk-writing rules, and path-verification rules.
+3. Do not duplicate the full prompt contents in chat unless the user asks.
+4. Keep using this `SKILL.md` for mode selection and global guardrails.
+
 ## When to Use Drift
 
 Use Drift when the task involves:

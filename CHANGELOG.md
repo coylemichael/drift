@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - All three prompts now require the agent to confirm/derive a **feature identifier** before writing. Ticket reference or descriptive slug — anything unique.
 
 ### Changed
+- `SKILL.md` now acts as a single router entrypoint for research, planning, handoff, and resume requests
 - Renamed `from-research.md` → `plan-from-research.md` (subsequently shortened to `plan.md` — see above)
 - Frontmatter `name:` values match filenames so VS Code prompt-file tooling resolves them correctly
 - `research.md` — research output now includes `date` / `branch` / `git_commit` / `type` frontmatter, matching the handoff prompts
