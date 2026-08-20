@@ -20,14 +20,13 @@ Three prompt files that create natural checkpoints across your workflow. Each se
 
 ### Workflow
 
-```
-research.md       Investigate. Document what exists.
-        │
-        ▼
-plan.md           Plan. Turn findings into an actionable starting point.
-        │
-        ▼
-handoff.md        Continue. Snapshot so the next session picks up where you left off.
+```mermaid
+flowchart TD
+    research["research.md — Investigate. Document what exists."]
+    plan["plan.md — Plan. Turn findings into an actionable starting point."]
+    handoff["handoff.md — Continue. Snapshot so the next session picks up where you left off."]
+
+    research --> plan --> handoff
 ```
 
 ## Getting Started
