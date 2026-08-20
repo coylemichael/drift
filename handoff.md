@@ -59,6 +59,8 @@ You are tasked with writing a handoff document that snapshots where you are so t
 
 Save to: `drift/<feature>/handoffs/YYYY-MM-DD_HH-MM-SS_<description>.md` at the **repository root**, where `<feature>` is the identifier inferred from the source research or prior handoff path.
 
+Before creating `drift/` or writing the artifact, ensure the repository-root `.gitignore` exists and contains `/drift/`; create `.gitignore` or append the entry if needed.
+
 Create `drift/<feature>/handoffs/` if it doesn't exist.
 
 ### Path verification

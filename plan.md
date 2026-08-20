@@ -54,6 +54,8 @@ You are tasked with turning a research document into an actionable handoff for a
 
 Save to: `drift/<feature>/handoffs/YYYY-MM-DD_HH-MM-SS_plan.md` at the **repository root**, where `<feature>` is the identifier inferred from the source research path.
 
+Before creating `drift/` or writing the artifact, ensure the repository-root `.gitignore` exists and contains `/drift/`; create `.gitignore` or append the entry if needed.
+
 Create `drift/<feature>/handoffs/` if it doesn't exist.
 
 ### Path verification

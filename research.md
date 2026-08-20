@@ -44,6 +44,7 @@ When presenting findings, use this structure:
 Save research documents to disk by default. Skip saving only if the user explicitly asks for a quick or informal answer.
 
 - Save to `drift/<feature>/research/YYYY-MM-DD-<topic>.md` at the **repository root**, where `<feature>` is the identifier confirmed above
+- Before creating `drift/` or writing the artifact, ensure the repository-root `.gitignore` exists and contains `/drift/`; create `.gitignore` or append the entry if needed
 - Create `drift/<feature>/research/` at the repository root if it doesn't exist
 - Use the output format above
 

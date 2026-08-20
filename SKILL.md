@@ -70,3 +70,14 @@ drift/<feature>/handoffs/
 Before creating the first Drift artifact for a task, ask the user for a feature identifier. A ticket reference such as `PROJ-1234` or a descriptive slug such as `auth-refactor` is fine. Use that identifier consistently for all artifacts under `drift/<feature>/` in the target project.
 
 If the target project root is unclear, ask the user before writing any Drift artifact.
+
+## Gitignore Drift Artifacts
+
+Drift artifacts are local agent context and should not be committed by default. Before creating the first `drift/` directory or writing any Drift artifact in a target project:
+
+1. Check the repository-root `.gitignore`.
+2. If `.gitignore` does not exist, create it.
+3. Ensure it contains an entry that ignores the project-local Drift folder, preferably `/drift/`.
+4. Preserve existing `.gitignore` contents; append the Drift entry if needed.
+
+Do this as part of the Drift workflow without requiring a separate user request.
