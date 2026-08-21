@@ -9,13 +9,14 @@ Drift is a context-continuity workflow for multi-session agentic coding. It help
 
 ## Skill Router
 
-This skill is the single entrypoint for Drift. Do not split Drift into separate global skills for research, planning, and handoffs. Instead, route the user's request to the appropriate prompt file in this skill directory:
+This skill is the single entrypoint for Drift. Do not split Drift into separate global skills for research, planning, execution, and handoffs. Instead, route the user's request to the appropriate prompt file in this skill directory:
 
 - **Research request** — codebase research, architecture questions, data flow, feature discovery, or documenting what exists: read and follow `research.md`.
 - **Planning request** — turning completed research into an actionable implementation plan or starting handoff: read and follow `plan.md`.
+- **Execution request** — picking up a plan or handoff to implement, orchestrating step-by-step (with sub-agents where appropriate) rather than doing all the work in the main session: read and follow `execute.md`.
 - **Handoff request** — writing a session snapshot, stopping mid-work, resuming from a previous handoff, continuing from `drift/<feature>/NNN-handoff-...`, or preparing the next session: read and follow `handoff.md`.
 
-If the user invokes Drift but the mode is unclear, ask whether they want research, planning, or handoff/resume.
+If the user invokes Drift but the mode is unclear, ask whether they want research, planning, execution, or handoff/resume.
 
 When routing to a prompt file:
 
@@ -30,6 +31,7 @@ Use Drift when the task involves:
 
 - Codebase research or documenting how existing code works
 - Turning research into an implementation plan
+- Executing a plan or handoff (orchestrating step-by-step)
 - Writing handoffs before stopping work
 - Resuming from previous handoffs
 - Work that is likely to span multiple agent sessions
@@ -44,17 +46,19 @@ Skip Drift for:
 
 ## Workflow
 
-Drift uses three prompt files in this skill repo. Reference and follow the relevant file rather than duplicating its full contents:
+Drift uses four prompt files in this skill repo. Reference and follow the relevant file rather than duplicating its full contents:
 
 - `research.md` — investigate and document what exists in the codebase
 - `plan.md` — turn research into an actionable implementation plan
+- `execute.md` — orchestrate a plan or handoff, delegating self-contained steps to sub-agents
 - `handoff.md` — snapshot current state for a future session, or resume from an existing handoff
 
 Use the workflow as needed:
 
 1. Research the target project with `research.md`.
 2. Convert completed research into an implementation plan with `plan.md`.
-3. Write or resume handoffs with `handoff.md` whenever work crosses session boundaries.
+3. Execute the plan (or a prior handoff) with `execute.md`, delegating self-contained steps to sub-agents.
+4. Write or resume handoffs with `handoff.md` whenever work crosses session boundaries.
 
 ## Artifact Location
 

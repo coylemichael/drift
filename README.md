@@ -16,7 +16,7 @@ Most LLM-assisted work breaks down not because the model can't do the task, but 
 
 ## The Solution
 
-Three prompt files that create natural checkpoints across your workflow. Each session starts clean but informed, carrying forward only what the next session actually needs.
+Four prompt files that create natural checkpoints across your workflow. Each session starts clean but informed, carrying forward only what the next session actually needs.
 
 ### Workflow
 
@@ -24,9 +24,11 @@ Three prompt files that create natural checkpoints across your workflow. Each se
 flowchart TD
     research["research.md — Investigate. Document what exists."]
     plan["plan.md — Plan. Turn findings into an actionable starting point."]
+    execute["execute.md — Orchestrate. Run the plan, delegating steps to sub-agents."]
     handoff["handoff.md — Continue. Snapshot so the next session picks up where you left off."]
 
-    research --> plan --> handoff
+    research --> plan --> execute --> handoff
+    handoff -.resume.-> execute
 ```
 
 ## Getting Started
@@ -42,7 +44,7 @@ mkdir -p ~/.agents/skills
 git clone https://github.com/coylemichael/drift ~/.agents/skills/drift
 ```
 
-Once installed, any agent that supports `~/.agents/skills` can load Drift from that location. The root `SKILL.md` acts as a router to `research.md`, `plan.md`, and `handoff.md`, so you manage one Drift skill directory instead of separate prompt installs.
+Once installed, any agent that supports `~/.agents/skills` can load Drift from that location. The root `SKILL.md` acts as a router to `research.md`, `plan.md`, `execute.md`, and `handoff.md`, so you manage one Drift skill directory instead of separate prompt installs.
 
 For tools that use commands, rules, or prompt libraries instead, see the installation table below.
 
@@ -71,9 +73,19 @@ The agent documents what exists — no unsolicited suggestions, no refactoring a
 
 > *"Read drift/auth-refactor/001-research-auth-flow.md and create an implementation handoff."*
 
-You get a concrete plan: which files to touch, in what order, with what constraints. The plan trusts the research — it won't re-read the codebase.
+You get a concrete plan: which files to touch, in what order, with what constraints. The plan trusts the research — it won't re-read the codebase. Steps are written to be self-contained enough for a sub-agent to pick up, which sets up the execute step.
 
-### 3. Continuing — picking up where you left off
+### 3. Executing — running the plan with orchestration
+
+**In a fresh session, paste [execute.md](execute.md), then point it at your plan or a prior handoff.**
+
+> *"Read drift/auth-refactor/002-plan-implementation.md and execute it."*
+
+The session becomes an orchestrator: it walks the step sequence, delegates self-contained steps to sub-agents (in parallel where write scopes are disjoint), verifies each step, and writes a handoff at the end. Verification, tightly-coupled edits, and small one-shot changes stay with the orchestrator; larger scoped work gets delegated to keep the orchestrator's context lean.
+
+Executing is optional — for small plans you can skip straight from `plan.md` to hands-on implementation and then to `handoff.md`. Execute earns its keep on longer plans where context bloat is a real risk. Legacy input paths (e.g. `drift/<feature>/handoffs/YYYY-MM-DD_HH-MM-SS_plan.md`) are supported; the resulting handoff is still written as the next flat numbered artifact in the feature folder.
+
+### 4. Continuing — picking up where you left off
 
 Two actions, same prompt file.
 
@@ -132,9 +144,9 @@ Drift works pasted into any chat, and many tools support installing the prompts 
 
 | Tool | Location | Invocation |
 |------|----------|------------|
-| **Zed Agent** | `~/.agents/skills/drift` — clone the repo as-is so `SKILL.md` can route to `research.md`, `plan.md`, and `handoff.md` | Ask the agent to use the Drift skill |
-| **VS Code Copilot Chat** | `.github/prompts/` — rename with the `.prompt.md` suffix (e.g. `research.md` → `.github/prompts/research.prompt.md`) | `/research`, `/plan`, `/handoff` |
-| **Claude Code** | `.claude/commands/` — copy as-is (e.g. `research.md` → `.claude/commands/research.md`) | `/research`, `/plan`, `/handoff` |
+| **Zed Agent** | `~/.agents/skills/drift` — clone the repo as-is so `SKILL.md` can route to `research.md`, `plan.md`, `execute.md`, and `handoff.md` | Ask the agent to use the Drift skill |
+| **VS Code Copilot Chat** | `.github/prompts/` — rename with the `.prompt.md` suffix (e.g. `research.md` → `.github/prompts/research.prompt.md`) | `/research`, `/plan`, `/execute`, `/handoff` |
+| **Claude Code** | `.claude/commands/` — copy as-is (e.g. `research.md` → `.claude/commands/research.md`) | `/research`, `/plan`, `/execute`, `/handoff` |
 | **Cursor** | `.cursor/rules/` — rename with the `.mdc` suffix (e.g. `research.md` → `.cursor/rules/research.mdc`) and adjust frontmatter to Cursor's `globs:` / `alwaysApply:` keys | Triggered by rule scope |
 | **Anything else** | Paste the file contents directly into the chat | n/a |
 

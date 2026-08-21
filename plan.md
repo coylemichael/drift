@@ -39,10 +39,10 @@ You are tasked with turning a research document into an actionable handoff for a
 - path/to/other_file.py:45-80 — specific section that's relevant
 
 ## Implementation Sequence
-[Ordered list of concrete tasks drawn from the research. Each task should be small enough to verify independently. Reference the research doc's phase/step numbers.]
+[Ordered list of concrete tasks drawn from the research. Each task should be small enough to verify independently and **self-contained enough to hand to a sub-agent** — clear files, clear goal, clear verification. Reference the research doc's phase/step numbers.]
 
-1. **[Phase X.Y — short description]** — what to do, which files to touch
-2. **[Phase X.Z — short description]** — what to do, which files to touch
+1. **[Phase X.Y — short description]** — what to do, which files to touch, how to verify
+2. **[Phase X.Z — short description]** — what to do, which files to touch, how to verify
 ...
 
 ## Decisions & Constraints
@@ -85,6 +85,7 @@ type: plan
 
 - Follow the research doc's sequencing. If it says Phase 1 before Phase 2, don't reorder unless there's a clear reason.
 - Be specific about files. "Update the database schema" is useless. "Add columns to endorsement_documents table in src/db/schema.py:84" is useful.
-- Keep tasks small and verifiable. Each item in the implementation sequence should be something you can confirm works before moving on.
+- Keep tasks small, verifiable, and self-contained. Each item in the implementation sequence should be something you can confirm works before moving on, and something an executor could hand to a sub-agent without extra context. If a step needs a paragraph of preamble to be understandable in isolation, split it.
+- Note disjoint scopes when they exist. If two steps touch entirely separate files and don't depend on each other, say so — an orchestrator running the plan via `execute.md` can dispatch them in parallel.
 - Carry forward open questions. Don't drop them. The implementation session needs to know what's unresolved.
 - Don't add scope. If it's not in the research doc, it's not in the handoff.

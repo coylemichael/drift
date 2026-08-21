@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `execute.md` — fourth mode. Orchestrates a plan or handoff: walks the step sequence, delegates self-contained steps to sub-agents (parallel where write scopes are disjoint), verifies each step, and hands off via `handoff.md` at the end. Includes delegation heuristics (delegate scoped multi-file work; keep verification, one-shot edits, and tightly-coupled iteration with the orchestrator) and a sub-agent prompt skeleton. Supports both flat numbered inputs and legacy subfolder paths; output handoffs always follow the flat numbered convention unless the user explicitly asks to preserve a legacy chain.
+- `SKILL.md` — router entry and workflow step for the new `execute.md` mode.
+- `README.md` — "Executing" section, mermaid updated to include the execute node with a resume edge from handoff, install-table invocations updated to include `/execute`.
+
+### Changed
+- `plan.md` — Implementation Sequence items must now be self-contained enough to hand to a sub-agent (clear files, clear goal, clear verification). Guidelines call out disjoint scopes so an orchestrator running the plan via `execute.md` can parallelize where safe.
+
 ### Changed (breaking)
 - **Prompt filenames shortened** to `research.md`, `plan.md`, `handoff.md` (from `research-codebase.md`, `plan-from-research.md`, `mid-work-handoff.md`). Frontmatter `name:` values updated to match. Slash-command invocations are now `/research`, `/plan`, `/handoff` across all supported tools.
 - **Artifact paths restructured to flat numbered files inside feature folders: `drift/<feature>/NNN-research-topic.md`, `drift/<feature>/NNN-plan-description.md`, and `drift/<feature>/NNN-handoff-description.md`** — replaces the previous top-level `research/`, `.handoffs/<TICKET>/`, and split `drift/<feature>/research/` / `handoffs/` layouts for new work. Existing subfolder layouts remain legacy-supported when resuming from an existing artifact path.
