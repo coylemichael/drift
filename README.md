@@ -49,7 +49,8 @@ For tools that use commands, rules, or prompt libraries instead, see the install
 The model is intentionally split:
 
 - The reusable Drift prompts live outside your target projects.
-- Generated Drift artifacts live locally in each target project under `drift/<feature>/`.
+- Generated Drift artifacts live locally in each target project under feature folders such as `drift/auth-refactor/`.
+- Each feature folder contains numbered artifact files such as `001-research-auth-flow.md`, `002-plan-implementation.md`, and `003-handoff-session-1.md`.
 - This avoids cloning Drift into every project you work on.
 
 ### 1. Research — understanding the codebase
@@ -62,13 +63,13 @@ Example prompts:
 - *"What happens when a user submits an endorsement?"*
 - *"Map out the data flow from API request to database write for policy creation."*
 
-The agent documents what exists — no unsolicited suggestions, no refactoring advice. It will ask for a feature identifier (ticket ref or slug) and save findings to `drift/<feature>/research/`.
+The agent documents what exists — no unsolicited suggestions, no refactoring advice. It will ask for a feature identifier (ticket ref or slug), allocate the next artifact number in that feature folder, and save findings as `drift/<feature>/NNN-research-<topic>.md`.
 
 ### 2. Planning — turning research into a plan
 
 **In a new session, paste [plan.md](plan.md), then point it at your research.**
 
-> *"Read drift/auth-refactor/research/2026-03-30-auth-flow.md and create an implementation handoff."*
+> *"Read drift/auth-refactor/001-research-auth-flow.md and create an implementation handoff."*
 
 You get a concrete plan: which files to touch, in what order, with what constraints. The plan trusts the research — it won't re-read the codebase.
 
@@ -82,7 +83,7 @@ Two actions, same prompt file.
 
 **To resume in a new session** — paste [handoff.md](handoff.md) again, then point it at the snapshot:
 
-> *"Read drift/auth-refactor/handoffs/2026-03-30_14-30-00_session-2.md and continue."*
+> *"Read drift/auth-refactor/003-handoff-session-2.md and continue."*
 
 Repeat until done. If the handoff chain exceeds three documents, summarize completed phases in the new handoff's `Status` section rather than asking the next session to read every prior link — the whole point of Drift is to keep context lean.
 
@@ -99,26 +100,27 @@ The research/plan/handoff loop earns its weight on multi-session work in unfamil
 
 ### Where files are stored
 
-All Drift artifacts live under `drift/<feature>/` at the root of your repository, where `<feature>` is a ticket reference (e.g., `PROJ-1234`) or a descriptive slug (e.g., `auth-refactor`). Each feature folder contains a `research/` subfolder and a `handoffs/` subfolder.
+All Drift artifacts live under feature folders at the root of your repository. A feature folder is a ticket reference or descriptive slug, such as `auth-refactor` or `PROJ-1234`. Each artifact is a numbered markdown file directly inside that folder; Drift does not split research, plans, and handoffs into separate subfolders for new artifacts.
 
 ```
 drift/
   auth-refactor/
-    research/
-      2026-03-30-auth-flow.md
-    handoffs/
-      2026-03-30_14-30-00_session-1.md
-      2026-03-30_18-45-00_session-2.md
+    001-research-auth-flow.md
+    002-plan-implementation.md
+    003-handoff-session-1.md
+    004-handoff-session-2.md
+    005-research-edge-cases.md
+    006-plan-follow-up.md
   PROJ-1234/
-    research/
-      ...
-    handoffs/
-      ...
+    001-research-policy-flow.md
+    002-plan-policy-flow.md
 ```
 
-The agent will ask you to confirm a feature identifier before writing the first artifact. Anything that uniquely identifies the work is fine.
+The agent will ask you to confirm a feature identifier before writing the first artifact, scan existing `NNN-*` markdown files in `drift/<feature>/`, and allocate the next number. Anything that uniquely identifies the feature or work grouping is fine.
 
-These are project artifacts — they travel with the repo, not with your editor or user profile. Whether you commit them is up to you; add `drift/` to `.gitignore` if you prefer to keep them local.
+New work for the same feature gets a new numbered artifact in that feature folder rather than modifying an older artifact. Distinct features should get separate feature folders. Drift does not maintain `INDEX.md`, `CURRENT.md`, or status directories; file-tree navigation comes from feature folders and numbered artifact filenames.
+
+These are project artifacts — they travel with the repo, not with your editor or user profile. Drift ensures the repository-root `.gitignore` contains `/drift/` before writing artifacts by default.
 
 ### Where these work
 

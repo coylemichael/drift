@@ -11,9 +11,13 @@ description: Use when researching or documenting how the codebase works - answer
 
 ## Before Investigating
 
-- Confirm the **feature identifier** with the user before writing anything. A ticket reference (e.g., `PROJ-1234`) or a descriptive slug (e.g., `auth-refactor`) both work — anything that uniquely identifies the work. All artifacts for this feature will live under `drift/<feature>/` at the repository root.
-- Read any files the user mentions first
-- Check `drift/<feature>/research/` for existing research on the topic
+- Read any files the user mentions first.
+- Determine the Drift feature folder before writing anything:
+  - If the user points to an existing Drift artifact or folder, infer the feature from that path (`drift/<feature>/...`) and continue using it.
+  - For a new research task, confirm a concise **feature identifier** with the user. A ticket reference (e.g., `PROJ-1234`) or descriptive slug (e.g., `auth-refactor`) both work.
+  - All artifacts for the feature live directly under `drift/<feature>/`; do not create `research/`, `plans/`, or `handoffs/` subfolders for new artifacts.
+- Treat each artifact file as a new step in the feature narrative. If the user starts related research later, create a new numbered `research` file rather than modifying an older artifact.
+- Check `drift/<feature>/` for existing research files on the topic.
 
 ## Output Format
 
@@ -43,14 +47,15 @@ When presenting findings, use this structure:
 
 Save research documents to disk by default. Skip saving only if the user explicitly asks for a quick or informal answer.
 
-- Save to `drift/<feature>/research/YYYY-MM-DD-<topic>.md` at the **repository root**, where `<feature>` is the identifier confirmed above
-- Before creating `drift/` or writing the artifact, ensure the repository-root `.gitignore` exists and contains `/drift/`; create `.gitignore` or append the entry if needed
-- Create `drift/<feature>/research/` at the repository root if it doesn't exist
-- Use the output format above
+- Save to `drift/<feature>/NNN-research-<topic>.md` at the **repository root**, where `<feature>` is the identifier confirmed above and `NNN` is the next artifact number in that feature folder.
+- Allocate `NNN` by scanning existing markdown files in `drift/<feature>/` whose names start with a three-digit prefix and hyphen. Use the next number after the highest prefix, or `001` if none exist.
+- Before creating `drift/` or writing the artifact, ensure the repository-root `.gitignore` exists and contains `/drift/`; create `.gitignore` or append the entry if needed.
+- Create `drift/<feature>/` at the repository root if it doesn't exist.
+- Use the output format above.
 
 ### Path verification
 
-Before writing, confirm the resolved path is **inside the repository** and matches `drift/<feature>/research/...`. Do not write to:
+Before writing, confirm the resolved path is **inside the repository** and matches `drift/<feature>/NNN-research-<topic>.md`. Do not write new artifacts to `research/`, `plans/`, or `handoffs/` subfolders. Legacy subfolder paths are allowed only when explicitly continuing an existing legacy chain. Do not write to:
 
 - Editor memory systems (Copilot memory, Cursor rules, Claude memory directories)
 - Temp directories (`/tmp`, `$TMPDIR`)
@@ -66,6 +71,9 @@ Include frontmatter:
 date: [ISO 8601 datetime with timezone]
 branch: [Current branch name]
 git_commit: [Current commit hash]
+feature: [Feature folder name]
+sequence: [Three-digit artifact sequence]
+related_artifacts: [List of related Drift artifact paths, if any]
 type: research
 ---
 ```

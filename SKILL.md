@@ -13,7 +13,7 @@ This skill is the single entrypoint for Drift. Do not split Drift into separate 
 
 - **Research request** — codebase research, architecture questions, data flow, feature discovery, or documenting what exists: read and follow `research.md`.
 - **Planning request** — turning completed research into an actionable implementation plan or starting handoff: read and follow `plan.md`.
-- **Handoff request** — writing a session snapshot, stopping mid-work, resuming from a previous handoff, continuing from `drift/<feature>/handoffs/...`, or preparing the next session: read and follow `handoff.md`.
+- **Handoff request** — writing a session snapshot, stopping mid-work, resuming from a previous handoff, continuing from `drift/<feature>/NNN-handoff-...`, or preparing the next session: read and follow `handoff.md`.
 
 If the user invokes Drift but the mode is unclear, ask whether they want research, planning, or handoff/resume.
 
@@ -60,14 +60,41 @@ Use the workflow as needed:
 
 The Drift skill may live globally at `~/.agents/skills/drift`, but generated Drift artifacts must be written inside the current target project, not inside this skill repo.
 
-Use this project-local structure:
+Use one project-local **feature folder** per feature or work grouping. Keep all Drift artifacts for that feature directly inside the same folder so the file tree shows the whole narrative at a glance.
+
+Use this project-local structure for new artifacts:
 
 ```text
-drift/<feature>/research/
-drift/<feature>/handoffs/
+drift/<feature>/
+  001-research-<topic>.md
+  002-plan-<description>.md
+  003-handoff-<description>.md
+  004-handoff-<description>.md
+  005-research-<topic>.md
+  006-plan-<description>.md
 ```
 
-Before creating the first Drift artifact for a task, ask the user for a feature identifier. A ticket reference such as `PROJ-1234` or a descriptive slug such as `auth-refactor` is fine. Use that identifier consistently for all artifacts under `drift/<feature>/` in the target project.
+A Drift artifact filename has three parts:
+
+- `001` — a zero-padded, three-digit sequence number for chronological file-tree sorting inside the feature folder
+- `research`, `plan`, or `handoff` — the artifact kind
+- `<topic>` or `<description>` — a concise filesystem-safe slug
+
+Before creating the first Drift artifact for a task, ask the user for a feature identifier. A ticket reference such as `PROJ-1234` or a descriptive slug such as `auth-refactor` is fine. Use that identifier consistently as the folder name under `drift/<feature>/`.
+
+### Allocating Artifact Numbers
+
+When creating a new artifact file:
+
+1. Check the repository-root `drift/<feature>/` directory, if it exists.
+2. Find existing markdown files whose names start with a three-digit prefix and hyphen, such as `001-research-auth-flow.md`.
+3. Assign the next number after the highest existing prefix. If none exist, start at `001`.
+4. Do not split new artifacts into `research/`, `plans/`, or `handoffs/` subfolders.
+5. If the user points to an existing Drift artifact or legacy subfolder path, infer the feature from that path and continue in the same feature folder. Preserve the existing path only when explicitly writing a follow-up for a legacy chain; otherwise write the next flat numbered file in `drift/<feature>/`.
+
+Do not maintain separate navigation files such as `drift/INDEX.md` or `drift/<feature>/CURRENT.md`, and do not move feature folders between status directories such as `active/` and `done/`. File-tree navigation comes from feature folders plus numbered artifact filenames.
+
+If later work is related to the same feature, create another numbered artifact in that feature folder rather than modifying an older artifact. If the work is a distinct feature, create a new feature folder.
 
 If the target project root is unclear, ask the user before writing any Drift artifact.
 

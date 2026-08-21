@@ -6,8 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changed (breaking)
 - **Prompt filenames shortened** to `research.md`, `plan.md`, `handoff.md` (from `research-codebase.md`, `plan-from-research.md`, `mid-work-handoff.md`). Frontmatter `name:` values updated to match. Slash-command invocations are now `/research`, `/plan`, `/handoff` across all supported tools.
-- **Artifact paths restructured to `drift/<feature>/research/` and `drift/<feature>/handoffs/`** — replaces the previous top-level `research/` and `.handoffs/<TICKET>/` layout. Each feature now gets a single folder containing both research and handoff subfolders. Existing artifacts will need to be moved manually if you want them under the new layout.
-- All three prompts now require the agent to confirm/derive a **feature identifier** before writing. Ticket reference or descriptive slug — anything unique.
+- **Artifact paths restructured to flat numbered files inside feature folders: `drift/<feature>/NNN-research-topic.md`, `drift/<feature>/NNN-plan-description.md`, and `drift/<feature>/NNN-handoff-description.md`** — replaces the previous top-level `research/`, `.handoffs/<TICKET>/`, and split `drift/<feature>/research/` / `handoffs/` layouts for new work. Existing subfolder layouts remain legacy-supported when resuming from an existing artifact path.
+- All three prompts now require the agent to confirm/derive a **feature identifier** before writing. Ticket reference or descriptive slug — anything unique — is used as the folder name under `drift/<feature>/`, while artifact files receive the next three-digit sequence number.
 
 ### Changed
 - `SKILL.md` now acts as a single router entrypoint for research, planning, handoff, and resume requests
@@ -22,7 +22,7 @@ All notable changes to this project will be documented in this file.
 - `README.md` — "When not to use Drift" section
 - `README.md` — reusable skill installation instructions and "Installing as reusable commands or skills" table covering Zed Agent, VS Code Copilot, Claude Code, Cursor, and paste-into-chat
 - `README.md` — explicit guidance to summarize completed phases when handoff chains exceed three documents
-- `README.md` — illustrated `drift/<feature>/` directory layout in "Where files are stored"
+- `README.md` — illustrated flat numbered artifact files inside `drift/<feature>/` in "Where files are stored"
 - `examples/` directory (placeholder for future example artifacts)
 
 
