@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- `README.md` — reframed around a skills-by-default operating model. "Getting Started" now leads with installing Drift as a reusable agent skill (tool-agnostic, with concrete per-tool paths deferred to the compatibility table) and demotes copy/paste to a "no skill support?" fallback covering both file-linking and pasting. Workflow step callouts (Research / Plan / Execute / Handoff) reworded from "Paste [x.md]" to "Ask Drift to …", with the underlying prompt file linked for paste-mode users.
+
 ### Added
 - `execute.md` — fourth mode. Orchestrates a plan or handoff: walks the step sequence, delegates self-contained steps to sub-agents (parallel where write scopes are disjoint), verifies each step, and hands off via `handoff.md` at the end. Includes delegation heuristics (delegate scoped multi-file work; keep verification, one-shot edits, and tightly-coupled iteration with the orchestrator) and a sub-agent prompt skeleton. Supports both flat numbered inputs and legacy subfolder paths; output handoffs always follow the flat numbered convention unless the user explicitly asks to preserve a legacy chain.
 - `SKILL.md` — router entry and workflow step for the new `execute.md` mode.

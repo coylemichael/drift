@@ -33,31 +33,29 @@ flowchart TD
 
 ## Getting Started
 
-Each prompt file is self-contained. For manual use, copy the one you need, paste it into your LLM conversation, and follow it with your actual request. No dependencies, no setup, no cloning required.
+Drift is designed as an agent **skill** by default: install it once in whatever location your agent uses for reusable skills, prompts, or commands, then invoke it by name from any project. The exact install path depends on the tool — jump to the [compatibility table](#installing-as-reusable-commands-or-skills) for step-by-step instructions per tool.
 
-## Installing as a reusable skill
+However your agent loads it, the root [`SKILL.md`](SKILL.md) acts as a router to [`research.md`](research.md), [`plan.md`](plan.md), [`execute.md`](execute.md), and [`handoff.md`](handoff.md), so you install Drift once and invoke it by name:
 
-Some agents can load reusable skills from `~/.agents/skills`. For those tools, install Drift once:
-
-```sh
-mkdir -p ~/.agents/skills
-git clone https://github.com/coylemichael/drift ~/.agents/skills/drift
-```
-
-Once installed, any agent that supports `~/.agents/skills` can load Drift from that location. The root `SKILL.md` acts as a router to `research.md`, `plan.md`, `execute.md`, and `handoff.md`, so you manage one Drift skill directory instead of separate prompt installs.
-
-For tools that use commands, rules, or prompt libraries instead, see the installation table below.
+> *"Use Drift to research the auth flow."*
 
 The model is intentionally split:
 
-- The reusable Drift prompts live outside your target projects.
+- The reusable Drift prompts live outside your target projects (wherever your agent stores skills).
 - Generated Drift artifacts live locally in each target project under feature folders such as `drift/auth-refactor/`.
 - Each feature folder contains numbered artifact files such as `001-research-auth-flow.md`, `002-plan-implementation.md`, and `003-handoff-session-1.md`.
 - This avoids cloning Drift into every project you work on.
 
+### No skill support? Use the files directly
+
+Drift is just markdown, so it also works without any skill loader. Two options:
+
+- **Point your agent at a file** — link one of the prompts (e.g. *"use https://github.com/coylemichael/drift/blob/main/research.md and research the auth flow"*) and let the agent fetch it.
+- **Paste the file contents** — open [research.md](research.md), [plan.md](plan.md), [execute.md](execute.md), or [handoff.md](handoff.md), paste it into your chat, and follow with your request.
+
 ### 1. Research — understanding the codebase
 
-**Paste [research.md](research.md), then ask your question.**
+**Ask Drift to research something.** Backed by [research.md](research.md) — paste it directly if your agent doesn't support skills.
 
 Example prompts:
 
@@ -69,17 +67,17 @@ The agent documents what exists — no unsolicited suggestions, no refactoring a
 
 ### 2. Planning — turning research into a plan
 
-**In a new session, paste [plan.md](plan.md), then point it at your research.**
+**In a new session, ask Drift to plan from your research.** Backed by [plan.md](plan.md).
 
-> *"Read drift/auth-refactor/001-research-auth-flow.md and create an implementation handoff."*
+> *"Use Drift to read drift/auth-refactor/001-research-auth-flow.md and create an implementation plan."*
 
 You get a concrete plan: which files to touch, in what order, with what constraints. The plan trusts the research — it won't re-read the codebase. Steps are written to be self-contained enough for a sub-agent to pick up, which sets up the execute step.
 
 ### 3. Executing — running the plan with orchestration
 
-**In a fresh session, paste [execute.md](execute.md), then point it at your plan or a prior handoff.**
+**In a fresh session, ask Drift to execute a plan or a prior handoff.** Backed by [execute.md](execute.md).
 
-> *"Read drift/auth-refactor/002-plan-implementation.md and execute it."*
+> *"Use Drift to read drift/auth-refactor/002-plan-implementation.md and execute it."*
 
 The session becomes an orchestrator: it walks the step sequence, delegates self-contained steps to sub-agents (in parallel where write scopes are disjoint), verifies each step, and writes a handoff at the end. Verification, tightly-coupled edits, and small one-shot changes stay with the orchestrator; larger scoped work gets delegated to keep the orchestrator's context lean.
 
@@ -87,15 +85,15 @@ Executing is optional — for small plans you can skip straight from `plan.md` t
 
 ### 4. Continuing — picking up where you left off
 
-Two actions, same prompt file.
+Two actions, same prompt file — backed by [handoff.md](handoff.md).
 
-**To snapshot the current session** — paste [handoff.md](handoff.md) into the running session:
+**To snapshot the current session** — in the running session:
 
-> *"Write a handoff."*
+> *"Use Drift to write a handoff."*
 
-**To resume in a new session** — paste [handoff.md](handoff.md) again, then point it at the snapshot:
+**To resume in a new session** — point Drift at the snapshot:
 
-> *"Read drift/auth-refactor/003-handoff-session-2.md and continue."*
+> *"Use Drift to read drift/auth-refactor/003-handoff-session-2.md and continue."*
 
 Repeat until done. If the handoff chain exceeds three documents, summarize completed phases in the new handoff's `Status` section rather than asking the next session to read every prior link — the whole point of Drift is to keep context lean.
 
@@ -140,7 +138,7 @@ These are plain markdown. Paste them into any agent or LLM — Zed, VS Code Copi
 
 ### Installing as reusable commands or skills
 
-Drift works pasted into any chat, and many tools support installing the prompts as reusable skills, slash commands, or rules:
+Installing Drift as a skill is the default operating model (see [Getting Started](#getting-started)). The exact install location depends on your tool:
 
 | Tool | Location | Invocation |
 |------|----------|------------|
