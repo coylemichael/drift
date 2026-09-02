@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- `README.md` — Claude Code install switched from four copied commands in `.claude/commands/` to a single skill at `~/.claude/skills/drift` (or `.claude/skills/drift` for project scope), invoked as `/drift` and routed by `SKILL.md`. Matches the skills-by-default model and `SKILL.md`'s "do not split Drift into separate global skills" rule.
+
 ### Added
 - `README.md` — "Developing Drift itself" section: symlink `~/.agents/skills/drift` to a working clone for a single source of truth when developing the prompts while using the skill, with the known-good-state tradeoff called out.
 

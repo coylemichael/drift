@@ -144,9 +144,11 @@ Installing Drift as a skill is the default operating model (see [Getting Started
 |------|----------|------------|
 | **Zed Agent** | `~/.agents/skills/drift` — clone the repo as-is so `SKILL.md` can route to `research.md`, `plan.md`, `execute.md`, and `handoff.md` | Ask the agent to use the Drift skill |
 | **VS Code Copilot Chat** | `.github/prompts/` — rename with the `.prompt.md` suffix (e.g. `research.md` → `.github/prompts/research.prompt.md`) | `/research`, `/plan`, `/execute`, `/handoff` |
-| **Claude Code** | `.claude/commands/` — copy as-is (e.g. `research.md` → `.claude/commands/research.md`) | `/research`, `/plan`, `/execute`, `/handoff` |
+| **Claude Code** | `~/.claude/skills/drift` — clone the repo as-is so `SKILL.md` can route to `research.md`, `plan.md`, `execute.md`, and `handoff.md`. Use `.claude/skills/drift` instead to scope Drift to a single project | `/drift`, or ask Claude to use the Drift skill |
 | **Cursor** | `.cursor/rules/` — rename with the `.mdc` suffix (e.g. `research.md` → `.cursor/rules/research.mdc`) and adjust frontmatter to Cursor's `globs:` / `alwaysApply:` keys | Triggered by rule scope |
 | **Anything else** | Paste the file contents directly into the chat | n/a |
+
+Claude Code discovers skills at session start, so restart the session after installing. Invoking `/drift` loads `SKILL.md`, which routes the request to the right prompt file — install Drift as one skill rather than four separate commands.
 
 The frontmatter is consumed by tools that understand it and ignored by those that don't — nothing breaks either way.
 
@@ -156,7 +158,8 @@ If you're working on Drift's prompts and also using it as a skill, avoid maintai
 
 ```sh
 git clone https://github.com/coylemichael/drift ~/projects/drift
-ln -s ~/projects/drift ~/.agents/skills/drift
+ln -s ~/projects/drift ~/.agents/skills/drift   # Zed Agent
+ln -s ~/projects/drift ~/.claude/skills/drift   # Claude Code
 ```
 
-Edits in the working clone are immediately live in the skill — useful for iterating on prompt wording and testing it via skill invocation in the same session. The tradeoff: half-finished edits or a checked-out feature branch are what the skill serves. Check out `main` (or stash) to return the skill to a known-good state.
+Symlink whichever skill directories your tools use. Edits in the working clone are immediately live in the skill — useful for iterating on prompt wording and testing it via skill invocation in the same session. The tradeoff: half-finished edits or a checked-out feature branch are what the skill serves. Check out `main` (or stash) to return the skill to a known-good state.
