@@ -149,3 +149,14 @@ Installing Drift as a skill is the default operating model (see [Getting Started
 | **Anything else** | Paste the file contents directly into the chat | n/a |
 
 The frontmatter is consumed by tools that understand it and ignored by those that don't — nothing breaks either way.
+
+### Developing Drift itself
+
+If you're working on Drift's prompts and also using it as a skill, avoid maintaining two copies. Clone the repo wherever you keep projects and symlink the skill directory to it:
+
+```sh
+git clone https://github.com/coylemichael/drift ~/projects/drift
+ln -s ~/projects/drift ~/.agents/skills/drift
+```
+
+Edits in the working clone are immediately live in the skill — useful for iterating on prompt wording and testing it via skill invocation in the same session. The tradeoff: half-finished edits or a checked-out feature branch are what the skill serves. Check out `main` (or stash) to return the skill to a known-good state.

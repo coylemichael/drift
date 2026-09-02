@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `README.md` — "Developing Drift itself" section: symlink `~/.agents/skills/drift` to a working clone for a single source of truth when developing the prompts while using the skill, with the known-good-state tradeoff called out.
+
 ### Changed
 - `README.md` — reframed around a skills-by-default operating model. "Getting Started" now leads with installing Drift as a reusable agent skill (tool-agnostic, with concrete per-tool paths deferred to the compatibility table) and demotes copy/paste to a "no skill support?" fallback covering both file-linking and pasting. Workflow step callouts (Research / Plan / Execute / Handoff) reworded from "Paste [x.md]" to "Ask Drift to …", with the underlying prompt file linked for paste-mode users.
 
