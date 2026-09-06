@@ -36,18 +36,27 @@ def scalar(block, key):
 
 
 def parse_date(raw):
-    """Parse an ISO 8601 datetime, or a bare date, into an aware datetime."""
-    normalized = raw.replace("Z", "+00:00")
-    try:
-        parsed = dt.datetime.fromisoformat(normalized)
-    except ValueError:
+    """Parse an ISO 8601 datetime, or a bare date, into an aware datetime.
+
+    Every result is timezone-aware, because the index sorts on absolute instants
+    and naive values cannot be compared against aware ones. A value carrying no
+    offset is read as UTC: the only dates that reach here without one are bare
+    `**Date:**` body lines, which the index already marks approximate.
+    """
+    # fromisoformat covers the frontmatter case and zero-padded bare dates. It
+    # only gained "Z" support in 3.11, so normalize the suffix for older runtimes.
+    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+    for parse in (
+        lambda: dt.datetime.fromisoformat(normalized),
+        # Catches a hand-written date that isn't zero-padded, e.g. 2026-8-30.
+        lambda: dt.datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=dt.timezone.utc),
+    ):
         try:
-            parsed = dt.datetime.strptime(raw, "%Y-%m-%d")
+            parsed = parse()
         except ValueError:
-            return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=dt.timezone.utc)
-    return parsed
+            continue
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+    return None
 
 
 def parse_artifact(path, root):
