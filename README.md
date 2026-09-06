@@ -140,6 +140,8 @@ Feature folders tell you what happened *within* a feature. They can't tell you w
 
 The `#` column is repo-wide running order and is deliberately independent of the folder-local `NNN` — entry `#047` can be `002-plan-...` inside its feature. Rows are sorted by the true instant of each artifact's frontmatter `date`, with timezone offsets normalized before comparing, so a repo worked on from more than one machine still reads in true order.
 
+That ordering is only as good as the timestamps, so Drift requires each `date` to be read from the system clock rather than estimated — an agent has no clock, and a guessed timestamp reads as measured. See [Timestamps](SKILL.md#timestamps).
+
 Drift appends to the index as part of writing each artifact, so it stays current without being asked. It's a derived view — frontmatter is the source of truth — so it can be rebuilt at any time, including in a repo that already has Drift artifacts and no index yet. Ask Drift to rebuild the index, or run [`scripts/build-index.py`](scripts/build-index.py) against the repo's `drift/` directory.
 
 These are project artifacts — they travel with the repo, not with your editor or user profile. Drift ensures the repository-root `.gitignore` contains `/drift/` before writing artifacts by default.

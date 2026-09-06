@@ -160,6 +160,30 @@ Two cases to handle explicitly rather than silently dropping:
 
 If a shell is available, `scripts/build-index.py` in this skill repo does the rebuild — run it with the target repo's `drift/` directory as its argument. It is a convenience, not a dependency; the procedure above is the specification.
 
+## Timestamps
+
+Every artifact's frontmatter `date` orders the index, so it has to be a real reading of the clock. **Read it from the system. Never estimate, infer, or extrapolate it.**
+
+```sh
+date -Iseconds                                                    # GNU/Linux
+python3 -c 'import datetime; print(datetime.datetime.now().astimezone().isoformat(timespec="seconds"))'
+```
+
+Either prints exactly the required form, offset included: `2026-09-06T14:42:24+01:00`. Prefer the Python one where portability matters — BSD and macOS `date` have no `-I`.
+
+You do not have a clock. Absent a real reading, a plausible-looking timestamp is a guess wearing the costume of a measurement, and it will be wrong in ways that are invisible later:
+
+- **A date-only context value** (a harness line such as "Today's date is 2026-09-06") padded to `T00:00:00` looks precise and is not. Read the clock instead of padding.
+- **Extrapolating from the previous artifact** ("that handoff said 20:00, this session felt like an hour, so 21:00") drifts forward, because token volume feels like more wall-clock time than it is, and the error compounds along a chain of artifacts that each anchor on the last.
+- **Inventing a round session start** ("10:00") when there is no previous artifact to anchor on is unbounded in either direction.
+
+These are not hypothetical. Audited against git, a real repo's 86 artifacts contained 34 provably impossible dates — several claiming a time *hours after* the commit the same artifact recorded as `HEAD`, which is a hash that could not have existed yet.
+
+Two further rules:
+
+- **Use the machine's real offset**, as the commands above do. Do not normalize to `Z` by hand. An agent running in a UTC container and one running locally will otherwise write the same moment two different ways, and the index has to reconcile them.
+- **If you genuinely cannot read a clock**, record the date at day precision and say so in the artifact rather than fabricating a time. Honest coarseness beats false precision — the index has an `(approx)` display and an `## Undated` section for exactly this.
+
 ## Gitignore Drift Artifacts
 
 Drift artifacts are local agent context and should not be committed by default. Before creating the first `drift/` directory or writing any Drift artifact in a target project:

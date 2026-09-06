@@ -90,6 +90,8 @@ type: handoff
 ---
 ```
 
+Take `date` from the system clock, never from an estimate or from a previous artifact's value — `date -Iseconds`, or `python3 -c 'import datetime; print(datetime.datetime.now().astimezone().isoformat(timespec="seconds"))'` where portability matters. Both print the required form with the machine's real offset. A guessed timestamp reads as measured and silently corrupts the index ordering; see "Timestamps" in `SKILL.md`.
+
 ## Guidelines
 
 - File references over prose. `src/db/schema.py:84` beats "the schema file."
