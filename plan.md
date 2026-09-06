@@ -62,6 +62,8 @@ Before creating `drift/` or writing the artifact, ensure the repository-root `.g
 
 Create `drift/<feature>/` if it doesn't exist.
 
+After writing the artifact, append a row for it to `drift/INDEX.md` — the repo-wide chronological index. Create the index if it doesn't exist, and rebuild it from frontmatter if it has fallen out of sync with the folders. See the "Root Index" section of `SKILL.md` for the format, ordering, and rebuild rules.
+
 ### Path verification
 
 Before writing, confirm the resolved path is **inside the repository** and matches `drift/<feature>/NNN-plan-<description>.md`. Do not write new artifacts to `research/`, `plans/`, or `handoffs/` subfolders. Legacy subfolder paths are allowed only when explicitly continuing an existing legacy chain. Do not write to editor memory systems, temp directories, user-profile paths, or any absolute path outside the repository root. If you cannot resolve the repository root, ask the user rather than guess.

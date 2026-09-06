@@ -52,6 +52,7 @@ Save research documents to disk by default. Skip saving only if the user explici
 - Before creating `drift/` or writing the artifact, ensure the repository-root `.gitignore` exists and contains `/drift/`; create `.gitignore` or append the entry if needed.
 - Create `drift/<feature>/` at the repository root if it doesn't exist.
 - Use the output format above.
+- After writing the artifact, append a row for it to `drift/INDEX.md` — the repo-wide chronological index. Create the index if it doesn't exist, and rebuild it from frontmatter if it has fallen out of sync with the folders. See the "Root Index" section of `SKILL.md` for the format, ordering, and rebuild rules.
 
 ### Path verification
 

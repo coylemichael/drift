@@ -33,7 +33,7 @@ flowchart TD
 
 ## Getting Started
 
-Drift is designed as an agent **skill** by default: install it once in whatever location your agent uses for reusable skills, prompts, or commands, then invoke it by name from any project. The exact install path depends on the tool — jump to the [compatibility table](#installing-as-reusable-commands-or-skills) for step-by-step instructions per tool.
+Drift is an agent **skill**: install it once in whatever location your agent uses for reusable skills or prompt files, then invoke it by name from any project. The exact install path depends on the tool — see [Installing](#installing) for per-tool instructions.
 
 However your agent loads it, the root [`SKILL.md`](SKILL.md) acts as a router to [`research.md`](research.md), [`plan.md`](plan.md), [`execute.md`](execute.md), and [`handoff.md`](handoff.md), so you install Drift once and invoke it by name:
 
@@ -46,16 +46,9 @@ The model is intentionally split:
 - Each feature folder contains numbered artifact files such as `001-research-auth-flow.md`, `002-plan-implementation.md`, and `003-handoff-session-1.md`.
 - This avoids cloning Drift into every project you work on.
 
-### No skill support? Use the files directly
-
-Drift is just markdown, so it also works without any skill loader. Two options:
-
-- **Point your agent at a file** — link one of the prompts (e.g. *"use https://github.com/coylemichael/drift/blob/main/research.md and research the auth flow"*) and let the agent fetch it.
-- **Paste the file contents** — open [research.md](research.md), [plan.md](plan.md), [execute.md](execute.md), or [handoff.md](handoff.md), paste it into your chat, and follow with your request.
-
 ### 1. Research — understanding the codebase
 
-**Ask Drift to research something.** Backed by [research.md](research.md) — paste it directly if your agent doesn't support skills.
+**Ask Drift to research something.** Backed by [research.md](research.md).
 
 Example prompts:
 
@@ -114,6 +107,7 @@ All Drift artifacts live under feature folders at the root of your repository. A
 
 ```
 drift/
+  INDEX.md
   auth-refactor/
     001-research-auth-flow.md
     002-plan-implementation.md
@@ -128,29 +122,42 @@ drift/
 
 The agent will ask you to confirm a feature identifier before writing the first artifact, scan existing `NNN-*` markdown files in `drift/<feature>/`, and allocate the next number. Anything that uniquely identifies the feature or work grouping is fine.
 
-New work for the same feature gets a new numbered artifact in that feature folder rather than modifying an older artifact. Distinct features should get separate feature folders. Drift does not maintain `INDEX.md`, `CURRENT.md`, or status directories; file-tree navigation comes from feature folders and numbered artifact filenames.
+New work for the same feature gets a new numbered artifact in that feature folder rather than modifying an older artifact. Distinct features should get separate feature folders. Drift does not maintain per-feature `CURRENT.md` files or status directories like `active/` and `done/`.
+
+### The running order
+
+Feature folders tell you what happened *within* a feature. They can't tell you what happened *across* the repo, in order — each folder's `NNN` counts from `001`, so once you have a dozen features the file tree stops being a timeline. Real work interleaves: you plan a feature, get pulled into another, come back two days later.
+
+`drift/INDEX.md` is that timeline. One table, every artifact in the repo, oldest first, with a global running number:
+
+```markdown
+| # | Date | Feature | Type | Artifact |
+|---|---|---|---|---|
+| 001 | 2026-08-28 20:30 +01:00 | auth-refactor | research | [001-research-auth-flow](auth-refactor/001-research-auth-flow.md) |
+| 002 | 2026-08-28 20:35 +01:00 | auth-refactor | plan | [002-plan-implementation](auth-refactor/002-plan-implementation.md) |
+| 003 | 2026-08-29 09:10 +01:00 | PROJ-1234 | research | [001-research-policy-flow](PROJ-1234/001-research-policy-flow.md) |
+```
+
+The `#` column is repo-wide running order and is deliberately independent of the folder-local `NNN` — entry `#047` can be `002-plan-...` inside its feature. Rows are sorted by the true instant of each artifact's frontmatter `date`, with timezone offsets normalized before comparing, so a repo worked on from more than one machine still reads in true order.
+
+Drift appends to the index as part of writing each artifact, so it stays current without being asked. It's a derived view — frontmatter is the source of truth — so it can be rebuilt at any time, including in a repo that already has Drift artifacts and no index yet. Ask Drift to rebuild the index, or run [`scripts/build-index.py`](scripts/build-index.py) against the repo's `drift/` directory.
 
 These are project artifacts — they travel with the repo, not with your editor or user profile. Drift ensures the repository-root `.gitignore` contains `/drift/` before writing artifacts by default.
 
-### Where these work
+### Installing
 
-These are plain markdown. Paste them into any agent or LLM — Zed, VS Code Copilot, Cursor, ChatGPT, Claude, Windsurf, or anything that accepts a system prompt. The YAML frontmatter at the top of each file is recognized by tools that support it and harmlessly ignored by those that don't.
-
-### Installing as reusable commands or skills
-
-Installing Drift as a skill is the default operating model (see [Getting Started](#getting-started)). The exact install location depends on your tool:
+Drift is installed, not pasted. It expects an agent that loads skills or prompt files from disk, because the workflow depends on things a chat transcript can't do: `SKILL.md` routing to the right prompt file, the agent reading and writing artifacts under `drift/`, and `scripts/build-index.py` rebuilding the index. Clone the repo into your tool's skill directory:
 
 | Tool | Location | Invocation |
 |------|----------|------------|
+| **Claude Code** | `~/.claude/skills/drift` — clone the repo as-is so `SKILL.md` can route to `research.md`, `plan.md`, `execute.md`, and `handoff.md`. Use `.claude/skills/drift` instead to scope Drift to a single project | `/drift`, or ask Claude to use the Drift skill |
 | **Zed Agent** | `~/.agents/skills/drift` — clone the repo as-is so `SKILL.md` can route to `research.md`, `plan.md`, `execute.md`, and `handoff.md` | Ask the agent to use the Drift skill |
 | **VS Code Copilot Chat** | `.github/prompts/` — rename with the `.prompt.md` suffix (e.g. `research.md` → `.github/prompts/research.prompt.md`) | `/research`, `/plan`, `/execute`, `/handoff` |
-| **Claude Code** | `~/.claude/skills/drift` — clone the repo as-is so `SKILL.md` can route to `research.md`, `plan.md`, `execute.md`, and `handoff.md`. Use `.claude/skills/drift` instead to scope Drift to a single project | `/drift`, or ask Claude to use the Drift skill |
 | **Cursor** | `.cursor/rules/` — rename with the `.mdc` suffix (e.g. `research.md` → `.cursor/rules/research.mdc`) and adjust frontmatter to Cursor's `globs:` / `alwaysApply:` keys | Triggered by rule scope |
-| **Anything else** | Paste the file contents directly into the chat | n/a |
 
 Claude Code discovers skills at session start, so restart the session after installing. Invoking `/drift` loads `SKILL.md`, which routes the request to the right prompt file — install Drift as one skill rather than four separate commands.
 
-The frontmatter is consumed by tools that understand it and ignored by those that don't — nothing breaks either way.
+Tools without a skill or prompt-file directory aren't supported. The prompts assume the agent can route between files, read and write project artifacts, and run a script; a single pasted prompt gets you the tone but none of the continuity, which is the entire point.
 
 ### Developing Drift itself
 

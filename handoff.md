@@ -68,6 +68,8 @@ Before creating `drift/` or writing the artifact, ensure the repository-root `.g
 
 Create `drift/<feature>/` if it doesn't exist.
 
+After writing the artifact, append a row for it to `drift/INDEX.md` — the repo-wide chronological index. Create the index if it doesn't exist, and rebuild it from frontmatter if it has fallen out of sync with the folders. See the "Root Index" section of `SKILL.md` for the format, ordering, and rebuild rules.
+
 ### Path verification
 
 Before writing, confirm the resolved path is **inside the repository** and matches `drift/<feature>/NNN-handoff-<description>.md`. Do not write new artifacts to `research/`, `plans/`, or `handoffs/` subfolders. Legacy subfolder paths are allowed only when explicitly continuing an existing legacy chain. Do not write to editor memory systems, temp directories, user-profile paths, or any absolute path outside the repository root. If you cannot resolve the repository root, ask the user rather than guess.
@@ -105,7 +107,8 @@ If you are pointed at an existing handoff document to **continue** work (rather 
 2. Read the source research document it references, if any
 3. If the handoff references a previous handoff, read that too — but focus on the most recent one
 4. Infer the feature folder from the handoff path, including legacy paths such as `drift/<feature>/handoffs/...`
-5. Pick up at the **Next Steps** section of the handoff
-6. Do not re-investigate the codebase or re-research. Trust the handoff's description of current state
-7. If a file reference in the handoff no longer matches what's on disk, note the discrepancy and adapt — don't halt
-8. When you finish or need to stop, write a new handoff using the format above, referencing the one you resumed from as `previous_handoff` and using the next flat numbered artifact file in the same feature folder
+5. Skim the tail of `drift/INDEX.md` to see what happened elsewhere in the repo since that handoff was written — other features may have landed changes it does not know about
+6. Pick up at the **Next Steps** section of the handoff
+7. Do not re-investigate the codebase or re-research. Trust the handoff's description of current state
+8. If a file reference in the handoff no longer matches what's on disk, note the discrepancy and adapt — don't halt
+9. When you finish or need to stop, write a new handoff using the format above, referencing the one you resumed from as `previous_handoff` and using the next flat numbered artifact file in the same feature folder

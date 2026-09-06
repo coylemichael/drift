@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **`drift/INDEX.md` — a root chronological index of every artifact in the repo.** Feature folders show a feature's own narrative, but each folder's `NNN` counts from `001`, so the file tree stops being a timeline once a repo has more than a few features and interleaved work becomes invisible. The index is one table, oldest first, with a global running `#` that is deliberately independent of the folder-local sequence. Rows sort on the **UTC-normalized instant** of each artifact's frontmatter `date`, not the raw string — a repo worked on from more than one machine mixes offsets, and `2026-08-31T00:00:00Z` is an hour *after* `2026-08-31T00:00:00+01:00`. Ties break on feature then sequence so rebuilds are stable.
+- `SKILL.md` — "Root Index" section: format, column and ordering rules, the append-on-write rule, and a rebuild procedure covering artifacts with no parsable `date` (fall back to a body date and mark approximate, or list under `## Undated`) and legacy subfolder paths.
+- `scripts/build-index.py` — stdlib-only rebuild helper for the index; takes a project's `drift/` directory, with `--check` to report an out-of-sync index without writing. First script in the repo, matching the Agent Skills convention of `SKILL.md` plus optional `scripts/`: judgment stays in the prompts, deterministic work moves to a tool. `SKILL.md` still specifies the format, so an agent without a shell can rebuild the index by following the procedure.
+- `README.md` — "The running order" section explaining why the index exists and how `#` relates to `NNN`.
+- `handoff.md` / `execute.md` — resuming now skims the tail of the index for work landed in *other* features since the artifact being resumed was written, so a stale plan is noticed rather than followed blindly.
+
+### Removed (breaking)
+- **The "paste anywhere" operating model.** Drift no longer presents itself as markdown you can paste into any chat. `README.md` drops the "No skill support? Use the files directly" fallback, the "Where these work" section, and the `Anything else → paste into the chat` install row. Pasting a single prompt was never equivalent: the workflow depends on `SKILL.md` routing between prompt files, the agent reading and writing artifacts under `drift/`, and now a script to rebuild the index — none of which survive a copy/paste. Tools without a skill or prompt-file directory are explicitly unsupported rather than half-supported.
+- `README.md` — "Installing as reusable commands or skills" renamed to "Installing" (anchor updated in Getting Started), reordered to lead with Claude Code, and rewritten to state the requirement up front.
+
+### Changed (breaking)
+- **Maintaining a root index is now required, reversing the previous prohibition.** `SKILL.md` and `README.md` previously said Drift does not maintain `INDEX.md`; that applied navigation-by-filename reasoning to the cross-feature case, where it does not hold. Per-feature `CURRENT.md` files and `active/`/`done/` status directories are still out. Existing projects need no migration — the index is a derived view, so rebuild it from frontmatter.
+- `research.md` / `plan.md` / `handoff.md` — "Writing to Disk" now includes appending the new artifact's index row, and rebuilding the index if it has fallen out of sync. Part of writing an artifact, not a separate request.
+- `execute.md` — index rows are the orchestrator's job alongside the handoff; sub-agents must not write either.
+
 ### Changed
 - `README.md` — Claude Code install switched from four copied commands in `.claude/commands/` to a single skill at `~/.claude/skills/drift` (or `.claude/skills/drift` for project scope), invoked as `/drift` and routed by `SKILL.md`. Matches the skills-by-default model and `SKILL.md`'s "do not split Drift into separate global skills" rule.
 

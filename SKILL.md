@@ -69,13 +69,15 @@ Use one project-local **feature folder** per feature or work grouping. Keep all 
 Use this project-local structure for new artifacts:
 
 ```text
-drift/<feature>/
-  001-research-<topic>.md
-  002-plan-<description>.md
-  003-handoff-<description>.md
-  004-handoff-<description>.md
-  005-research-<topic>.md
-  006-plan-<description>.md
+drift/
+  INDEX.md
+  <feature>/
+    001-research-<topic>.md
+    002-plan-<description>.md
+    003-handoff-<description>.md
+    004-handoff-<description>.md
+    005-research-<topic>.md
+    006-plan-<description>.md
 ```
 
 A Drift artifact filename has three parts:
@@ -96,11 +98,67 @@ When creating a new artifact file:
 4. Do not split new artifacts into `research/`, `plans/`, or `handoffs/` subfolders.
 5. If the user points to an existing Drift artifact or legacy subfolder path, infer the feature from that path and continue in the same feature folder. Preserve the existing path only when explicitly writing a follow-up for a legacy chain; otherwise write the next flat numbered file in `drift/<feature>/`.
 
-Do not maintain separate navigation files such as `drift/INDEX.md` or `drift/<feature>/CURRENT.md`, and do not move feature folders between status directories such as `active/` and `done/`. File-tree navigation comes from feature folders plus numbered artifact filenames.
+Do not maintain per-feature navigation files such as `drift/<feature>/CURRENT.md`, and do not move feature folders between status directories such as `active/` and `done/`. Within a feature, navigation comes from the numbered artifact filenames. Across features, it comes from `drift/INDEX.md` — see below.
 
 If later work is related to the same feature, create another numbered artifact in that feature folder rather than modifying an older artifact. If the work is a distinct feature, create a new feature folder.
 
 If the target project root is unclear, ask the user before writing any Drift artifact.
+
+## The Root Index
+
+Feature folders answer "what happened in this feature." They cannot answer "what happened in this repo, in order" — a feature's `NNN` sequence is local to that folder, so work interleaves across features in a way the file tree does not show. `drift/INDEX.md` is the cross-feature timeline that closes that gap.
+
+Maintain exactly one index, at `drift/INDEX.md`. It lists every Drift artifact in the repository in chronological order, oldest first.
+
+### Format
+
+A short header explaining what the index is, then one Markdown table. One row per artifact:
+
+```markdown
+| # | Date | Feature | Type | Artifact |
+|---|---|---|---|---|
+| 001 | 2026-08-28 20:30 +01:00 | auth-refactor | research | [001-research-auth-flow](auth-refactor/001-research-auth-flow.md) |
+| 002 | 2026-08-28 20:35 +01:00 | auth-refactor | plan | [002-plan-implementation](auth-refactor/002-plan-implementation.md) |
+| 003 | 2026-08-29 09:10 +01:00 | PROJ-1234 | research | [001-research-policy-flow](PROJ-1234/001-research-policy-flow.md) |
+```
+
+Column rules:
+
+- `#` — a zero-padded global running number, assigned by position in the index. It is the repo-wide running order and is **independent of** the folder-local `NNN` sequence. Do not expect them to match, and never renumber a feature folder to make them match.
+- `Date` — the artifact's frontmatter `date`, shown as local wall-clock time plus offset. Display it as recorded; do not rewrite it into another timezone.
+- `Feature` — the feature folder name.
+- `Type` — `research`, `plan`, or `handoff`, from frontmatter `type`.
+- `Artifact` — a relative link from `drift/` to the artifact, with the filename (minus `.md`) as the link text.
+
+Ordering rules:
+
+- Sort by the **true instant** of `date`, normalizing offsets to UTC before comparing. Artifacts written in different timezones are the common case in a repo with more than one machine, and a plain string sort gets them wrong: `2026-08-31T00:00:00Z` is one hour *after* `2026-08-31T00:00:00+01:00`, not before it. Because the Date column shows local time, a correctly sorted index can legitimately show an earlier wall-clock time in a later row.
+- Break ties on equal instants by feature name, then folder sequence, so the order is stable across rebuilds.
+- Oldest first, newest last. New rows append to the bottom.
+
+### Updating the Index
+
+Appending to the index is part of writing an artifact, not a separate request. After writing any `NNN-research-`, `NNN-plan-`, or `NNN-handoff-` file:
+
+1. Read `drift/INDEX.md`. Create it if missing, using the format above.
+2. Append one row for the artifact you just wrote, using the same `date` you put in its frontmatter.
+3. Set `#` to one more than the last row's number.
+4. Leave every existing row untouched.
+
+A new artifact is almost always the newest, so a plain append is correct. If you are backfilling an artifact with an older `date`, insert it in the right position instead and renumber the `#` column from that row down.
+
+### Rebuilding the Index
+
+Rebuild from scratch when the index is missing, when it has drifted out of sync with the folders, or when adopting the index in a repo that already has Drift artifacts. Frontmatter is the source of truth — the index is a derived view and can always be regenerated.
+
+To rebuild: scan `drift/**/*.md` excluding `INDEX.md`, read `date`, `feature`, `type`, and `sequence` from each artifact's frontmatter, sort by UTC-normalized instant per the ordering rules, and write the table with `#` renumbered from `001`.
+
+Two cases to handle explicitly rather than silently dropping:
+
+- **No parsable `date`.** Older artifacts may predate the frontmatter convention. Fall back to a date in the body (such as a `**Date:**` line), mark the row as approximate, and place it by that date. If there is no date at all, list the artifact under an `## Undated` heading below the table rather than guessing. Do not backfill frontmatter into an existing artifact to fix this unless the user asks.
+- **Legacy subfolder paths.** Artifacts in legacy layouts such as `drift/<feature>/handoffs/...` still belong in the index. Use the path's feature and link the real location.
+
+If a shell is available, `scripts/build-index.py` in this skill repo does the rebuild — run it with the target repo's `drift/` directory as its argument. It is a convenience, not a dependency; the procedure above is the specification.
 
 ## Gitignore Drift Artifacts
 
