@@ -148,12 +148,21 @@ These are project artifacts — they travel with the repo, not with your editor 
 
 ### Installing
 
-Drift is installed, not pasted. It expects an agent that loads skills or prompt files from disk, because the workflow depends on things a chat transcript can't do: `SKILL.md` routing to the right prompt file, the agent reading and writing artifacts under `drift/`, and `scripts/build-index.py` rebuilding the index. Clone the repo into your tool's skill directory:
+Drift is installed, not pasted. It expects an agent that loads skills or prompt files from disk, because the workflow depends on things a chat transcript can't do: `SKILL.md` routing to the right prompt file, the agent reading and writing artifacts under `drift/`, and `scripts/build-index.py` rebuilding the index.
+
+Clone the repo anywhere and run the installer:
+
+```sh
+git clone https://github.com/coylemichael/drift ~/projects/drift
+python3 ~/projects/drift/install.py
+```
+
+It detects Claude Code and Zed on this machine and symlinks each one's skills directory to the clone — a directory junction on Windows without Developer Mode. `git pull` in the clone is the upgrade; there is nothing to re-run. It touches nothing but those links: no project repository, no `.gitignore`, no agent settings. Re-running is safe, `--check` reports the state, `--dry-run` prints the plan, `--uninstall` removes only the links that point at this clone, and a real directory already in the way is reported rather than removed (`--force` moves it aside). Pass `--claude` or `--zed` to choose tools explicitly. VS Code and Cursor are per-project prompt files and stay manual:
 
 | Tool | Location | Invocation |
 |------|----------|------------|
-| **Claude Code** | `~/.claude/skills/drift` — clone the repo as-is so `SKILL.md` can route to `research.md`, `plan.md`, `execute.md`, and `handoff.md`. Use `.claude/skills/drift` instead to scope Drift to a single project | `/drift`, or ask Claude to use the Drift skill |
-| **Zed Agent** | `~/.agents/skills/drift` — clone the repo as-is so `SKILL.md` can route to `research.md`, `plan.md`, `execute.md`, and `handoff.md` | Ask the agent to use the Drift skill |
+| **Claude Code** | `~/.claude/skills/drift` — made by `install.py`. To scope Drift to a single project instead, clone it to `.claude/skills/drift` inside that project | `/drift`, or ask Claude to use the Drift skill |
+| **Zed Agent** | `~/.agents/skills/drift` — made by `install.py` | Ask the agent to use the Drift skill |
 | **VS Code Copilot Chat** | `.github/prompts/` — rename with the `.prompt.md` suffix (e.g. `research.md` → `.github/prompts/research.prompt.md`) | `/research`, `/plan`, `/execute`, `/handoff` |
 | **Cursor** | `.cursor/rules/` — rename with the `.mdc` suffix (e.g. `research.md` → `.cursor/rules/research.mdc`) and adjust frontmatter to Cursor's `globs:` / `alwaysApply:` keys | Triggered by rule scope |
 
@@ -163,12 +172,4 @@ Tools without a skill or prompt-file directory aren't supported. The prompts ass
 
 ### Developing Drift itself
 
-If you're working on Drift's prompts and also using it as a skill, avoid maintaining two copies. Clone the repo wherever you keep projects and symlink the skill directory to it:
-
-```sh
-git clone https://github.com/coylemichael/drift ~/projects/drift
-ln -s ~/projects/drift ~/.agents/skills/drift   # Zed Agent
-ln -s ~/projects/drift ~/.claude/skills/drift   # Claude Code
-```
-
-Symlink whichever skill directories your tools use. Edits in the working clone are immediately live in the skill — useful for iterating on prompt wording and testing it via skill invocation in the same session. The tradeoff: half-finished edits or a checked-out feature branch are what the skill serves. Check out `main` (or stash) to return the skill to a known-good state.
+If you're working on Drift's prompts and also using it as a skill, avoid maintaining two copies. The install above already does this: the skill directories are symlinks to the clone, wherever it lives, so the dev setup and the user setup are the same command. Run `python3 install.py --check` from the clone to confirm every link resolves to it. Edits in the working clone are immediately live in the skill — useful for iterating on prompt wording and testing it via skill invocation in the same session. The tradeoff: half-finished edits or a checked-out feature branch are what the skill serves. Check out `main` (or stash) to return the skill to a known-good state.
