@@ -168,6 +168,8 @@ It detects Claude Code and Zed on this machine and symlinks each one's skills di
 
 Claude Code discovers skills at session start, so restart the session after installing. Invoking `/drift` loads `SKILL.md`, which routes the request to the right prompt file — install Drift as one skill rather than four separate commands.
 
+To confirm an install, `python3 install.py --check` reports every link. For an end-to-end check, run [`scripts/smoke-test.sh`](scripts/smoke-test.sh): it repeats the link check, then asks a print-mode Claude Code session to list its skills and to run a Drift research pass in a throwaway repo under `/tmp`, verifying the artifact's clock-read date, full commit hash, index row and `.gitignore` entry before deleting that repo. It needs a Claude Code binary (the `claude` CLI, or the one Zed bundles) and makes two model calls; without a binary it runs the link check and tells you to try `/drift` in a new session instead.
+
 Tools without a skill or prompt-file directory aren't supported. The prompts assume the agent can route between files, read and write project artifacts, and run a script; a single pasted prompt gets you the tone but none of the continuity, which is the entire point.
 
 ### Developing Drift itself
