@@ -1,1 +1,3 @@
 /drift/
+__pycache__/
+*.pyc
