@@ -24,6 +24,7 @@ This hook must never fail: a non-zero exit from SessionStart can block the
 session from starting, so every path here ends in exit 0.
 """
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -48,8 +49,28 @@ def orphan_notice(repo, mine):
     return notes
 
 
+def manual_event(argv):
+    """Allow the hook to be run by hand, for agents that have no hook surface.
+
+    VS Code Copilot and Cursor load prompt files but cannot run anything at
+    session start, so there the same record has to be opened deliberately:
+
+        python3 session-start.py --repo .
+    """
+    if "--repo" not in argv:
+        return None
+    where = argv[argv.index("--repo") + 1] if len(argv) > argv.index("--repo") + 1 else "."
+    return {
+        "session_id": "manual-" + datetime.now().astimezone().strftime("%Y%m%dT%H%M%S"),
+        "cwd": where,
+        "hook_event_name": "SessionStart",
+        "how": "startup",
+        "manual": True,
+    }
+
+
 def main():
-    event = st.read_event()
+    event = manual_event(sys.argv[1:]) or st.read_event()
     cwd = event.get("cwd") or "."
     how = event.get("how") or "startup"
     session_id = event.get("session_id")
@@ -79,10 +100,15 @@ def main():
                 "started": record.get("started") or st.now(),
                 "start_branch": st.git(repo, "rev-parse", "--abbrev-ref", "HEAD"),
                 "start_commit": st.git(repo, "rev-parse", "HEAD"),
+                # What the tree already looked like, so this session is credited
+                # only with what it changes from here.
+                "start_fingerprint": st.worktree_fingerprint(repo),
                 "how": how,
             }
         )
         st.write_record(path, record)
+
+    st.reap_records()
 
     parts = [
         "Drift session record: %s" % path,
@@ -109,7 +135,12 @@ def main():
         )
         parts.extend(orphans)
 
-    st.emit("\n".join(parts))
+    if event.get("manual"):
+        record["manual"] = True
+        st.write_record(path, record)
+        print("\n".join(parts))  # Read by a person or pasted into a chat, not by a harness.
+    else:
+        st.emit("\n".join(parts))
 
 
 if __name__ == "__main__":

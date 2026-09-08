@@ -156,6 +156,8 @@ They are registered once, in `~/.claude/settings.json`, and cover **both Claude 
 
 Hooks load when a session starts, so an already-running session will not have them. Open a new one.
 
+Where there is genuinely no hook mechanism, the same thing can be done deliberately. `python3 ~/.claude/skills/drift/scripts/hooks/session-start.py --repo .` opens the record and prints the feature board for pasting into the session.
+
 **At session start**, a record is opened outside the repository holding the session's real start time, branch and commit. The session is also told which Drift features are open, newest first, with the latest artifact and status for each — so "carry on where we left off" has something concrete to read. A compaction or a context clear keeps the record and restates that summary, which is exactly when a session most needs re-anchoring.
 
 **At session end**, the record is closed with the commits and files the session touched. A session that changed nothing leaves no record at all.

@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -93,6 +94,75 @@ def open_records(repo, exclude=None):
             found.append((path, record))
     found.sort(key=lambda pair: pair[1].get("started", ""), reverse=True)
     return found
+
+
+def worktree_fingerprint(repo):
+    """What the working tree looks like right now, per file.
+
+    Taken at session start and again at session end so that a session is
+    credited only with what it actually changed. Comparing against the starting
+    *commit* instead would hand every session the uncommitted work it merely
+    found lying there, which is how a two-second session that did nothing came
+    to report ten changed files.
+
+    `--numstat` gives added/deleted counts per path, so a file that was already
+    dirty and got edited further is still detected.
+    """
+    numstat = {}
+    for line in git(repo, "diff", "HEAD", "--numstat").split("\n"):
+        parts = line.split("\t")
+        if len(parts) >= 3 and parts[2]:
+            numstat[parts[2]] = "%s/%s" % (parts[0], parts[1])
+    untracked = sorted(
+        line for line in git(repo, "ls-files", "--others", "--exclude-standard").split("\n") if line
+    )
+    return {"numstat": numstat, "untracked": untracked}
+
+
+def fingerprint_delta(before, end):
+    """Paths whose working-tree state differs between two fingerprints."""
+    before = before or {}
+    start_numstat = before.get("numstat") or {}
+    end_numstat = end.get("numstat") or {}
+    changed = {
+        path
+        for path in set(start_numstat) | set(end_numstat)
+        if start_numstat.get(path) != end_numstat.get(path)
+    }
+    changed |= set(before.get("untracked") or []) ^ set(end.get("untracked") or [])
+    return changed
+
+
+def reap_records(keep_days=30):
+    """Drop records whose repository is gone, or that are simply too old.
+
+    Nothing else removes them: a record for a repo under /tmp outlives the repo,
+    and a machine left alone accumulates them indefinitely.
+    """
+    if not RECORD_ROOT.is_dir():
+        return 0
+    cutoff = time.time() - keep_days * 86400
+    removed = 0
+    for path in RECORD_ROOT.rglob("*.json"):
+        record = read_record(path)
+        gone = record is None or not Path(record.get("repo", "")).is_dir()
+        try:
+            stale = path.stat().st_mtime < cutoff
+        except OSError:
+            stale = False
+        if gone or stale:
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                pass
+    for directory in RECORD_ROOT.iterdir() if RECORD_ROOT.is_dir() else []:
+        if directory.is_dir() and not any(directory.iterdir()):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+    return removed
 
 
 def load_index_builder():

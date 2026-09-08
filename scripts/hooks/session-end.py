@@ -47,14 +47,14 @@ def main():
         log = st.git(repo, "log", "--format=%h %s", "%s..HEAD" % start)
         commits = [line for line in log.split("\n") if line]
 
-    # Bare paths from plumbing, rather than parsing `status --porcelain`: its
-    # two-column prefix is position-dependent and does not survive a strip().
-    tracked = st.git(repo, "diff", "--name-only", start) if start else ""
-    untracked = st.git(repo, "ls-files", "--others", "--exclude-standard")
-    touched_files = sorted(
-        {line for line in tracked.split("\n") if line}
-        | {line for line in untracked.split("\n") if line}
-    )
+    # Credit the session only with what changed while it ran. Diffing against
+    # the starting commit instead would hand it every uncommitted file that was
+    # already sitting in the tree when it opened.
+    touched = st.fingerprint_delta(record.get("start_fingerprint"), st.worktree_fingerprint(repo))
+    if start and head and start != head:
+        committed = st.git(repo, "diff", "--name-only", start, head)
+        touched |= {line for line in committed.split("\n") if line}
+    touched_files = sorted(touched)
     uncommitted = len([line for line in st.git(repo, "status", "--porcelain").split("\n") if line])
 
     if not commits and not touched_files:
