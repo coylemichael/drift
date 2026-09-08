@@ -5,15 +5,19 @@ Registered by install.py for every SessionEnd matcher. Reads the hook payload on
 stdin and writes nothing to the session, which has already ended.
 
 It closes the record opened at session start with what actually happened:
-uncommitted changes, and commits made since the starting commit. A session that
-changed nothing leaves no record at all — the file is deleted, so trivial
-sessions cost nothing and the only records that survive are ones that mean
-something.
+commits made since the starting commit, and the files the session itself
+changed. A session that changed nothing leaves no record at all — the file is
+deleted, so trivial sessions cost nothing and the only records that survive are
+ones that mean something.
 
 A record that survives without a handoff is an orphan, and the next session in
 this repo is told about it by the session-start hook. That inverts Drift's worst
 failure: instead of the most exhausted agent writing the handoff, the next one
 writes it from this record and the git history, with a full context window.
+
+Can also be run by hand for agents that have no session-end event:
+
+    python3 session-end.py --repo .
 """
 import sys
 from pathlib import Path
@@ -23,18 +27,43 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import session_state as st  # noqa: E402
 
 
-def main():
+def newest_open_record(repo):
+    """The most recent record for this repo that was never closed."""
+    for path, record in st.open_records(repo):
+        if not record.get("ended"):
+            return path
+    return None
+
+
+def resolve(argv):
+    """Work out which record to close. Returns (repo, path, why, manual)."""
+    if "--repo" in argv:
+        index = argv.index("--repo")
+        where = argv[index + 1] if len(argv) > index + 1 else "."
+        repo = st.repo_root(where)
+        if repo is None:
+            print("not a git repository: %s" % where, file=sys.stderr)
+            return None, None, None, True
+        path = newest_open_record(repo)
+        if path is None:
+            print("no open Drift session record for %s" % repo)
+        return repo, path, "manual", True
+
     event = st.read_event()
-    cwd = event.get("cwd") or "."
     session_id = event.get("session_id")
     if not session_id:
-        return  # No payload, no session to close.
-
-    repo = st.repo_root(cwd)
+        return None, None, None, False  # No payload, no session to close.
+    repo = st.repo_root(event.get("cwd") or ".")
     if repo is None:
+        return None, None, None, False
+    return repo, st.record_path(repo, session_id), event.get("why") or "other", False
+
+
+def main():
+    repo, path, why, manual = resolve(sys.argv[1:])
+    if repo is None or path is None:
         return
 
-    path = st.record_path(repo, session_id)
     record = st.read_record(path)
     if record is None:
         return  # No start record: nothing to close.
@@ -62,12 +91,14 @@ def main():
             path.unlink()  # Nothing happened; leave no trace.
         except OSError:
             pass
+        if manual:
+            print("closed: nothing changed, record removed (%s)" % path.name)
         return
 
     record.update(
         {
             "ended": st.now(),
-            "why": event.get("why") or "other",
+            "why": why,
             "end_branch": st.git(repo, "rev-parse", "--abbrev-ref", "HEAD"),
             "end_commit": head,
             "commits": commits,
@@ -77,6 +108,11 @@ def main():
         }
     )
     st.write_record(path, record)
+    if manual:
+        print(
+            "closed %s: %d file(s), %d commit(s). Write a Drift handoff from it, then delete it."
+            % (path.name, len(touched_files), len(commits))
+        )
 
 
 if __name__ == "__main__":

@@ -186,7 +186,17 @@ Two further rules:
 
 ## Session Records
 
-Drift ships two hooks, registered by `install.py` in `~/.claude/settings.json` and living in `scripts/hooks/`. A skill cannot do their job: a skill is loaded once the model reaches for it, so nothing in this file can run at the start of a session. They serve Claude Code and Zed alike, because Zed's agent is the Claude Code binary reading the same settings file.
+Drift ships two hooks, registered by `install.py` in `~/.claude/settings.json` and living in `scripts/hooks/`. A skill cannot do their job on its own: a skill is loaded once the model reaches for it, so nothing in this file can run at the start of a session.
+
+The hooks fire only in harnesses that read `~/.claude/settings.json` — Claude Code itself, and Zed's `claude-acp` agent, which is the Claude Code binary. **Zed's native agent, VS Code Copilot and Cursor have no hook mechanism at all.** In those, the record has to be opened deliberately.
+
+**If you are reading this and the session gave you no Drift session record, open one now**, before writing any artifact:
+
+```sh
+python3 <skill dir>/scripts/hooks/session-start.py --repo .
+```
+
+That prints the record path and the open-feature board, and reads the clock once at a known moment rather than leaving the handoff to estimate later. Close it with `session-end.py --repo .` when the work is done, or simply delete it once the handoff is written.
 
 - **SessionStart** opens a record at `~/.claude/drift-sessions/<repo>/<session-id>.json` holding the session's start time, branch and commit, read from the machine rather than estimated. It also states which Drift features are open, newest first, and reports any earlier session that changed files and ended without a handoff. On a compaction or a context clear it keeps the existing record and only restates that context, because the session's beginning has not moved.
 - **SessionEnd** closes the record with the commits and files the session touched. A session that changed nothing has its record deleted, so only meaningful ones survive.

@@ -152,11 +152,27 @@ Everything above depends on someone remembering to ask for a handoff, and on the
 
 Two hooks close that gap, installed by `install.py` and skippable with `--no-hooks`. A skill cannot do this: a skill loads when the model reaches for it, so nothing in `SKILL.md` can run at session start.
 
-They are registered once, in `~/.claude/settings.json`, and cover **both Claude Code and Zed**. Zed's agent is the Claude Code binary launched with `--setting-sources=user`, so it reads that same file and fires the same hooks. There is nothing separate to install for Zed and no Zed-side hook surface to install it into. Verify with `python3 install.py --check`, which runs the hook for real and reads its reply rather than just confirming it is listed. VS Code Copilot and Cursor are different products with no hook mechanism; they get the prompt files only.
+They are registered once, in `~/.claude/settings.json`. That file is read by Claude Code and by Zed's `claude-acp` agent, which *is* the Claude Code binary launched with `--setting-sources=user`, so both fire the hooks and neither needs anything installed separately.
 
-Hooks load when a session starts, so an already-running session will not have them. Open a new one.
+**Not every agent has hooks.** Zed ships two independent agents and only one of them is Claude Code:
 
-Where there is genuinely no hook mechanism, the same thing can be done deliberately. `python3 ~/.claude/skills/drift/scripts/hooks/session-start.py --repo .` opens the record and prints the feature board for pasting into the session.
+| Agent | Skills from | Hooks |
+|---|---|---|
+| Claude Code | `~/.claude/skills` | Yes |
+| Zed, `claude-acp` external agent | `~/.claude/skills` | Yes, the same registration |
+| Zed, native agent | `~/.agents/skills` | None — it is not Claude Code and never reads `~/.claude/settings.json` |
+| VS Code Copilot, Cursor | prompt files | None |
+
+Where there are no hooks, open the record deliberately instead. It is the same script and the same record:
+
+```sh
+python3 ~/.agents/skills/drift/scripts/hooks/session-start.py --repo .   # at the start
+python3 ~/.agents/skills/drift/scripts/hooks/session-end.py   --repo .   # at the end
+```
+
+`SKILL.md` tells the agent to do this itself when it finds no record, so in practice it happens on the first Drift request of the session.
+
+Hooks load when a session starts, so an already-running session will not have them — open a new one. `install.py --check` executes the hook and reads its reply, which proves the script works; it cannot prove your harness invokes it. To confirm that, start a session in a git repo and look for a file under `~/.claude/drift-sessions/`.
 
 **At session start**, a record is opened outside the repository holding the session's real start time, branch and commit. The session is also told which Drift features are open, newest first, with the latest artifact and status for each — so "carry on where we left off" has something concrete to read. A compaction or a context clear keeps the record and restates that summary, which is exactly when a session most needs re-anchoring.
 
@@ -182,7 +198,8 @@ It detects Claude Code and Zed on this machine, symlinks each one's skills direc
 | Tool | Location | Hooks | Invocation |
 |------|----------|-------|------------|
 | **Claude Code** | `~/.claude/skills/drift` — made by `install.py`. To scope Drift to a single project instead, clone it to `.claude/skills/drift` inside that project | Yes | `/drift`, or ask Claude to use the Drift skill |
-| **Zed Agent** | `~/.agents/skills/drift` — made by `install.py` | Yes, the same ones — Zed runs the Claude Code binary against `~/.claude/settings.json` | Ask the agent to use the Drift skill |
+| **Zed — `claude-acp` agent** | `~/.claude/skills/drift` — it is the Claude Code binary | Yes, the same registration | Ask the agent to use the Drift skill |
+| **Zed — native agent** | `~/.agents/skills/drift` — made by `install.py` | No hook mechanism; open the record manually | Ask the agent to use the Drift skill |
 | **VS Code Copilot Chat** | `.github/prompts/` — rename with the `.prompt.md` suffix (e.g. `research.md` → `.github/prompts/research.prompt.md`) | No hook mechanism | `/research`, `/plan`, `/execute`, `/handoff` |
 | **Cursor** | `.cursor/rules/` — rename with the `.mdc` suffix (e.g. `research.md` → `.cursor/rules/research.mdc`) and adjust frontmatter to Cursor's `globs:` / `alwaysApply:` keys | No hook mechanism | Triggered by rule scope |
 

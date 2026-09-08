@@ -25,10 +25,12 @@ machine. Two things get installed:
            automatic: a skill only loads once the model reaches for it, so
            nothing in SKILL.md can run at session start. Skip with --no-hooks.
 
-           These cover Zed as well as Claude Code. Zed's agent runs the Claude
-           Code binary with --setting-sources=user, so it reads the same file
-           and fires the same hooks; there is nothing separate to install and
-           no Zed-side hook surface to install it into.
+           They fire in whatever reads that file: Claude Code, and Zed's
+           claude-acp agent, which is the Claude Code binary. They do NOT fire
+           in Zed's native agent, VS Code Copilot or Cursor, none of which have
+           a hook mechanism. There the record is opened by hand instead, with
+           scripts/hooks/session-start.py --repo . — SKILL.md tells the agent
+           to do that itself when it finds no record.
 
 Outside those two, it creates nothing: no project repository, no .gitignore,
 no sudo. Re-running is safe. Anything already right is left alone and reported
@@ -484,13 +486,13 @@ def do_hooks(tools, dry_run, remove=False):
     if backup:
         print("  %-12s %-12s %s" % ("", "backup", short(backup)))
     if not remove and any(tool.key == "zed" for tool in tools):
-        # Worth saying plainly: an install "for Zed" writes to Claude Code's
-        # settings file, and that is correct rather than a mistake.
-        print(
-            "  %-12s %-12s %s"
-            % ("", "note", "Zed's agent is the Claude Code binary and reads %s, so it" % short(SETTINGS))
-        )
-        print("  %-12s %-12s %s" % ("", "", "gets these hooks too. Both agents need a new session."))
+        # Zed ships two independent agents and only one of them is Claude Code.
+        # Saying "Zed" without that distinction is what sent a native-agent
+        # session looking for a hook surface that does not exist.
+        print("  %-12s %-12s %s" % ("", "note", "Zed has two agents. Its claude-acp agent is the"))
+        print("  %-12s %-12s %s" % ("", "", "Claude Code binary and fires these hooks. Its native"))
+        print("  %-12s %-12s %s" % ("", "", "agent does not — open the record there by hand with"))
+        print("  %-12s %-12s %s" % ("", "", "scripts/hooks/session-start.py --repo ."))
     return True
 
 
@@ -554,9 +556,17 @@ def do_check(tools, hooks=True):
             ok = False
             print("  %-12s %-12s %s" % ("hooks", "FAIL", "; ".join(problems)))
         else:
+            # Deliberately not "working". Running the script proves the script;
+            # only a live session proves the harness invokes it, and a harness
+            # with no hook mechanism at all fails exactly here while passing
+            # every check this program can make.
             print(
                 "  %-12s %-12s %s"
-                % ("hooks", "ok", "SessionStart and SessionEnd registered and answering")
+                % ("hooks", "ok", "registered; script answers when run directly")
+            )
+            print(
+                "  %-12s %-12s %s"
+                % ("", "", "harness invocation shows up as a file in ~/.claude/drift-sessions/")
             )
     problems = check_clone()
     if problems:

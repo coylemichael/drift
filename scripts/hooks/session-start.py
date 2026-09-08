@@ -33,10 +33,24 @@ import session_state as st  # noqa: E402
 
 
 def orphan_notice(repo, mine):
-    """Earlier sessions in this repo that changed files and were never written up."""
+    """Earlier sessions in this repo whose work was never written up.
+
+    Two kinds. A closed record with changes is an orphan outright. An *open*
+    record is normally a session still running, so it is not reported — except
+    a manual one, because the agents that open those have no session-end event
+    to close them, and they would otherwise pile up unseen.
+    """
     notes = []
     for path, record in st.open_records(repo, exclude=mine):
-        if not record.get("ended") or record.get("handoff"):
+        if record.get("handoff"):
+            continue
+        if not record.get("ended"):
+            if record.get("manual"):
+                notes.append(
+                    "- manual record opened %s is still open — close it with"
+                    " `session-end.py --repo .` or write its handoff (%s)"
+                    % (record.get("started", "unknown")[:16], path)
+                )
             continue
         changed = record.get("files_changed") or 0
         commits = record.get("commits") or []
