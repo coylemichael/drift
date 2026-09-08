@@ -2,9 +2,9 @@
 """Install Drift as a skill for the agents on this machine.
 
 Usage:
-    install.py [--claude] [--zed] [--dry-run] [--force]
-    install.py --check [--claude] [--zed]
-    install.py --uninstall [--claude] [--zed] [--dry-run]
+    install.py [--claude] [--zed] [--dry-run] [--force] [--no-hooks]
+    install.py --check [--claude] [--zed] [--no-hooks]
+    install.py --uninstall [--claude] [--zed] [--dry-run] [--no-hooks]
 
 Run it from the clone, wherever the clone lives:
 
@@ -12,20 +12,32 @@ Run it from the clone, wherever the clone lives:
     python3 ~/projects/drift/install.py
 
 With no tool flags it installs for every supported agent it finds on this
-machine. An install is one symlink from the agent's skills directory to this
-clone, so `git pull` here is the upgrade and there is nothing to re-run. On
-Windows, where a symlink needs Developer Mode, it falls back to a directory
-junction, which needs no privilege.
+machine. Two things get installed:
 
-It creates nothing but those links: no project repository, no .gitignore, no
-agent settings, no sudo. Re-running is safe. Anything already right is left
-alone and reported as such. A real directory in the way is reported, never
-removed, unless --force moves it aside.
+  Skill    one symlink from each agent's skills directory to this clone, so
+           `git pull` here is the upgrade and there is nothing to re-run. On
+           Windows, where a symlink needs Developer Mode, it falls back to a
+           directory junction, which needs no privilege.
+
+  Hooks    SessionStart and SessionEnd entries in Claude Code's user settings,
+           pointing at scripts/hooks/. They open a session record at the start
+           and close it at the end, which is what makes Drift's continuity
+           automatic: a skill only loads once the model reaches for it, so
+           nothing in SKILL.md can run at session start. Skip with --no-hooks.
+
+Outside those two, it creates nothing: no project repository, no .gitignore,
+no sudo. Re-running is safe. Anything already right is left alone and reported
+as such. A real directory in the way is reported, never removed, unless --force
+moves it aside. The settings file is backed up before any edit, only Drift's own
+hook entries are touched, and one that does not parse is refused rather than
+overwritten.
 
 Requires only the Python standard library (3.7+).
 """
 import argparse
+import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -35,6 +47,17 @@ from pathlib import Path
 MIN_PYTHON = (3, 7)
 HERE = Path(__file__).resolve().parent
 PROMPT_FILES = ("SKILL.md", "research.md", "plan.md", "execute.md", "handoff.md")
+
+# Hooks are a Claude Code feature, registered in its user settings file. They
+# are what makes Drift's session record automatic: a skill only loads once the
+# model reaches for it, so nothing in SKILL.md can fire at session start.
+SETTINGS = Path.home() / ".claude" / "settings.json"
+HOOK_MARKER = "drift/scripts/hooks/"  # identifies our entries on re-run and uninstall
+HOOK_TIMEOUT = 10
+HOOKS = (
+    ("SessionStart", "startup|resume|clear|compact|fork", "session-start.py"),
+    ("SessionEnd", "clear|resume|logout|prompt_input_exit|other", "session-end.py"),
+)
 
 
 class Tool:
@@ -224,6 +247,212 @@ def do_uninstall(tools, dry_run):
     return ok
 
 
+# --- hooks -------------------------------------------------------------------
+
+
+def hook_base(tools):
+    """Where the hook commands should point.
+
+    The Claude Code skill link when there is one, so that moving the clone and
+    re-running the installer repairs the link and the hooks together. Otherwise
+    the clone itself.
+    """
+    for tool in tools:
+        if tool.key == "claude" and is_link(tool.link) and resolves_here(tool.link):
+            return tool.link
+    return HERE
+
+
+def load_settings():
+    """Returns (data, error). A file that exists but does not parse is an error,
+    never something to overwrite."""
+    if not SETTINGS.is_file():
+        return {}, None
+    try:
+        with open(SETTINGS, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except ValueError as err:
+        return None, "%s does not parse as JSON (%s)" % (short(SETTINGS), err)
+    except OSError as err:
+        return None, "cannot read %s: %s" % (short(SETTINGS), err)
+    if not isinstance(data, dict):
+        return None, "%s is not a JSON object" % short(SETTINGS)
+    return data, None
+
+
+def save_settings(data):
+    SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+    if SETTINGS.is_file():
+        backup = SETTINGS.with_name("settings.json.bak-%s" % time.strftime("%Y%m%d-%H%M%S"))
+        shutil.copy2(str(SETTINGS), str(backup))
+    else:
+        backup = None
+    tmp = SETTINGS.with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)
+        handle.write("\n")
+    os.replace(str(tmp), str(SETTINGS))
+    return backup
+
+
+def hook_command(base, script):
+    return '%s "%s"' % (sys.executable, base / "scripts" / "hooks" / script)
+
+
+def apply_hooks(data, base):
+    """Add or repoint Drift's hook entries. Returns a list of change descriptions.
+
+    Only entries whose command contains HOOK_MARKER are ours. Everything else in
+    the file, including other hooks on the same event, is left untouched.
+    """
+    changes = []
+    hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ValueError("the settings file's \"hooks\" key is not an object")
+
+    for event, matcher, script in HOOKS:
+        wanted = hook_command(base, script)
+        groups = hooks.setdefault(event, [])
+        if not isinstance(groups, list):
+            raise ValueError('the settings file\'s "hooks.%s" is not a list' % event)
+
+        mine = [
+            entry
+            for group in groups
+            if isinstance(group, dict)
+            for entry in group.get("hooks", [])
+            if isinstance(entry, dict) and HOOK_MARKER in str(entry.get("command", ""))
+            and script in str(entry.get("command", ""))
+        ]
+        if mine:
+            for entry in mine:
+                if entry.get("command") != wanted:
+                    entry["command"] = wanted
+                    entry["timeout"] = HOOK_TIMEOUT
+                    changes.append("%s: repointed to %s" % (event, wanted))
+            continue
+
+        groups.append(
+            {
+                "matcher": matcher,
+                "hooks": [{"type": "command", "command": wanted, "timeout": HOOK_TIMEOUT}],
+            }
+        )
+        changes.append("%s: added (%s)" % (event, matcher))
+    return changes
+
+
+def strip_hooks(data):
+    """Remove only Drift's hook entries, and any group left empty by that."""
+    changes = []
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return changes
+    for event, _, script in HOOKS:
+        groups = hooks.get(event)
+        if not isinstance(groups, list):
+            continue
+        kept_groups = []
+        for group in groups:
+            if not isinstance(group, dict):
+                kept_groups.append(group)
+                continue
+            entries = group.get("hooks", [])
+            kept = [
+                entry
+                for entry in entries
+                if not (
+                    isinstance(entry, dict)
+                    and HOOK_MARKER in str(entry.get("command", ""))
+                    and script in str(entry.get("command", ""))
+                )
+            ]
+            if len(kept) != len(entries):
+                changes.append("%s: removed" % event)
+            if kept:
+                group["hooks"] = kept
+                kept_groups.append(group)
+            elif not entries:
+                kept_groups.append(group)
+        if kept_groups:
+            hooks[event] = kept_groups
+        else:
+            hooks.pop(event, None)
+    if not hooks:
+        data.pop("hooks", None)
+    return changes
+
+
+def registered_hooks(data):
+    """Our hook commands currently in the settings file, by event."""
+    found = {}
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    if not isinstance(hooks, dict):
+        return found
+    for event, _, script in HOOKS:
+        for group in hooks.get(event, []) or []:
+            if not isinstance(group, dict):
+                continue
+            for entry in group.get("hooks", []) or []:
+                if (
+                    isinstance(entry, dict)
+                    and HOOK_MARKER in str(entry.get("command", ""))
+                    and script in str(entry.get("command", ""))
+                ):
+                    found[event] = entry["command"]
+    return found
+
+
+def do_hooks(tools, dry_run, remove=False):
+    data, error = load_settings()
+    if error:
+        print("  %-12s %-12s %s" % ("hooks", "FAIL", error))
+        print("               Fix or move that file, then re-run. Nothing was written.")
+        return False
+
+    base = hook_base(tools)
+    try:
+        changes = strip_hooks(data) if remove else apply_hooks(data, base)
+    except ValueError as err:
+        print("  %-12s %-12s %s" % ("hooks", "FAIL", err))
+        return False
+
+    if not changes:
+        print("  %-12s %-12s %s" % ("hooks", "ok", "already registered in " + short(SETTINGS)))
+        return True
+    if dry_run:
+        for change in changes:
+            print("  %-12s %-12s %s" % ("hooks", "would change", change))
+        return True
+    try:
+        backup = save_settings(data)
+    except OSError as err:
+        print("  %-12s %-12s %s" % ("hooks", "FAIL", "cannot write %s: %s" % (short(SETTINGS), err)))
+        return False
+    for change in changes:
+        print("  %-12s %-12s %s" % ("hooks", "registered" if not remove else "removed", change))
+    if backup:
+        print("  %-12s %-12s %s" % ("", "backup", short(backup)))
+    return True
+
+
+def check_hooks():
+    data, error = load_settings()
+    if error:
+        return [error]
+    found = registered_hooks(data)
+    problems = []
+    for event, _, script in HOOKS:
+        command = found.get(event)
+        if not command:
+            problems.append("%s not registered" % event)
+            continue
+        path = command.split('"')[1] if '"' in command else command.split()[-1]
+        if not Path(path).is_file():
+            problems.append("%s points at a missing script (%s)" % (event, path))
+    return problems
+
+
 def check_clone():
     """Is this clone a complete Drift, and does its script run under this Python?"""
     problems = ["missing %s" % name for name in PROMPT_FILES if not (HERE / name).is_file()]
@@ -252,7 +481,7 @@ def check_tool(tool):
     return problems
 
 
-def do_check(tools):
+def do_check(tools, hooks=True):
     ok = True
     for tool in tools:
         problems = check_tool(tool)
@@ -261,6 +490,13 @@ def do_check(tools):
             say(tool, "FAIL", "; ".join(problems))
         else:
             say(tool, "ok", short(tool.link))
+    if hooks:
+        problems = check_hooks()
+        if problems:
+            ok = False
+            print("  %-12s %-12s %s" % ("hooks", "FAIL", "; ".join(problems)))
+        else:
+            print("  %-12s %-12s %s" % ("hooks", "ok", "SessionStart and SessionEnd in " + short(SETTINGS)))
     problems = check_clone()
     if problems:
         ok = False
@@ -287,6 +523,7 @@ def main(argv=None):
     mode.add_argument("--uninstall", action="store_true", help="remove the links that point at this clone")
     parser.add_argument("--dry-run", action="store_true", help="print the plan; change nothing")
     parser.add_argument("--force", action="store_true", help="move a real directory aside to make room for the link")
+    parser.add_argument("--no-hooks", action="store_true", help="skip the session hooks; install the skill only")
     args = parser.parse_args(argv)
 
     if not (HERE / "SKILL.md").is_file():
@@ -302,9 +539,11 @@ def main(argv=None):
             return 1 if args.check else 0
         if args.check:
             print("Drift check, clone at %s" % HERE)
-            return 0 if do_check(chosen) else 1
+            return 0 if do_check(chosen, hooks=not args.no_hooks) else 1
         print("Drift uninstall%s, clone at %s" % (" (dry run)" if args.dry_run else "", HERE))
         ok = do_uninstall(chosen, args.dry_run)
+        if not args.no_hooks:
+            ok = do_hooks(chosen, args.dry_run, remove=True) and ok
         if args.dry_run:
             print("Nothing written.")
         return 0 if ok else 1
@@ -317,12 +556,14 @@ def main(argv=None):
 
     print("Drift install%s, clone at %s" % (" (dry run)" if args.dry_run else "", HERE))
     ok, changed = do_install(chosen, args.dry_run, args.force)
+    if not args.no_hooks:
+        ok = do_hooks(chosen, args.dry_run) and ok
     if args.dry_run:
         print("Nothing written.")
         return 0 if ok else 1
 
     print("Check")
-    ok = do_check(chosen) and ok
+    ok = do_check(chosen, hooks=not args.no_hooks) and ok
     if changed:
         print("Restart any open agent session: skills are discovered at session start.")
     return 0 if ok else 1

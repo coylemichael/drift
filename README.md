@@ -146,6 +146,20 @@ Drift appends to the index as part of writing each artifact, so it stays current
 
 These are project artifacts — they travel with the repo, not with your editor or user profile. Drift ensures the repository-root `.gitignore` contains `/drift/` before writing artifacts by default.
 
+### Session records
+
+Everything above depends on someone remembering to ask for a handoff, and on the agent writing it knowing when the session began. Both are weak points. The agent asked for a handoff is at the end of its context window, with the start of the session long since summarised away — the worst-placed writer in the whole workflow, and the reason Drift kept finding invented timestamps.
+
+Two Claude Code hooks close that gap, installed by `install.py` and skippable with `--no-hooks`. A skill cannot do this: a skill loads when the model reaches for it, so nothing in `SKILL.md` can run at session start.
+
+**At session start**, a record is opened outside the repository holding the session's real start time, branch and commit. The session is also told which Drift features are open, newest first, with the latest artifact and status for each — so "carry on where we left off" has something concrete to read. A compaction or a context clear keeps the record and restates that summary, which is exactly when a session most needs re-anchoring.
+
+**At session end**, the record is closed with the commits and files the session touched. A session that changed nothing leaves no record at all.
+
+**When you ask for a handoff**, the agent reads the record instead of reconstructing it, and deletes it once the artifact is written.
+
+**When a session dies without one**, the record survives as an orphan and the next session in that repository is told about it, with the files and commits it left behind. That agent writes the handoff with a full context window, from the record and git history. The work still gets written up, by a better writer than the one that ran out of room.
+
 ### Installing
 
 Drift is installed, not pasted. It expects an agent that loads skills or prompt files from disk, because the workflow depends on things a chat transcript can't do: `SKILL.md` routing to the right prompt file, the agent reading and writing artifacts under `drift/`, and `scripts/build-index.py` rebuilding the index.
@@ -157,7 +171,7 @@ git clone https://github.com/coylemichael/drift ~/projects/drift
 python3 ~/projects/drift/install.py
 ```
 
-It detects Claude Code and Zed on this machine and symlinks each one's skills directory to the clone — a directory junction on Windows without Developer Mode. `git pull` in the clone is the upgrade; there is nothing to re-run. It touches nothing but those links: no project repository, no `.gitignore`, no agent settings. Re-running is safe, `--check` reports the state, `--dry-run` prints the plan, `--uninstall` removes only the links that point at this clone, and a real directory already in the way is reported rather than removed (`--force` moves it aside). Pass `--claude` or `--zed` to choose tools explicitly. VS Code and Cursor are per-project prompt files and stay manual:
+It detects Claude Code and Zed on this machine, symlinks each one's skills directory to the clone — a directory junction on Windows without Developer Mode — and registers the [session hooks](#session-records). `git pull` in the clone is the upgrade; there is nothing to re-run. Beyond those, it touches nothing: no project repository, no `.gitignore`. Re-running is safe, `--check` reports the state, `--dry-run` prints the plan, `--uninstall` removes only what it added, and a real directory already in the way is reported rather than removed (`--force` moves it aside). Pass `--claude` or `--zed` to choose tools explicitly, or `--no-hooks` for the skill alone. VS Code and Cursor are per-project prompt files and stay manual:
 
 | Tool | Location | Invocation |
 |------|----------|------------|

@@ -184,6 +184,19 @@ Two further rules:
 - **Use the machine's real offset**, as the commands above do. Do not normalize to `Z` by hand. An agent running in a UTC container and one running locally will otherwise write the same moment two different ways, and the index has to reconcile them.
 - **If you genuinely cannot read a clock**, record the date at day precision and say so in the artifact rather than fabricating a time. Honest coarseness beats false precision — the index has an `(approx)` display and an `## Undated` section for exactly this.
 
+## Session Records
+
+Drift ships two Claude Code hooks, registered by `install.py` and living in `scripts/hooks/`. A skill cannot do their job: a skill is loaded once the model reaches for it, so nothing in this file can run at the start of a session.
+
+- **SessionStart** opens a record at `~/.claude/drift-sessions/<repo>/<session-id>.json` holding the session's start time, branch and commit, read from the machine rather than estimated. It also states which Drift features are open, newest first, and reports any earlier session that changed files and ended without a handoff. On a compaction or a context clear it keeps the existing record and only restates that context, because the session's beginning has not moved.
+- **SessionEnd** closes the record with the commits and files the session touched. A session that changed nothing has its record deleted, so only meaningful ones survive.
+
+This exists because of who writes a handoff. The agent asked for one is at the end of its context window, with the start of the session summarised away — the single worst-placed writer, and the source of the fabricated timestamps documented under "Timestamps" above. The record moves that metadata to the moment it was true.
+
+When writing a handoff, read the record, take `session_started` and the diff range from it, and delete it afterwards. A surviving record is an orphan, and the next session is told to write it up from the record and git history — which inverts the problem, since that agent has a full context window. See "Session Records" in `handoff.md`.
+
+The hooks are optional. Drift works without them; `install.py --no-hooks` skips them, and every prompt still stands alone.
+
 ## Gitignore Drift Artifacts
 
 Drift artifacts are local agent context and should not be committed by default. Before creating the first `drift/` directory or writing any Drift artifact in a target project:

@@ -18,7 +18,8 @@ You are tasked with writing a handoff document that snapshots where you are so t
 - If the user is continuing or adding related work for the same feature, create a new numbered artifact in the same feature folder rather than modifying an older artifact.
 - Review the changes you made this session.
 - Check the source research doc and/or previous handoff to confirm what was planned vs. what actually happened.
-- Run `git diff HEAD --stat` to review uncommitted changes, or `git log --stat -1` if changes are already committed.
+- **Look for a session record.** If Drift's session hooks are installed, one was opened at session start and its path was given to you in the session's opening context. It holds the session's real start time, branch and starting commit. Read it and use it — see "Session Records" below.
+- Run `git diff HEAD --stat` to review uncommitted changes, or `git log --stat -1` if changes are already committed. With a session record, `git diff --stat <start_commit>` covers the whole session including work already committed, which is the better basis for **What Changed**.
 
 ## Output Format
 
@@ -83,6 +84,7 @@ branch: [Current branch name]
 git_commit: [Current commit hash]
 feature: [Feature folder name]
 sequence: [Three-digit artifact sequence]
+session_started: [Session start, from the session record — omit if there is none]
 source_research: [Path to the research document, if any]
 previous_handoff: [Path to previous handoff, if any]
 related_artifacts: [List of related Drift artifact paths, if any]
@@ -91,6 +93,23 @@ type: handoff
 ```
 
 Take `date` from the system clock, never from an estimate or from a previous artifact's value — `date -Iseconds`, or `python3 -c 'import datetime; print(datetime.datetime.now().astimezone().isoformat(timespec="seconds"))'` where portability matters. Both print the required form with the machine's real offset. A guessed timestamp reads as measured and silently corrupts the index ordering; see "Timestamps" in `SKILL.md`.
+
+If a session record exists, add `session_started: [the record's started value]` beneath `date`. `date` is when the handoff was written; `session_started` is when the work began. Copy it from the record rather than working it out.
+
+## Session Records
+
+Drift's session hooks, if installed, open a JSON record at session start under `~/.claude/drift-sessions/<repo>/<session-id>.json` and close it at session end. The opening context of the session names its path.
+
+You are the worst-placed agent to reconstruct how this session began: you are at the end of a long context window, and the beginning may have been summarised away. The record was written by a hook at the moment it happened. Prefer it over your own recollection for:
+
+- `session_started` in the frontmatter, and the session's `start_commit`
+- the diff range for **What Changed** — `git diff --stat <start_commit>` and `git log --oneline <start_commit>..HEAD`
+
+**Delete the record once the handoff is written.** A record with no handoff is an orphan, and the next session in the repo will be told to write one from it. Leaving a promoted record behind causes duplicate work.
+
+### Writing up someone else's orphan
+
+The session-start context may report an earlier session that changed files and ended without a handoff. Offer to write it up before starting new work. You have what you need: the record holds the start time, branch, starting commit and the list of files touched, and `git log` holds the rest. Write it as the next numbered handoff in the feature the changes belong to, take `date` from the clock now, set `session_started` from the record, and say plainly in **Status** that the handoff was reconstructed after the fact from the record and git history rather than written by the session that did the work. Then delete the record.
 
 ## Guidelines
 

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Session hooks — Drift's continuity no longer depends on anyone remembering to ask for it.** `scripts/hooks/session-start.py` opens a record at `~/.claude/drift-sessions/<repo>/<session-id>.json` holding the session's real start time, branch and commit, and tells the session which Drift features are open, newest first, with the latest artifact and status for each. `scripts/hooks/session-end.py` closes it with the commits and files the session touched, deleting the record outright when nothing changed. `scripts/hooks/session_state.py` holds the shared record shape and reuses `build-index.py`'s frontmatter parsing rather than re-implementing it. The reason this is a hook and not prompt text: a skill loads when the model reaches for it, so nothing in `SKILL.md` can run at session start. The reason it exists at all: the agent asked to write a handoff is at the end of its context window with the session's beginning summarised away — the worst-placed writer in the workflow, and the source of the fabricated timestamps recorded below. The record moves that metadata to the moment it was true. On a compaction or a context clear the record is kept and only its context restated, since the session's start has not moved. Both hooks always exit 0, because a non-zero exit from `SessionStart` blocks the session from starting.
+- **Orphan handoffs.** A record that outlives its session without a handoff is surfaced to the next session in that repository, with the files and commits it left behind. `handoff.md` gains a procedure for writing it up from the record and git history, marked in Status as reconstructed after the fact. This inverts the failure: instead of the most exhausted agent writing the handoff, the next one does, with a full context window.
+- `install.py` — registers both hooks in Claude Code's user settings and removes them on `--uninstall`; `--no-hooks` skips them. The settings file is backed up before any edit, only entries whose command matches Drift's own hooks path are touched, other hooks on the same events are left alone, key order and indentation survive, and a settings file that does not parse is refused rather than overwritten. A re-run after moving the clone repoints the commands instead of duplicating them.
+- `handoff.md` — a "Session Records" section: read the record, take `session_started` and the `git diff` range from it, delete it once the artifact is written. New optional `session_started` frontmatter field, since `date` is when the handoff was written and that is a different fact.
+- `SKILL.md` — a "Session Records" section covering what the hooks do and why a skill cannot do it.
+- `README.md` — a "Session records" section before "Installing".
+
 ## [0.3.0] - 2026-09-08
 
 ### Added
