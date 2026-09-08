@@ -13,6 +13,12 @@ All notable changes to this project will be documented in this file.
 - `SKILL.md` — a "Session Records" section covering what the hooks do and why a skill cannot do it.
 - `README.md` — a "Session records" section before "Installing".
 
+### Fixed
+
+- **The hooks were documented as Claude Code's alone, which is wrong and actively misleading.** Zed's agent *is* the Claude Code binary, launched with `--setting-sources=user`, so it reads `~/.claude/settings.json` and fires the same hooks. Verified by replaying Zed's exact argv: the session emitted `hook_started` and `hook_response` for `SessionStart:startup` and received the context. A Zed session that read the old wording concluded Drift had no hook surface there and hand-wrote a session record to compensate — the documentation caused the error. `README.md`, `SKILL.md` and `install.py` now state that one registration covers both agents, the install table gains a Hooks column, and VS Code Copilot and Cursor are marked as having no hook mechanism rather than being left ambiguous. Also noted in both places that hooks load at session start, so a running session will not have them.
+- `install.py --check` **now runs the hook instead of trusting the registration.** It executes `session-start.py` with a synthetic payload, confirms it exits 0 and returns usable `additionalContext`, and deletes the record the probe created. Registration and a working hook are different claims, and only the second one matters; a stale interpreter path or an unreadable script passed the old check.
+- `install.py` — when Zed is among the installed agents, the run says plainly that the hooks live in Claude Code's settings file and that Zed reads it too, so writing there is not a mistake. `hook_base()` now falls back to the Zed skill link when there is no Claude Code one, instead of dropping straight to the clone path.
+
 ## [0.3.0] - 2026-09-08
 
 ### Added

@@ -150,7 +150,11 @@ These are project artifacts — they travel with the repo, not with your editor 
 
 Everything above depends on someone remembering to ask for a handoff, and on the agent writing it knowing when the session began. Both are weak points. The agent asked for a handoff is at the end of its context window, with the start of the session long since summarised away — the worst-placed writer in the whole workflow, and the reason Drift kept finding invented timestamps.
 
-Two Claude Code hooks close that gap, installed by `install.py` and skippable with `--no-hooks`. A skill cannot do this: a skill loads when the model reaches for it, so nothing in `SKILL.md` can run at session start.
+Two hooks close that gap, installed by `install.py` and skippable with `--no-hooks`. A skill cannot do this: a skill loads when the model reaches for it, so nothing in `SKILL.md` can run at session start.
+
+They are registered once, in `~/.claude/settings.json`, and cover **both Claude Code and Zed**. Zed's agent is the Claude Code binary launched with `--setting-sources=user`, so it reads that same file and fires the same hooks. There is nothing separate to install for Zed and no Zed-side hook surface to install it into. Verify with `python3 install.py --check`, which runs the hook for real and reads its reply rather than just confirming it is listed. VS Code Copilot and Cursor are different products with no hook mechanism; they get the prompt files only.
+
+Hooks load when a session starts, so an already-running session will not have them. Open a new one.
 
 **At session start**, a record is opened outside the repository holding the session's real start time, branch and commit. The session is also told which Drift features are open, newest first, with the latest artifact and status for each — so "carry on where we left off" has something concrete to read. A compaction or a context clear keeps the record and restates that summary, which is exactly when a session most needs re-anchoring.
 
@@ -173,12 +177,12 @@ python3 ~/projects/drift/install.py
 
 It detects Claude Code and Zed on this machine, symlinks each one's skills directory to the clone — a directory junction on Windows without Developer Mode — and registers the [session hooks](#session-records). `git pull` in the clone is the upgrade; there is nothing to re-run. Beyond those, it touches nothing: no project repository, no `.gitignore`. Re-running is safe, `--check` reports the state, `--dry-run` prints the plan, `--uninstall` removes only what it added, and a real directory already in the way is reported rather than removed (`--force` moves it aside). Pass `--claude` or `--zed` to choose tools explicitly, or `--no-hooks` for the skill alone. VS Code and Cursor are per-project prompt files and stay manual:
 
-| Tool | Location | Invocation |
-|------|----------|------------|
-| **Claude Code** | `~/.claude/skills/drift` — made by `install.py`. To scope Drift to a single project instead, clone it to `.claude/skills/drift` inside that project | `/drift`, or ask Claude to use the Drift skill |
-| **Zed Agent** | `~/.agents/skills/drift` — made by `install.py` | Ask the agent to use the Drift skill |
-| **VS Code Copilot Chat** | `.github/prompts/` — rename with the `.prompt.md` suffix (e.g. `research.md` → `.github/prompts/research.prompt.md`) | `/research`, `/plan`, `/execute`, `/handoff` |
-| **Cursor** | `.cursor/rules/` — rename with the `.mdc` suffix (e.g. `research.md` → `.cursor/rules/research.mdc`) and adjust frontmatter to Cursor's `globs:` / `alwaysApply:` keys | Triggered by rule scope |
+| Tool | Location | Hooks | Invocation |
+|------|----------|-------|------------|
+| **Claude Code** | `~/.claude/skills/drift` — made by `install.py`. To scope Drift to a single project instead, clone it to `.claude/skills/drift` inside that project | Yes | `/drift`, or ask Claude to use the Drift skill |
+| **Zed Agent** | `~/.agents/skills/drift` — made by `install.py` | Yes, the same ones — Zed runs the Claude Code binary against `~/.claude/settings.json` | Ask the agent to use the Drift skill |
+| **VS Code Copilot Chat** | `.github/prompts/` — rename with the `.prompt.md` suffix (e.g. `research.md` → `.github/prompts/research.prompt.md`) | No hook mechanism | `/research`, `/plan`, `/execute`, `/handoff` |
+| **Cursor** | `.cursor/rules/` — rename with the `.mdc` suffix (e.g. `research.md` → `.cursor/rules/research.mdc`) and adjust frontmatter to Cursor's `globs:` / `alwaysApply:` keys | No hook mechanism | Triggered by rule scope |
 
 Claude Code discovers skills at session start, so restart the session after installing. Invoking `/drift` loads `SKILL.md`, which routes the request to the right prompt file — install Drift as one skill rather than four separate commands.
 

@@ -19,11 +19,16 @@ machine. Two things get installed:
            Windows, where a symlink needs Developer Mode, it falls back to a
            directory junction, which needs no privilege.
 
-  Hooks    SessionStart and SessionEnd entries in Claude Code's user settings,
+  Hooks    SessionStart and SessionEnd entries in ~/.claude/settings.json,
            pointing at scripts/hooks/. They open a session record at the start
            and close it at the end, which is what makes Drift's continuity
            automatic: a skill only loads once the model reaches for it, so
            nothing in SKILL.md can run at session start. Skip with --no-hooks.
+
+           These cover Zed as well as Claude Code. Zed's agent runs the Claude
+           Code binary with --setting-sources=user, so it reads the same file
+           and fires the same hooks; there is nothing separate to install and
+           no Zed-side hook surface to install it into.
 
 Outside those two, it creates nothing: no project repository, no .gitignore,
 no sudo. Re-running is safe. Anything already right is left alone and reported
@@ -253,14 +258,59 @@ def do_uninstall(tools, dry_run):
 def hook_base(tools):
     """Where the hook commands should point.
 
-    The Claude Code skill link when there is one, so that moving the clone and
-    re-running the installer repairs the link and the hooks together. Otherwise
-    the clone itself.
+    A skill link when there is one, so that moving the clone and re-running the
+    installer repairs the link and the hooks together. Otherwise the clone.
     """
-    for tool in tools:
-        if tool.key == "claude" and is_link(tool.link) and resolves_here(tool.link):
-            return tool.link
+    for key in ("claude", "zed"):
+        for tool in tools:
+            if tool.key == key and is_link(tool.link) and resolves_here(tool.link):
+                return tool.link
     return HERE
+
+
+def probe_hooks():
+    """Actually run the SessionStart hook and check it answers.
+
+    Registration is not the same as working: the interpreter path can go stale,
+    the script can be unreadable, a syntax error can creep in. This executes the
+    real thing against this clone and reads what comes back, then removes the
+    record it created so the probe leaves nothing behind.
+    """
+    script = HERE / "scripts" / "hooks" / "session-start.py"
+    if not script.is_file():
+        return ["session-start.py is missing"]
+    payload = json.dumps(
+        {
+            "session_id": "drift-install-probe",
+            "cwd": str(HERE),
+            "hook_event_name": "SessionStart",
+            "how": "startup",
+        }
+    )
+    try:
+        done = subprocess.run(
+            [sys.executable, str(script)], input=payload, capture_output=True, text=True, timeout=30
+        )
+    except (OSError, subprocess.SubprocessError) as err:
+        return ["could not run session-start.py: %s" % err]
+
+    problems = []
+    if done.returncode != 0:
+        problems.append("session-start.py exited %d (it must always exit 0)" % done.returncode)
+    try:
+        context = json.loads(done.stdout)["hookSpecificOutput"]["additionalContext"]
+    except (ValueError, KeyError, TypeError):
+        problems.append("session-start.py did not return usable context: %r" % done.stdout[:120])
+    else:
+        if "session record" not in context.lower():
+            problems.append("session-start.py returned unexpected context")
+
+    for leftover in (Path.home() / ".claude" / "drift-sessions").rglob("drift-install-probe.json"):
+        try:
+            leftover.unlink()
+        except OSError:
+            pass
+    return problems
 
 
 def load_settings():
@@ -433,6 +483,14 @@ def do_hooks(tools, dry_run, remove=False):
         print("  %-12s %-12s %s" % ("hooks", "registered" if not remove else "removed", change))
     if backup:
         print("  %-12s %-12s %s" % ("", "backup", short(backup)))
+    if not remove and any(tool.key == "zed" for tool in tools):
+        # Worth saying plainly: an install "for Zed" writes to Claude Code's
+        # settings file, and that is correct rather than a mistake.
+        print(
+            "  %-12s %-12s %s"
+            % ("", "note", "Zed's agent is the Claude Code binary and reads %s, so it" % short(SETTINGS))
+        )
+        print("  %-12s %-12s %s" % ("", "", "gets these hooks too. Both agents need a new session."))
     return True
 
 
@@ -450,7 +508,7 @@ def check_hooks():
         path = command.split('"')[1] if '"' in command else command.split()[-1]
         if not Path(path).is_file():
             problems.append("%s points at a missing script (%s)" % (event, path))
-    return problems
+    return problems or probe_hooks()
 
 
 def check_clone():
@@ -496,7 +554,10 @@ def do_check(tools, hooks=True):
             ok = False
             print("  %-12s %-12s %s" % ("hooks", "FAIL", "; ".join(problems)))
         else:
-            print("  %-12s %-12s %s" % ("hooks", "ok", "SessionStart and SessionEnd in " + short(SETTINGS)))
+            print(
+                "  %-12s %-12s %s"
+                % ("hooks", "ok", "SessionStart and SessionEnd registered and answering")
+            )
     problems = check_clone()
     if problems:
         ok = False

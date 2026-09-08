@@ -186,7 +186,7 @@ Two further rules:
 
 ## Session Records
 
-Drift ships two Claude Code hooks, registered by `install.py` and living in `scripts/hooks/`. A skill cannot do their job: a skill is loaded once the model reaches for it, so nothing in this file can run at the start of a session.
+Drift ships two hooks, registered by `install.py` in `~/.claude/settings.json` and living in `scripts/hooks/`. A skill cannot do their job: a skill is loaded once the model reaches for it, so nothing in this file can run at the start of a session. They serve Claude Code and Zed alike, because Zed's agent is the Claude Code binary reading the same settings file.
 
 - **SessionStart** opens a record at `~/.claude/drift-sessions/<repo>/<session-id>.json` holding the session's start time, branch and commit, read from the machine rather than estimated. It also states which Drift features are open, newest first, and reports any earlier session that changed files and ended without a handoff. On a compaction or a context clear it keeps the existing record and only restates that context, because the session's beginning has not moved.
 - **SessionEnd** closes the record with the commits and files the session touched. A session that changed nothing has its record deleted, so only meaningful ones survive.
