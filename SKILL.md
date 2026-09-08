@@ -188,7 +188,7 @@ Two further rules:
 
 Drift ships two hooks, registered by `install.py` in `~/.claude/settings.json` and living in `scripts/hooks/`. A skill cannot do their job on its own: a skill is loaded once the model reaches for it, so nothing in this file can run at the start of a session.
 
-The hooks fire only in harnesses that read `~/.claude/settings.json` — Claude Code itself, and Zed's `claude-acp` agent, which is the Claude Code binary. **Zed's native agent, VS Code Copilot and Cursor have no hook mechanism at all.** In those, the record has to be opened deliberately.
+The hooks fire only in harnesses that read `~/.claude/settings.json` — Claude Code itself, and Zed's `claude-acp` agent, which is the Claude Code binary. **Zed's native agent, VS Code Copilot and Cursor have no hook mechanism at all.** For Zed's native agent, `install.py` puts a Drift section in its personal `~/.config/zed/AGENTS.md`, which it reads on every new thread, telling it to run the same scripts itself. Elsewhere the record has to be opened deliberately.
 
 **If you are reading this and the session gave you no Drift session record, open one now**, before writing any artifact:
 

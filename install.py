@@ -26,11 +26,17 @@ machine. Two things get installed:
            nothing in SKILL.md can run at session start. Skip with --no-hooks.
 
            They fire in whatever reads that file: Claude Code, and Zed's
-           claude-acp agent, which is the Claude Code binary. They do NOT fire
-           in Zed's native agent, VS Code Copilot or Cursor, none of which have
-           a hook mechanism. There the record is opened by hand instead, with
-           scripts/hooks/session-start.py --repo . — SKILL.md tells the agent
-           to do that itself when it finds no record.
+           claude-acp agent, which is the Claude Code binary.
+
+  Zed      Zed's native agent is not Claude Code and has no hook mechanism.
+  rules    It does read a personal AGENTS.md (~/.config/zed/AGENTS.md) on
+           every new thread, so a marked Drift section is added there telling
+           the agent to run the same two scripts itself. Instruction-driven
+           rather than deterministic; an unclosed record is surfaced to the
+           next session either way. Only written when Zed is installed.
+
+  Nothing exists for VS Code Copilot or Cursor beyond the prompt files;
+  SKILL.md tells any agent that finds no record to open one by hand.
 
 Outside those two, it creates nothing: no project repository, no .gitignore,
 no sudo. Re-running is safe. Anything already right is left alone and reported
@@ -65,6 +71,38 @@ HOOKS = (
     ("SessionStart", "startup|resume|clear|compact|fork", "session-start.py"),
     ("SessionEnd", "clear|resume|logout|prompt_input_exit|other", "session-end.py"),
 )
+
+# Zed's native agent is not Claude Code and has no hook mechanism. What it does
+# have is a personal AGENTS.md, included in every thread it starts, so the same
+# scripts are wired in there as an instruction the agent carries out itself.
+# Zed 1.18 replaced its Rules Library with this file; project rules files are
+# appended after it and take precedence.
+ZED_AGENTS_MD = (
+    Path(os.environ["APPDATA"]) / "Zed" / "AGENTS.md"
+    if os.name == "nt" and os.environ.get("APPDATA")
+    else Path.home() / ".config" / "zed" / "AGENTS.md"
+)
+RULES_START = "<!-- drift:start -->"
+RULES_END = "<!-- drift:end -->"
+RULES_BLOCK = """{start}
+## Drift session record
+
+This agent has no session hooks, so do by hand what a hook would do. At the
+start of every thread in a git repository, before anything else, run:
+
+    {python} "{hooks}/session-start.py" --repo .
+
+Read its output: it opens the session record and lists the open Drift features.
+Skip it only if the opening context already contains a "Drift session record"
+line, which means a hook has already run.
+
+If the user is stopping without a Drift handoff, run:
+
+    {python} "{hooks}/session-end.py" --repo .
+
+so the work is recorded for the next session. When writing a Drift handoff,
+follow the skill's "Session Records" section and delete the record afterwards.
+{end}"""
 
 
 class Tool:
@@ -491,8 +529,8 @@ def do_hooks(tools, dry_run, remove=False):
         # session looking for a hook surface that does not exist.
         print("  %-12s %-12s %s" % ("", "note", "Zed has two agents. Its claude-acp agent is the"))
         print("  %-12s %-12s %s" % ("", "", "Claude Code binary and fires these hooks. Its native"))
-        print("  %-12s %-12s %s" % ("", "", "agent does not — open the record there by hand with"))
-        print("  %-12s %-12s %s" % ("", "", "scripts/hooks/session-start.py --repo ."))
+        print("  %-12s %-12s %s" % ("", "", "agent has no hooks and is covered by the zed rules"))
+        print("  %-12s %-12s %s" % ("", "", "section below instead."))
     return True
 
 
@@ -511,6 +549,119 @@ def check_hooks():
         if not Path(path).is_file():
             problems.append("%s points at a missing script (%s)" % (event, path))
     return problems or probe_hooks()
+
+
+# --- Zed native agent: personal AGENTS.md -------------------------------------
+
+
+def zed_native_present():
+    """Zed's config directory exists, so its native agent may be in use."""
+    return ZED_AGENTS_MD.parent.is_dir()
+
+
+def rules_block(tools):
+    hooks_dir = hook_base(tools) / "scripts" / "hooks"
+    return RULES_BLOCK.format(start=RULES_START, end=RULES_END, python=sys.executable, hooks=hooks_dir)
+
+
+def split_rules(text):
+    """(before, block, after) — block is None when the file has no Drift section."""
+    start = text.find(RULES_START)
+    end = text.find(RULES_END, start)
+    if start < 0 or end < 0:
+        return text, None, ""
+    end += len(RULES_END)
+    return text[:start], text[start:end], text[end:]
+
+
+def read_rules():
+    target = ZED_AGENTS_MD.resolve() if ZED_AGENTS_MD.is_symlink() else ZED_AGENTS_MD
+    try:
+        return target, target.read_text(encoding="utf-8") if target.is_file() else ""
+    except OSError as err:
+        raise OSError("cannot read %s: %s" % (short(target), err))
+
+
+def write_rules(target, text):
+    """Write through a symlink rather than replacing it; back up existing content."""
+    backup = None
+    if target.is_file() and target.read_text(encoding="utf-8").strip():
+        backup = target.with_name("AGENTS.md.bak-%s" % time.strftime("%Y%m%d-%H%M%S"))
+        shutil.copy2(str(target), str(backup))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".md.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(str(tmp), str(target))
+    return backup
+
+
+def do_zed_rules(tools, dry_run, remove=False):
+    if not zed_native_present():
+        return True  # No Zed here; nothing to wire.
+    label = "zed rules"
+    try:
+        target, text = read_rules()
+    except OSError as err:
+        print("  %-12s %-12s %s" % (label, "FAIL", err))
+        return False
+
+    before, current, after = split_rules(text)
+    wanted = None if remove else rules_block(tools)
+
+    if current == wanted:
+        state = "not present" if remove else "already in " + short(target)
+        print("  %-12s %-12s %s" % (label, "ok", state))
+        return True
+
+    if remove:
+        new_text = (before.rstrip() + "\n\n" + after.lstrip()).strip()
+        new_text = new_text + "\n" if new_text else ""
+        verb, detail = "removed", "Drift section from " + short(target)
+    elif current is None:
+        new_text = (text.rstrip() + "\n\n" if text.strip() else "") + wanted + "\n"
+        verb, detail = "added", "Drift section to " + short(target)
+    else:
+        new_text = before + wanted + after
+        verb, detail = "updated", "Drift section in " + short(target)
+
+    if dry_run:
+        would = {"added": "would add", "updated": "would update", "removed": "would remove"}[verb]
+        print("  %-12s %-12s %s" % (label, would, detail))
+        return True
+
+    try:
+        backup = None
+        if remove and not new_text:
+            target.unlink()  # Nothing but our section was in it; leave no empty file.
+        else:
+            backup = write_rules(target, new_text)
+    except OSError as err:
+        print("  %-12s %-12s %s" % (label, "FAIL", "cannot write %s: %s" % (short(target), err)))
+        return False
+    print("  %-12s %-12s %s" % (label, verb, detail))
+    if backup:
+        print("  %-12s %-12s %s" % ("", "backup", short(backup)))
+    if not remove:
+        print("  %-12s %-12s %s" % ("", "note", "Zed's native agent reads this on every new thread."))
+    return True
+
+
+def check_zed_rules(tools):
+    if not zed_native_present():
+        return None  # Not applicable on this machine.
+    try:
+        target, text = read_rules()
+    except OSError as err:
+        return [str(err)]
+    _, current, _ = split_rules(text)
+    if current is None:
+        return ["no Drift section in %s" % short(target)]
+    if current != rules_block(tools):
+        return ["Drift section in %s is out of date; re-run install.py" % short(target)]
+    hooks_dir = hook_base(tools) / "scripts" / "hooks"
+    if not (hooks_dir / "session-start.py").is_file():
+        return ["section points at a missing %s" % short(hooks_dir / "session-start.py")]
+    return []
 
 
 def check_clone():
@@ -551,6 +702,14 @@ def do_check(tools, hooks=True):
         else:
             say(tool, "ok", short(tool.link))
     if hooks:
+        rules = check_zed_rules(tools)
+        if rules is None:
+            pass  # No Zed on this machine.
+        elif rules:
+            ok = False
+            print("  %-12s %-12s %s" % ("zed rules", "FAIL", "; ".join(rules)))
+        else:
+            print("  %-12s %-12s %s" % ("zed rules", "ok", "Drift section in " + short(ZED_AGENTS_MD)))
         problems = check_hooks()
         if problems:
             ok = False
@@ -615,6 +774,7 @@ def main(argv=None):
         ok = do_uninstall(chosen, args.dry_run)
         if not args.no_hooks:
             ok = do_hooks(chosen, args.dry_run, remove=True) and ok
+            ok = do_zed_rules(chosen, args.dry_run, remove=True) and ok
         if args.dry_run:
             print("Nothing written.")
         return 0 if ok else 1
@@ -629,6 +789,7 @@ def main(argv=None):
     ok, changed = do_install(chosen, args.dry_run, args.force)
     if not args.no_hooks:
         ok = do_hooks(chosen, args.dry_run) and ok
+        ok = do_zed_rules(chosen, args.dry_run) and ok
     if args.dry_run:
         print("Nothing written.")
         return 0 if ok else 1

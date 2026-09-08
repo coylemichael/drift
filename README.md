@@ -156,21 +156,23 @@ They are registered once, in `~/.claude/settings.json`. That file is read by Cla
 
 **Not every agent has hooks.** Zed ships two independent agents and only one of them is Claude Code:
 
-| Agent | Skills from | Hooks |
-|---|---|---|
-| Claude Code | `~/.claude/skills` | Yes |
-| Zed, `claude-acp` external agent | `~/.claude/skills` | Yes, the same registration |
-| Zed, native agent | `~/.agents/skills` | None — it is not Claude Code and never reads `~/.claude/settings.json` |
-| VS Code Copilot, Cursor | prompt files | None |
+| Agent | Skills from | Always-on surface | Installed by `install.py` |
+|---|---|---|---|
+| Claude Code | `~/.claude/skills` | SessionStart and SessionEnd hooks | Yes |
+| Zed, `claude-acp` external agent | `~/.claude/skills` | The same hooks — it is the Claude Code binary | Yes, same registration |
+| Zed, native agent | `~/.agents/skills` | Its personal `~/.config/zed/AGENTS.md`, read on every new thread | Yes, a marked section |
+| VS Code Copilot, Cursor | prompt files | None | No |
 
-Where there are no hooks, open the record deliberately instead. It is the same script and the same record:
+Zed's native agent is not Claude Code and never reads `~/.claude/settings.json`, so it cannot have hooks. What it does have, since Zed 1.18 replaced the Rules Library, is a personal `AGENTS.md` included in every thread. The installer adds a marked Drift section there telling the agent to run the same two scripts itself, and removes only that section on `--uninstall`. It writes through a symlink rather than replacing it, so a dotfiles-managed file is safe. This is an instruction the model follows rather than a hook the harness enforces, so it can be skipped; when that happens the record is left open and the next session is told about it.
+
+The scripts themselves are the same everywhere, and can be run by hand in any agent with a shell:
 
 ```sh
 python3 ~/.agents/skills/drift/scripts/hooks/session-start.py --repo .   # at the start
 python3 ~/.agents/skills/drift/scripts/hooks/session-end.py   --repo .   # at the end
 ```
 
-`SKILL.md` tells the agent to do this itself when it finds no record, so in practice it happens on the first Drift request of the session.
+`SKILL.md` also tells the agent to open a record itself when it finds none, so where nothing else fires it still happens on the first Drift request of the session.
 
 Hooks load when a session starts, so an already-running session will not have them — open a new one. `install.py --check` executes the hook and reads its reply, which proves the script works; it cannot prove your harness invokes it. To confirm that, start a session in a git repo and look for a file under `~/.claude/drift-sessions/`.
 
@@ -199,7 +201,7 @@ It detects Claude Code and Zed on this machine, symlinks each one's skills direc
 |------|----------|-------|------------|
 | **Claude Code** | `~/.claude/skills/drift` — made by `install.py`. To scope Drift to a single project instead, clone it to `.claude/skills/drift` inside that project | Yes | `/drift`, or ask Claude to use the Drift skill |
 | **Zed — `claude-acp` agent** | `~/.claude/skills/drift` — it is the Claude Code binary | Yes, the same registration | Ask the agent to use the Drift skill |
-| **Zed — native agent** | `~/.agents/skills/drift` — made by `install.py` | No hook mechanism; open the record manually | Ask the agent to use the Drift skill |
+| **Zed — native agent** | `~/.agents/skills/drift` — made by `install.py` | No hooks; a Drift section in `~/.config/zed/AGENTS.md` instead, also made by `install.py` | Ask the agent to use the Drift skill |
 | **VS Code Copilot Chat** | `.github/prompts/` — rename with the `.prompt.md` suffix (e.g. `research.md` → `.github/prompts/research.prompt.md`) | No hook mechanism | `/research`, `/plan`, `/execute`, `/handoff` |
 | **Cursor** | `.cursor/rules/` — rename with the `.mdc` suffix (e.g. `research.md` → `.cursor/rules/research.mdc`) and adjust frontmatter to Cursor's `globs:` / `alwaysApply:` keys | No hook mechanism | Triggered by rule scope |
 
