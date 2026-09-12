@@ -1,0 +1,30 @@
+{
+  "name": "drift-pi",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Portable Drift workflows with Pi-owned lifecycle and artifact publication",
+  "type": "module",
+  "keywords": ["pi-package"],
+  "engines": { "node": ">=22.18.0" },
+  "pi": {
+    "extensions": ["./extensions/drift.ts"],
+    "skills": ["./SKILL.md"]
+  },
+  "files": [
+    "SKILL.md", "research.md", "plan.md", "execute.md", "handoff.md",
+    "extensions/", "lib/", "scripts/build-index.py", "README.md", "CHANGELOG.md", "assets/"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@earendil-works/pi-ai": { "optional": true },
+    "typebox": { "optional": true }
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  }
+}

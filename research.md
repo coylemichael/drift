@@ -45,6 +45,8 @@ When presenting findings, use this structure:
 
 ## Writing to Disk
 
+**When `drift_publish` is available:** follow `SKILL.md`'s "Publishing with Pi" section. Pass the required Markdown body, feature, `kind: research`, slug and references. The tool supplies frontmatter, numbering and the index; do not also write those manually. Otherwise use the portable procedure below.
+
 Save research documents to disk by default. Skip saving only if the user explicitly asks for a quick or informal answer.
 
 - Save to `drift/<feature>/NNN-research-<topic>.md` at the **repository root**, where `<feature>` is the identifier confirmed above and `NNN` is the next artifact number in that feature folder.

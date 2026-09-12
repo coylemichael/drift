@@ -4,213 +4,216 @@
 
 <h3 align="center"><em>Context drifts if you don't pin it down</em></h3>
 
-<p align="center">
-  A lightweight system for maintaining context continuity across LLM sessions.
-</p>
+Drift preserves useful context across long-running coding sessions: what was
+investigated, what was decided, what changed, and what to do next.
 
----
+**Portable skills. Pi-focused automation.** The prompts guide judgement; a small
+Pi extension handles session metadata and artifact publication. No separate agent
+runtime, background service or multi-agent installer.
 
-## The Problem
+## Install in Pi
 
-Most LLM-assisted work breaks down not because the model can't do the task, but because context gets stale or bloated mid-session. You lose track of what was investigated, what was decided, and where work stopped. Starting a new chat means starting from scratch — or spending half the session re-explaining what happened last time.
+Requires Pi (tested with 0.85.1), Node 22.18+, Git and Python 3.7+ for the index
+renderer. The extension uses Node built-ins and packages already supplied by Pi;
+there is no build step or additional runtime dependency installation.
 
-## The Solution
-
-Four prompt files that create natural checkpoints across your workflow. Each session starts clean but informed, carrying forward only what the next session actually needs.
-
-### Workflow
-
-```mermaid
-flowchart TD
-    research["research.md — Investigate. Document what exists."]
-    plan["plan.md — Plan. Turn findings into an actionable starting point."]
-    execute["execute.md — Orchestrate. Run the plan, delegating steps to sub-agents."]
-    handoff["handoff.md — Continue. Snapshot so the next session picks up where you left off."]
-
-    research --> plan --> execute --> handoff
-    handoff -.resume.-> execute
+```sh
+git clone https://github.com/coylemichael/drift ~/projects/drift
+pi install ~/projects/drift
 ```
 
-## Getting Started
+Pi links the local package through its own settings without copying the checkout.
+Restart Pi or start a fresh **Pi ACP** thread in Zed. Keep your existing provider
+and authentication. The package loads both the extension and the root `SKILL.md`;
+an existing shared skill link need not be removed. First activation in an older
+session measures a new interval; it cannot reconstruct the pre-install baseline.
 
-Drift is an agent **skill**: install it once in whatever location your agent uses for reusable skills or prompt files, then invoke it by name from any project. The exact install path depends on the tool — see [Installing](#installing) for per-tool instructions.
+Remove this package with `pi remove ~/projects/drift`. This removes the package
+registration, not your checkout, project artifacts or saved records. If you also
+have a separate skill link, manage that separately.
 
-However your agent loads it, the root [`SKILL.md`](SKILL.md) acts as a router to [`research.md`](research.md), [`plan.md`](plan.md), [`execute.md`](execute.md), and [`handoff.md`](handoff.md), so you install Drift once and invoke it by name:
+## Use the same workflow
 
-> *"Use Drift to research the auth flow."*
+[`SKILL.md`](SKILL.md) routes to four portable prompts:
 
-The model is intentionally split:
+| Mode | File | Example request |
+|---|---|---|
+| Research | [research.md](research.md) | “Use Drift to research the auth flow. Feature: auth-refactor.” |
+| Plan | [plan.md](plan.md) | “Plan the implementation from that research.” |
+| Execute | [execute.md](execute.md) | “Execute this plan, verifying each step.” |
+| Handoff/resume | [handoff.md](handoff.md) | “Write a handoff” / `drift-continue drift/auth-refactor/003-handoff-progress.md` in a fresh Pi thread. |
 
-- The reusable Drift prompts live outside your target projects (wherever your agent stores skills).
-- Generated Drift artifacts live locally in each target project under feature folders such as `drift/auth-refactor/`.
-- Each feature folder contains numbered artifact files such as `001-research-auth-flow.md`, `002-plan-implementation.md`, and `003-handoff-session-1.md`.
-- This avoids cloning Drift into every project you work on.
+Skip the formal workflow for trivial work that comfortably fits one session.
+Delegation in execute mode depends on the host's available tools; Drift does not
+install a sub-agent runtime.
 
-### 1. Research — understanding the codebase
+Artifacts stay in the **target project**, not the skill checkout or an editor's
+private memory:
 
-**Ask Drift to research something.** Backed by [research.md](research.md).
-
-Example prompts:
-
-- *"How does the authentication flow work?"*
-- *"What happens when a user submits an endorsement?"*
-- *"Map out the data flow from API request to database write for policy creation."*
-
-The agent documents what exists — no unsolicited suggestions, no refactoring advice. It will ask for a feature identifier (ticket ref or slug), allocate the next artifact number in that feature folder, and save findings as `drift/<feature>/NNN-research-<topic>.md`.
-
-### 2. Planning — turning research into a plan
-
-**In a new session, ask Drift to plan from your research.** Backed by [plan.md](plan.md).
-
-> *"Use Drift to read drift/auth-refactor/001-research-auth-flow.md and create an implementation plan."*
-
-You get a concrete plan: which files to touch, in what order, with what constraints. The plan trusts the research — it won't re-read the codebase. Steps are written to be self-contained enough for a sub-agent to pick up, which sets up the execute step.
-
-### 3. Executing — running the plan with orchestration
-
-**In a fresh session, ask Drift to execute a plan or a prior handoff.** Backed by [execute.md](execute.md).
-
-> *"Use Drift to read drift/auth-refactor/002-plan-implementation.md and execute it."*
-
-The session becomes an orchestrator: it walks the step sequence, delegates self-contained steps to sub-agents (in parallel where write scopes are disjoint), verifies each step, and writes a handoff at the end. Verification, tightly-coupled edits, and small one-shot changes stay with the orchestrator; larger scoped work gets delegated to keep the orchestrator's context lean.
-
-Executing is optional — for small plans you can skip straight from `plan.md` to hands-on implementation and then to `handoff.md`. Execute earns its keep on longer plans where context bloat is a real risk. Legacy input paths (e.g. `drift/<feature>/handoffs/YYYY-MM-DD_HH-MM-SS_plan.md`) are supported; the resulting handoff is still written as the next flat numbered artifact in the feature folder.
-
-### 4. Continuing — picking up where you left off
-
-Two actions, same prompt file — backed by [handoff.md](handoff.md).
-
-**To snapshot the current session** — in the running session:
-
-> *"Use Drift to write a handoff."*
-
-**To resume in a new session** — point Drift at the snapshot:
-
-> *"Use Drift to read drift/auth-refactor/003-handoff-session-2.md and continue."*
-
-Repeat until done. If the handoff chain exceeds three documents, summarize completed phases in the new handoff's `Status` section rather than asking the next session to read every prior link — the whole point of Drift is to keep context lean.
-
-## When not to use Drift
-
-Drift is overhead. It pays off when work spans sessions or touches code you don't fully hold in your head. Skip it for:
-
-- **Trivial one-file changes** — typo fixes, dependency bumps, single-function tweaks
-- **Throwaway scripts and prototypes** — anything you'd delete before merging
-- **Exploratory spikes** — when you're still deciding whether to do the work at all
-- **Work that fits comfortably in one session** — if you'll finish before context gets stale, the handoff is wasted effort
-
-The research/plan/handoff loop earns its weight on multi-session work in unfamiliar code. Anything smaller, just do it.
-
-### Where files are stored
-
-All Drift artifacts live under feature folders at the root of your repository. A feature folder is a ticket reference or descriptive slug, such as `auth-refactor` or `PROJ-1234`. Each artifact is a numbered markdown file directly inside that folder; Drift does not split research, plans, and handoffs into separate subfolders for new artifacts.
-
-```
+```text
 drift/
   INDEX.md
   auth-refactor/
     001-research-auth-flow.md
     002-plan-implementation.md
-    003-handoff-session-1.md
-    004-handoff-session-2.md
-    005-research-edge-cases.md
-    006-plan-follow-up.md
-  PROJ-1234/
-    001-research-policy-flow.md
-    002-plan-policy-flow.md
+    003-handoff-progress.md
 ```
 
-The agent will ask you to confirm a feature identifier before writing the first artifact, scan existing `NNN-*` markdown files in `drift/<feature>/`, and allocate the next number. Anything that uniquely identifies the feature or work grouping is fine.
+Each feature has its own sequence. `INDEX.md` is the cross-feature timeline,
+sorted by real timestamps including timezone offsets. Artifacts are ignored via
+`/drift/` by default; explicitly track them yourself if they should be shared.
 
-New work for the same feature gets a new numbered artifact in that feature folder rather than modifying an older artifact. Distinct features should get separate feature folders. Drift does not maintain per-feature `CURRENT.md` files or status directories like `active/` and `done/`.
+## What Pi automates
 
-### The running order
+- Opens an immediately persisted record before work, keyed by the actual Pi
+  session ID and canonical Git repository. Records live under
+  `~/.pi/agent/drift/<repo-hash>/<session-id>.json` (respecting Pi's agent-directory override).
+- Captures a real local-offset timestamp, branch, commit and dirty-file content
+  fingerprints; retains the baseline across turns, reload and resume.
+- Injects bounded current metadata and recent artifact pointers into ordinary
+  model requests, including after compaction. Detailed context stays in artifacts.
+- Checkpoints observed changes on settled turns and graceful teardown. Detaching
+  an ACP process is not treated as permanent completion.
+- Provides **`drift_publish`**: the model supplies feature/kind/slug, Markdown body
+  and optional references; code supplies metadata, numbering, safe paths, the
+  canonical index and a retryable publication receipt.
 
-Feature folders tell you what happened *within* a feature. They can't tell you what happened *across* the repo, in order — each folder's `NNN` counts from `001`, so once you have a dozen features the file tree stops being a timeline. Real work interleaves: you plan a feature, get pulled into another, come back two days later.
+A published **handoff** completes the current work interval. Its receipt remains;
+Pi session logs are never deleted. The next model-run prompt starts a new measured
+interval (there is no language-based guess about whether a message is "substantive").
+Research and plan artifacts leave the interval active.
 
-`drift/INDEX.md` is that timeline. One table, every artifact in the repo, oldest first, with a global running number:
+The skill handles the content; the publisher validates mechanics, not prose
+accuracy. You still request a handoff. `drift_publish` remains usable through the
+existing `pi-acp` adapter; profile-directed resume is a Pi extension command.
 
-```markdown
-| # | Date | Feature | Type | Artifact |
-|---|---|---|---|---|
-| 001 | 2026-08-28 20:30 +01:00 | auth-refactor | research | [001-research-auth-flow](auth-refactor/001-research-auth-flow.md) |
-| 002 | 2026-08-28 20:35 +01:00 | auth-refactor | plan | [002-plan-implementation](auth-refactor/002-plan-implementation.md) |
-| 003 | 2026-08-29 09:10 +01:00 | PROJ-1234 | research | [001-research-policy-flow](PROJ-1234/001-research-policy-flow.md) |
+### Profile-directed handoff continuation
+
+A new handoff may declare a portable `next_session_profile`: use `research`,
+`planning`, or `implementation` for the three standard Drift work modes. It
+deliberately contains no provider/model selection. After a successful profiled publication, start
+a fresh Pi thread and paste the path returned by the tool:
+
+```text
+drift-continue drift/<feature>/<NNN>-handoff-<description>.md
 ```
 
-The `#` column is repo-wide running order and is deliberately independent of the folder-local `NNN` — entry `#047` can be `002-plan-...` inside its feature. Rows are sorted by the true instant of each artifact's frontmatter `date`, with timezone offsets normalized before comparing, so a repo worked on from more than one machine still reads in true order.
+Before sending a resume prompt to any model, the command validates that the argument
+is a repository-local current-format handoff, reads its profile, resolves it through
+an explicit local profile map, selects the mapped model, and applies its optional
+thinking level. It does not silently choose a fallback: an absent profile, malformed
+artifact/configuration, unavailable model, or failed authentication is reported
+without inference. Handoffs created before this feature can still be resumed by the
+ordinary manual workflow.
 
-That ordering is only as good as the timestamps, so Drift requires each `date` to be read from the system clock rather than estimated — an agent has no clock, and a guessed timestamp reads as measured. See [Timestamps](SKILL.md#timestamps).
+Configure global defaults in `~/.pi/agent/drift-model-profiles.json` (or Pi's
+configured agent directory), and optionally override named profiles in the trusted
+project at `.pi/drift-model-profiles.json`:
 
-Drift appends to the index as part of writing each artifact, so it stays current without being asked. It's a derived view — frontmatter is the source of truth — so it can be rebuilt at any time, including in a repo that already has Drift artifacts and no index yet. Ask Drift to rebuild the index, or run [`scripts/build-index.py`](scripts/build-index.py) against the repo's `drift/` directory.
+```json
+{
+  "profiles": {
+    "research": {
+      "provider": "your-provider",
+      "model": "your-fast-research-model",
+      "thinkingLevel": "medium"
+    },
+    "planning": {
+      "provider": "your-provider",
+      "model": "your-planning-model",
+      "thinkingLevel": "high"
+    },
+    "implementation": {
+      "provider": "your-provider",
+      "model": "your-coding-model",
+      "thinkingLevel": "high"
+    }
+  }
+}
+```
 
-These are project artifacts — they travel with the repo, not with your editor or user profile. Drift ensures the repository-root `.gitignore` contains `/drift/` before writing artifacts by default.
+Profile names must be lowercase hyphenated. Each entry permits only `provider`,
+`model`, and optional `thinkingLevel` (`off`, `minimal`, `low`, `medium`, `high`,
+`xhigh`, or `max`). Set `model` to Pi's catalog **model ID** (for example
+`claude-opus-5`), not its human-readable picker label (for example `Claude Opus 5`);
+run `pi --list-models` to see IDs. Global profiles are defaults; a trusted project can override a
+profile with the same name. Configure the referenced providers/models through Pi
+normally. The profile map is intentionally local and should not be committed with
+credentials.
 
-### Session records
+For the current GitHub Copilot model set, the recommended three-profile starting
+point is:
 
-Everything above depends on someone remembering to ask for a handoff, and on the agent writing it knowing when the session began. Both are weak points. The agent asked for a handoff is at the end of its context window, with the start of the session long since summarised away — the worst-placed writer in the whole workflow, and the reason Drift kept finding invented timestamps.
+```json
+{
+  "profiles": {
+    "research": { "provider": "github-copilot", "model": "gemini-3.8-flash", "thinkingLevel": "medium" },
+    "planning": { "provider": "github-copilot", "model": "gpt-6-astra", "thinkingLevel": "high" },
+    "implementation": { "provider": "github-copilot", "model": "claude-opus-5", "thinkingLevel": "high" }
+  }
+}
+```
 
-Two hooks close that gap, installed by `install.py` and skippable with `--no-hooks`. A skill cannot do this: a skill loads when the model reaches for it, so nothing in `SKILL.md` can run at session start.
+This is a starting policy, not a claim that one benchmark predicts every repository.
+Keep the model that did the work on its handoff; the handoff profile selects the
+model for the next independent research, planning, or implementation task.
 
-They are registered once, in `~/.claude/settings.json`. That file is read by Claude Code and by Zed's `claude-acp` agent, which *is* the Claude Code binary launched with `--setting-sources=user`, so both fire the hooks and neither needs anything installed separately.
+### Boundaries and recovery
 
-**Not every agent has hooks.** Zed ships two independent agents and only one of them is Claude Code:
+- No guessing among nested repos: outside Git, automation is explicitly inactive.
+- Git deltas observe shared-worktree changes, not exclusive authorship. Unreadable
+  files have explicitly marked metadata-only fingerprints.
+- A loaded extension handles known initialization failures by stopping the prompt
+  and blocking tools. This is not a sandbox or a guarantee if the extension is
+  disabled/fails to load; Pi otherwise catches many extension errors and continues.
+- Context is reinjected after compaction; Drift does not replace Pi's summarizer
+  or claim injection into the separate summary request.
+- Abrupt termination retains the last durable record, not necessarily the last
+  file change. Records are not automatically reaped or turned into prose handoffs.
+- Optional reference paths may be omitted or blank; non-empty references must
+  name existing `drift/...md` artifacts. Correct invalid arguments before retrying.
+  Once a pending publication exists, retry **the same tool input**. Within the same
+  work interval, intent/receipts prevent premature completion or duplicate artifacts.
+  Conflicting partial files or stale locks require explicit inspection; never
+  delete another running thread's lock/record. Individual writes are atomic, not
+  a multi-file filesystem transaction.
+- The publisher rebuilds the index with the shared renderer. Existing artifact
+  contents remain untouched; index boilerplate is normalized. Manual index checks
+  are byte-canonical, so different prose can fail `--check` even with correct rows.
 
-| Agent | Skills from | Always-on surface | Installed by `install.py` |
-|---|---|---|---|
-| Claude Code | `~/.claude/skills` | SessionStart and SessionEnd hooks | Yes |
-| Zed, `claude-acp` external agent | `~/.claude/skills` | The same hooks — it is the Claude Code binary | Yes, same registration |
-| Zed, native agent | `~/.agents/skills` | Its personal `~/.config/zed/AGENTS.md`, read on every new thread | Yes, a marked section |
-| VS Code Copilot, Cursor | prompt files | None | No |
+Set `DRIFT_PYTHON` to a Python executable path if `python3` is not available.
 
-Zed's native agent is not Claude Code and never reads `~/.claude/settings.json`, so it cannot have hooks. What it does have, since Zed 1.18 replaced the Rules Library, is a personal `AGENTS.md` included in every thread. The installer adds a marked Drift section there telling the agent to run the same two scripts itself, and removes only that section on `--uninstall`. It writes through a symlink rather than replacing it, so a dotfiles-managed file is safe. This is an instruction the model follows rather than a hook the harness enforces, so it can be skipped; when that happens the record is left open and the next session is told about it.
+## Other agents: skill only
 
-The scripts themselves are the same everywhere, and can be run by hand in any agent with a shell:
+Place or link this checkout in your agent's skill directory, or have it read
+`SKILL.md` and the referenced workflow files from disk. The prompts retain manual
+artifact-writing instructions. Without a measured session baseline, omit
+`session_started`; never invent it.
+
+Drift no longer installs Claude/Copilot hooks or native-Zed personal instructions.
+When upgrading an older installation, remove its **Drift-owned** hook entries and
+marked `<!-- drift:start -->` block before removing the old scripts. Preserve
+unrelated settings, skill links, historical records and agent installations.
+
+## Development and checks
 
 ```sh
-python3 ~/.agents/skills/drift/scripts/hooks/session-start.py --repo .   # at the start
-python3 ~/.agents/skills/drift/scripts/hooks/session-end.py   --repo .   # at the end
+npm test
+python3 scripts/build-index.py /path/to/project/drift --check
+git diff --check
 ```
 
-`SKILL.md` also tells the agent to open a record itself when it finds none, so where nothing else fires it still happens on the first Drift request of the session.
+Tests use disposable repositories/homes and a loopback model stub. They cover
+record identity/fingerprints, publication failures/concurrency, actual Pi RPC
+lifecycle, reload/resume/compaction and the publisher. Missing Pi is reported as a
+skip; `PI_TEST_BINARY=/absolute/path/to/pi` selects it explicitly.
 
-Hooks load when a session starts, so an already-running session will not have them — open a new one. `install.py --check` executes the hook and reads its reply, which proves the script works; it cannot prove your harness invokes it. To confirm that, start a session in a git repo and look for a file under `~/.claude/drift-sessions/`.
-
-**At session start**, a record is opened outside the repository holding the session's real start time, branch and commit. The session is also told which Drift features are open, newest first, with the latest artifact and status for each — so "carry on where we left off" has something concrete to read. A compaction or a context clear keeps the record and restates that summary, which is exactly when a session most needs re-anchoring.
-
-**At session end**, the record is closed with the commits and files the session touched. A session that changed nothing leaves no record at all.
-
-**When you ask for a handoff**, the agent reads the record instead of reconstructing it, and deletes it once the artifact is written.
-
-**When a session dies without one**, the record survives as an orphan and the next session in that repository is told about it, with the files and commits it left behind. That agent writes the handoff with a full context window, from the record and git history. The work still gets written up, by a better writer than the one that ran out of room.
-
-### Installing
-
-Drift is installed, not pasted. It expects an agent that loads skills or prompt files from disk, because the workflow depends on things a chat transcript can't do: `SKILL.md` routing to the right prompt file, the agent reading and writing artifacts under `drift/`, and `scripts/build-index.py` rebuilding the index.
-
-Clone the repo anywhere and run the installer:
+To additionally exercise the installed ACP adapter, without downloading one:
 
 ```sh
-git clone https://github.com/coylemichael/drift ~/projects/drift
-python3 ~/projects/drift/install.py
+PI_TEST_ACP=/path/to/pi-acp/dist/index.js npm test
 ```
 
-It detects Claude Code and Zed on this machine, symlinks each one's skills directory to the clone — a directory junction on Windows without Developer Mode — and registers the [session hooks](#session-records). `git pull` in the clone is the upgrade; there is nothing to re-run. Beyond those, it touches nothing: no project repository, no `.gitignore`. Re-running is safe, `--check` reports the state, `--dry-run` prints the plan, `--uninstall` removes only what it added, and a real directory already in the way is reported rather than removed (`--force` moves it aside). Pass `--claude` or `--zed` to choose tools explicitly, or `--no-hooks` for the skill alone. VS Code and Cursor are per-project prompt files and stay manual:
-
-| Tool | Location | Hooks | Invocation |
-|------|----------|-------|------------|
-| **Claude Code** | `~/.claude/skills/drift` — made by `install.py`. To scope Drift to a single project instead, clone it to `.claude/skills/drift` inside that project | Yes | `/drift`, or ask Claude to use the Drift skill |
-| **Zed — `claude-acp` agent** | `~/.claude/skills/drift` — it is the Claude Code binary | Yes, the same registration | Ask the agent to use the Drift skill |
-| **Zed — native agent** | `~/.agents/skills/drift` — made by `install.py` | No hooks; a Drift section in `~/.config/zed/AGENTS.md` instead, also made by `install.py` | Ask the agent to use the Drift skill |
-| **VS Code Copilot Chat** | `.github/prompts/` — rename with the `.prompt.md` suffix (e.g. `research.md` → `.github/prompts/research.prompt.md`) | No hook mechanism | `/research`, `/plan`, `/execute`, `/handoff` |
-| **Cursor** | `.cursor/rules/` — rename with the `.mdc` suffix (e.g. `research.md` → `.cursor/rules/research.mdc`) and adjust frontmatter to Cursor's `globs:` / `alwaysApply:` keys | No hook mechanism | Triggered by rule scope |
-
-Claude Code discovers skills at session start, so restart the session after installing. Invoking `/drift` loads `SKILL.md`, which routes the request to the right prompt file — install Drift as one skill rather than four separate commands.
-
-To confirm an install, `python3 install.py --check` reports every link. For an end-to-end check, run [`scripts/smoke-test.sh`](scripts/smoke-test.sh): it repeats the link check, then asks a print-mode Claude Code session to list its skills and to run a Drift research pass in a throwaway repo under `/tmp`, verifying the artifact's clock-read date, full commit hash, index row and `.gitignore` entry before deleting that repo. It needs a Claude Code binary (the `claude` CLI, or the one Zed bundles) and makes two model calls; without a binary it runs the link check and tells you to try `/drift` in a new session instead.
-
-Tools without a skill or prompt-file directory aren't supported. The prompts assume the agent can route between files, read and write project artifacts, and run a script; a single pasted prompt gets you the tone but none of the continuity, which is the entire point.
-
-### Developing Drift itself
-
-If you're working on Drift's prompts and also using it as a skill, avoid maintaining two copies. The install above already does this: the skill directories are symlinks to the clone, wherever it lives, so the dev setup and the user setup are the same command. Run `python3 install.py --check` from the clone to confirm every link resolves to it. Edits in the working clone are immediately live in the skill — useful for iterating on prompt wording and testing it via skill invocation in the same session. The tradeoff: half-finished edits or a checked-out feature branch are what the skill serves. Check out `main` (or stash) to return the skill to a known-good state.
+These are runtime/mechanics checks, not Zed UI automation or proof of model-written
+handoff quality. Use ordinary work to judge the latter. Local package edits are
+live after restart/reload; preserve pending work before switching versions.

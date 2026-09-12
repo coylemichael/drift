@@ -18,8 +18,9 @@ You are tasked with writing a handoff document that snapshots where you are so t
 - If the user is continuing or adding related work for the same feature, create a new numbered artifact in the same feature folder rather than modifying an older artifact.
 - Review the changes you made this session.
 - Check the source research doc and/or previous handoff to confirm what was planned vs. what actually happened.
-- **Look for a session record.** If Drift's session hooks are installed, one was opened at session start and its path was given to you in the session's opening context. It holds the session's real start time, branch and starting commit. Read it and use it — see "Session Records" below.
-- Run `git diff HEAD --stat` to review uncommitted changes, or `git log --stat -1` if changes are already committed. With a session record, `git diff --stat <start_commit>` covers the whole session including work already committed, which is the better basis for **What Changed**.
+- Choose the portable **next-session profile** best suited to the next incomplete work: use `research`, `planning`, or `implementation` for Drift's three standard work modes. Use a configured local profile name when one is known; never invent a provider/model name in the artifact.
+- **Look for this thread's measured record.** Pi's Drift extension supplies its path and baseline in context. Read it and use it — see "Session Records" below. Outside Pi, use an explicitly supplied baseline if one exists; never invent the session start.
+- Run `git diff HEAD --stat` to review uncommitted changes, or `git log --stat -1` if changes are already committed. With a record, review `git diff --stat <startCommit>` and `git log <startCommit>..HEAD`, but also compare its starting fingerprint: the commit diff can include inherited or other threads' changes.
 
 ## Output Format
 
@@ -61,6 +62,8 @@ You are tasked with writing a handoff document that snapshots where you are so t
 
 ## Writing to Disk
 
+**When `drift_publish` is available:** follow `SKILL.md`'s "Publishing with Pi" section. Supply the required Markdown body, feature, `kind: handoff`, slug, references, and a lowercase-hyphenated `next_session_profile`; do not supply frontmatter or write the index yourself. The profile names the kind of receiving work, not a provider/model. Successful publication completes only this thread's current interval. Do not delete its record. The remaining disk/frontmatter instructions are the portable manual route.
+
 Save to: `drift/<feature>/NNN-handoff-<description>.md` at the **repository root**, where `<feature>` is inferred from the source research or prior handoff path and `NNN` is the next artifact number in that feature folder.
 
 Allocate `NNN` by scanning existing markdown files in `drift/<feature>/` whose names start with a three-digit prefix and hyphen. Use the next number after the highest prefix, or `001` if none exist.
@@ -88,6 +91,7 @@ session_started: [Session start, from the session record — omit if there is no
 source_research: [Path to the research document, if any]
 previous_handoff: [Path to previous handoff, if any]
 related_artifacts: [List of related Drift artifact paths, if any]
+next_session_profile: [Portable lower-case-hyphenated receiving profile]
 type: handoff
 ---
 ```
@@ -98,18 +102,30 @@ If a session record exists, add `session_started: [the record's started value]` 
 
 ## Session Records
 
-Drift's session hooks, if installed, open a JSON record at session start under `~/.claude/drift-sessions/<repo>/<session-id>.json` and close it at session end. The opening context of the session names its path.
+Pi's extension writes the measured baseline before work and preserves it across turns and resume. Read the exact supplied record: `started`, `startBranch`, `startCommit`, `baseline` and any `checkpoint` contain measurements, not a reconstruction from conversation memory. The publisher uses the original start for `session_started` and a fresh clock read for `date`.
 
-You are the worst-placed agent to reconstruct how this session began: you are at the end of a long context window, and the beginning may have been summarised away. The record was written by a hook at the moment it happened. Prefer it over your own recollection for:
+Use the recorded starting fingerprint as well as `git diff --stat <startCommit>` / `git log --oneline <startCommit>..HEAD`. Git deltas observe a worktree shared with other threads; they do not prove exclusive authorship.
 
-- `session_started` in the frontmatter, and the session's `start_commit`
-- the diff range for **What Changed** — `git diff --stat <start_commit>` and `git log --oneline <start_commit>..HEAD`
+**Pi records are extension-owned.** `drift_publish` writes and verifies the artifact/index before recording completion. It retains a receipt so retries cannot silently create a second handoff or reopen the same interval. Do not delete the record or Pi's conversation JSONL. If the tool fails, do not claim completion. Correct argument validation errors before retrying; if a pending publication exists, report the failure and retry the same input.
 
-**Delete the record once the handoff is written.** A record with no handoff is an orphan, and the next session in the repo will be told to write one from it. Leaving a promoted record behind causes duplicate work.
+### Profile-directed Pi continuation
 
-### Writing up someone else's orphan
+After a successful profiled handoff publication, give the user this exact final instruction, substituting the published path returned by `drift_publish`:
 
-The session-start context may report an earlier session that changed files and ended without a handoff. Offer to write it up before starting new work. You have what you need: the record holds the start time, branch, starting commit and the list of files touched, and `git log` holds the rest. Write it as the next numbered handoff in the feature the changes belong to, take `date` from the clock now, set `session_started` from the record, and say plainly in **Status** that the handoff was reconstructed after the fact from the record and git history rather than written by the session that did the work. Then delete the record.
+```text
+Start a fresh Pi thread/context, then paste:
+drift-continue drift/<feature>/<NNN>-handoff-<description>.md
+```
+
+`drift-continue` validates that repository-local handoff, resolves its `next_session_profile` using the receiving machine's configured profile map, selects the mapped model and thinking level **before** it sends a resume prompt. It fails visibly without inference when the artifact/profile/configuration/model authentication is unavailable. For an older handoff with no profile, or outside Pi, use the ordinary manual resume procedure below and select a model yourself.
+
+Outside Pi, an explicitly supplied measured record can be used as evidence. Legacy records may use `start_branch`, `start_commit` and `start_fingerprint`. If none exists, omit `session_started`. Do not reconstruct a precise timestamp from memory or a previous artifact.
+
+### Reconstructing earlier work
+
+Only do this when the user confirms the earlier thread is no longer active and wants its work written up. Read its record and Git history, and clearly label the handoff **reconstructed after the fact**. Describe original measurements in the body with their source. In Pi, the publisher's frontmatter still identifies the current writing interval; do not substitute the other thread's ID or mark its record completed.
+
+Leave other threads' and historical records untouched. An explicitly owned legacy manual record may be consumed after its handoff/index are validated under that record's original workflow, but never delete a Pi-owned record or choose a record by recency.
 
 ## Guidelines
 
@@ -122,7 +138,7 @@ The session-start context may report an earlier session that changed files and e
 
 ## Resuming from a Handoff
 
-If you are pointed at an existing handoff document to **continue** work (rather than write a new handoff):
+If you are pointed at an existing profiled handoff in a fresh Pi thread, prefer `drift-continue drift/<feature>/<NNN>-handoff-<description>.md`; it selects the declared local profile before asking any model to resume. Otherwise, if you are pointed at an existing handoff document to **continue** work:
 
 1. Read the handoff document
 2. Read the source research document it references, if any

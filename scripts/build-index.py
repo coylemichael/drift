@@ -2,11 +2,12 @@
 """Rebuild drift/INDEX.md — the chronological running order of Drift artifacts.
 
 Usage:
-    build-index.py [<drift-dir>] [--check]
+    build-index.py [<drift-dir>] [--check | --stdout]
 
     <drift-dir>  Path to a project's drift/ directory. Defaults to ./drift.
     --check      Report whether the index is out of sync and exit non-zero
                  instead of writing. Nothing is modified.
+    --stdout     Print the rendered index without writing (used by the Pi publisher).
 
 The index is a derived view: every row comes from an artifact's frontmatter, so
 this can be re-run at any time, including against a project that has Drift
@@ -150,7 +151,7 @@ def main(argv):
     if flags & {"-h", "--help"}:
         print(__doc__.strip())
         return 0
-    if flags - {"--check"}:
+    if flags - {"--check", "--stdout"} or {"--check", "--stdout"} <= flags:
         print(__doc__.strip(), file=sys.stderr)
         return 2
 
@@ -170,6 +171,10 @@ def main(argv):
     # Feature then sequence keeps equal timestamps stable across rebuilds.
     dated.sort(key=lambda r: (r["when"].astimezone(dt.timezone.utc), r["feature"], r["sequence"]))
     content = render(dated, undated)
+
+    if "--stdout" in flags:
+        print(content, end="")
+        return 0
 
     if "--check" in flags:
         current = index_path.read_text(encoding="utf-8") if index_path.exists() else None

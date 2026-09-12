@@ -60,6 +60,20 @@ Use the workflow as needed:
 3. Execute the plan (or a prior handoff) with `execute.md`, delegating self-contained steps to sub-agents.
 4. Write or resume handoffs with `handoff.md` whenever work crosses session boundaries.
 
+## Publishing with Pi
+
+If `drift_publish` is available, use it to save research, plan and handoff artifacts. First read the relevant workflow file and write its required Markdown sections. Pass the confirmed feature, artifact kind, a safe lowercase slug, the body **without frontmatter**, and any source/previous/related artifact paths. References are repository-relative `drift/...` paths.
+
+The tool owns the measured frontmatter, sequence allocation, `.gitignore`, artifact/index writes and handoff completion. Do not duplicate those writes or delete session records yourself. It rebuilds the index using the shared renderer, which may normalize index boilerplate without rewriting historical artifacts. Optional source/previous references may be omitted or blank; use `[]` when there are no related artifacts. Correct argument validation errors before retrying. Once a pending publication exists, keep the record and retry the **same input**; report conflicts instead of deleting partial work.
+
+Without that tool, follow the manual disk-writing and indexing instructions below. The skill remains usable outside Pi; automation does not.
+
+## Profile-directed Pi handoffs
+
+For a new handoff, choose and pass `next_session_profile`: a portable lowercase-hyphenated name for the next work type. Use `research`, `planning`, or `implementation` for the three standard Drift work modes. It is a receiving-session recommendation, never a provider, model ID, credential, or billing instruction.
+
+After `drift_publish` successfully creates a profiled handoff, tell the user to start a fresh Pi thread/context and paste `drift-continue <published artifact path>`. Pi validates the repository-local artifact, resolves that profile through the receiving machine's explicitly configured model map, selects the model before inference, then asks it to follow the ordinary handoff-resume workflow. Missing/invalid profiles or unavailable models fail visibly; older handoffs without a profile retain the manual resume route. See `handoff.md` and README for the local configuration format.
+
 ## Artifact Location
 
 The Drift skill may live globally at `~/.agents/skills/drift`, but generated Drift artifacts must be written inside the current target project, not inside this skill repo.
@@ -186,26 +200,16 @@ Two further rules:
 
 ## Session Records
 
-Drift ships two hooks, registered by `install.py` in `~/.claude/settings.json` and living in `scripts/hooks/`. A skill cannot do their job on its own: a skill is loaded once the model reaches for it, so nothing in this file can run at the start of a session.
+The Pi extension establishes a durable record before work and supplies its path and measured baseline in model context. It uses Pi's actual session ID, not a model-generated manual ID. Records live under Pi's agent directory, separately from project artifacts and Pi's conversation logs.
 
-The hooks fire only in harnesses that read `~/.claude/settings.json` — Claude Code itself, and Zed's `claude-acp` agent, which is the Claude Code binary. **Zed's native agent, VS Code Copilot and Cursor have no hook mechanism at all.** For Zed's native agent, `install.py` puts a Drift section in its personal `~/.config/zed/AGENTS.md`, which it reads on every new thread, telling it to run the same scripts itself. Elsewhere the record has to be opened deliberately.
+- Read **this thread's supplied record** when preparing an artifact. Its `started`, `startBranch`, `startCommit` and `baseline` describe the beginning of the current work interval. The publisher maps them into artifact frontmatter.
+- Records survive ordinary turns, reload, resume and compaction. Settled turns and teardown checkpoint observed changes; an ACP process detaching does not establish that the conversation is over.
+- A successful `drift_publish` handoff completes only the current interval. The extension retains a receipt for retries and establishes a new measured interval on the next working prompt. Research and plan publication leave the current interval active.
+- **Never delete Pi's session log or the extension's record.** Do not run retired manual hooks or substitute another thread's baseline. Publication failure must not be treated as completion.
+- A Git diff can include inherited or overlapping work. Compare the recorded starting fingerprint and actual task history; do not claim everything in `git diff HEAD` as this session's work. Unreadable files have explicitly marked metadata-only fingerprints.
+- A record is evidence about observed work, not proof that another thread is abandoned. Confirm ownership and the user's intent before using another thread's record for a reconstructed handoff; do not complete or consume it as your own.
 
-**If you are reading this and the session gave you no Drift session record, open one now**, before writing any artifact:
-
-```sh
-python3 <skill dir>/scripts/hooks/session-start.py --repo .
-```
-
-That prints the record path and the open-feature board, and reads the clock once at a known moment rather than leaving the handoff to estimate later. Close it with `session-end.py --repo .` when the work is done, or simply delete it once the handoff is written.
-
-- **SessionStart** opens a record at `~/.claude/drift-sessions/<repo>/<session-id>.json` holding the session's start time, branch and commit, read from the machine rather than estimated. It also states which Drift features are open, newest first, and reports any earlier session that changed files and ended without a handoff. On a compaction or a context clear it keeps the existing record and only restates that context, because the session's beginning has not moved.
-- **SessionEnd** closes the record with the commits and files the session touched. A session that changed nothing has its record deleted, so only meaningful ones survive.
-
-This exists because of who writes a handoff. The agent asked for one is at the end of its context window, with the start of the session summarised away — the single worst-placed writer, and the source of the fabricated timestamps documented under "Timestamps" above. The record moves that metadata to the moment it was true.
-
-When writing a handoff, read the record, take `session_started` and the diff range from it, and delete it afterwards. A surviving record is an orphan, and the next session is told to write it up from the record and git history — which inverts the problem, since that agent has a full context window. See "Session Records" in `handoff.md`.
-
-The hooks are optional. Drift works without them; `install.py --no-hooks` skips them, and every prompt still stands alone.
+A skill cannot run at session start by itself. Outside Pi, use any explicitly supplied measured baseline, but otherwise omit `session_started` rather than estimating it. The manual artifact workflow still works without lifecycle automation. See `handoff.md` for how to distinguish original measurements from a later reconstruction.
 
 ## Gitignore Drift Artifacts
 
