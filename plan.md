@@ -93,5 +93,5 @@ Take `date` from the system clock, never from an estimate or from a previous art
 - Be specific about files. "Update the database schema" is useless. "Add columns to endorsement_documents table in src/db/schema.py:84" is useful.
 - Keep tasks small, verifiable, and self-contained. Each item in the implementation sequence should be something you can confirm works before moving on, and something an executor could hand to a sub-agent without extra context. If a step needs a paragraph of preamble to be understandable in isolation, split it.
 - Note disjoint scopes when they exist. If two steps touch entirely separate files and don't depend on each other, say so — an orchestrator running the plan via `execute.md` can dispatch them in parallel.
-- Carry forward open questions. Don't drop them. The implementation session needs to know what's unresolved.
+- Carry forward open questions. Don't drop them. If one is a genuine product, scope, risk, or priority decision, ask the user before publishing an implementation-ready plan rather than silently selecting an option.
 - Don't add scope. If it's not in the research doc, it's not in the handoff.

@@ -10,6 +10,7 @@ export default function drift(pi: ExtensionAPI) {
   let key = "";
   let ready: Promise<Records | undefined> | undefined;
   let failure: string | undefined;
+  let queuedHandoffPath: string | undefined;
   let reported: string | undefined;
   let uiReported: string | undefined;
   const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -92,7 +93,6 @@ export default function drift(pi: ExtensionAPI) {
 
   // Bare syntax keeps the copy/paste continuation prompt from being interpreted as a slash command by hosts that reserve those.
   pi.on("input", async (event, ctx) => {
-    if (event.source === "extension") return { action: "continue" };
     const match = /^drift-continue(?:\s+([\s\S]*))?$/.exec(event.text.trim());
     if (!match) return { action: "continue" };
     await continueHandoff(match[1] ?? "", ctx);
@@ -162,7 +162,7 @@ export default function drift(pi: ExtensionAPI) {
     label: "Publish Drift artifact",
     description: "Publish a research, plan or handoff artifact in the current Git repo. Supply the portable skill's Markdown body, without frontmatter. Drift supplies measured metadata, numbering, atomic file writes and a canonical index. A handoff completes only the current work interval; no session log is deleted. Correct argument validation errors before retrying; if a pending publication exists, retry identical input to recover it. Maximum body: 256 KiB.",
     promptSnippet: "Publish Drift artifacts with measured metadata and an indexed, session-owned handoff",
-    promptGuidelines: ["Use drift_publish for Drift research/plan/handoff files instead of writing their frontmatter or INDEX.md yourself. Read the Drift skill and relevant workflow first. New handoffs should supply a portable next_session_profile, then present the returned drift-continue prompt for a fresh Pi thread. Never delete Drift records or Pi session logs."],
+    promptGuidelines: ["Use drift_publish for Drift research/plan/handoff files instead of writing their frontmatter or INDEX.md yourself. Read the Drift skill and relevant workflow first. New handoffs should supply a portable next_session_profile; after successful publication, Pi starts the next fresh session automatically. Do not ask the user to copy/paste a continuation command unless automatic continuation fails. Never delete Drift records or Pi session logs."],
     parameters: Type.Object({
       feature: Type.String({ description: "Confirmed project-local feature ID" }),
       kind: StringEnum(["research", "plan", "handoff"] as const),
@@ -181,14 +181,45 @@ export default function drift(pi: ExtensionAPI) {
       if (!records) throw new Error("drift_publish requires Pi's cwd to be inside the target Git repository");
       // Finish an entered publication even if inference is cancelled: leave a receipt or retryable intent.
       const receipt = await publish(records, params);
-      const continuation = params.kind === "handoff" && params.next_session_profile
-        ? `\nFresh Pi thread: drift-continue ${receipt.path}`
-        : "";
+      const autoContinue = params.kind === "handoff" && params.next_session_profile;
+      if (autoContinue && queuedHandoffPath !== receipt.path) {
+        queuedHandoffPath = receipt.path;
+        // Commands own session replacement. Queue one after the current model has finished its handoff response.
+        void pi.sendUserMessage(`/drift-start-next ${receipt.path}`, { deliverAs: "followUp", expandPromptTemplates: true });
+      }
       return {
-        content: [{ type: "text" as const, text: `Published ${receipt.path}\nIndex: drift/INDEX.md\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${continuation}` }],
+        content: [{ type: "text" as const, text: `Published ${receipt.path}\nIndex: drift/INDEX.md\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${autoContinue ? "\nA fresh profiled Pi session is queued automatically." : ""}` }],
         details: receipt,
       };
     },
   });
 
+  pi.registerCommand("drift-start-next", {
+    description: "Internal: create a fresh profiled session after a published handoff",
+    handler: async (args, ctx) => {
+      const artifact = args.trim();
+      try {
+        const repo = await repoRoot(ctx.cwd);
+        if (!repo) throw new Error("drift-start-next requires Pi's working directory to be inside the target Git repository");
+        const route = await readHandoffRoute(repo, artifact);
+        const profiles = await loadModelProfiles(repo, getAgentDir(), ctx.isProjectTrusted(), CONFIG_DIR_NAME);
+        const target = profiles[route.profile];
+        if (!target) throw new Error(`No local Drift model profile named ${JSON.stringify(route.profile)}; the published handoff remains available for manual continuation.`);
+        if (!ctx.modelRegistry.find(target.provider, target.model)) {
+          throw new Error(`Configured Drift profile ${JSON.stringify(route.profile)} selects an unavailable model ID: ${target.provider}/${target.model}. The published handoff remains available for manual continuation.`);
+        }
+        const parentSession = ctx.sessionManager.getSessionFile();
+        const result = await ctx.newSession({
+          parentSession,
+          withSession: async (replacementCtx) => {
+            replacementCtx.ui.notify(`Continuing Drift handoff with profile ${route.profile}`, "info");
+            await replacementCtx.sendUserMessage(`drift-continue ${route.path}`);
+          },
+        });
+        if (result.cancelled) ctx.ui.notify("Automatic Drift continuation was cancelled; the published handoff remains available.", "warning");
+      } catch (error) {
+        ctx.ui.notify(`${errorText(error)} Automatic continuation was not started; the published handoff remains available.`, "error");
+      }
+    },
+  });
 }

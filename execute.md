@@ -85,7 +85,8 @@ For parallel delegation, spawn each sub-agent with its own scoped prompt in the 
 4. Verify the step landed (build/test/lint/read the file — whichever is appropriate).
 5. Record the outcome in your working notes: what changed, deviations, new discoveries.
 6. If verification fails: try one or two focused fixes yourself. If still failing, stop and either surface to the user or write a handoff describing the blocker.
-7. Move to the next step.
+7. If a result creates a genuine decision point—material scope/plan deviation, public-contract or data-model change, security/destructive/external-cost risk, or reversal of an accepted decision—ask the user with evidence and bounded options before proceeding.
+8. Move to the next step.
 
 Keep the working notes structured so the final handoff writes itself. Track at minimum:
 
@@ -96,14 +97,22 @@ Keep the working notes structured so the final handoff writes itself. Track at m
 - New codebase context discovered during the run
 - Open questions
 
+## Long-running Pi execution
+
+For a plan that will exceed one context window, use each verified, self-contained implementation step (or another clear checkpoint in the plan) as a handoff boundary. Do not wait for context exhaustion: stop after the current safe checkpoint when the remaining work needs a fresh read of the plan, research, or codebase.
+
+Publish that handoff with the appropriate `next_session_profile`. In Pi, a successful profiled handoff automatically creates the next fresh session, selects its profile, and asks it to continue from the saved artifact. The next model reads the handoff and its referenced plan/research rather than receiving the old transcript. Do not ask the user to copy a continuation prompt in this normal path.
+
+Keep each handoff's **Next Steps** to the next bounded unit, not the entire remaining plan. The receiving session repeats this process after its own verified checkpoint, producing a chain of small context windows with durable project-local context.
+
 ## When to Stop and Hand Off
 
 Write a handoff (following `handoff.md`) when any of the following is true:
 
 - The step sequence is complete.
 - Your context is filling up and further work risks losing continuity — stop **before** you lose the ability to write a clean handoff.
-- You hit a blocker requiring user input or a design decision beyond the plan's scope.
-- The plan turned out to be materially wrong and needs re-planning (write the handoff, then the next session can revisit `plan.md`).
+- You hit a blocker requiring user input or a design decision beyond the plan's scope. Ask the user and wait; do not use a profiled automatic handoff to bypass that decision.
+- The plan turned out to be materially wrong and needs re-planning. Surface the deviation and options to the user before starting a new planned session.
 
 Do not push past a stopping point just to finish "one more step." A clean handoff is more valuable than a partially-broken extra step.
 

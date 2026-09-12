@@ -60,6 +60,12 @@ Use the workflow as needed:
 3. Execute the plan (or a prior handoff) with `execute.md`, delegating self-contained steps to sub-agents.
 4. Write or resume handoffs with `handoff.md` whenever work crosses session boundaries.
 
+## User decision checkpoints
+
+Ask the user and wait before proceeding when a discovered fact creates a genuine product, scope, or risk decision: an unexpected requirement ambiguity; a material departure from the approved plan; a change to a public contract, data model, security/permission boundary, destructive operation, external integration, cost, or priority; or a need to reverse an earlier accepted decision. State the decision plainly, give the relevant evidence and bounded options/trade-offs, and ask one specific question.
+
+Do not interrupt the user for routine implementation choices that are already constrained by the plan or established code patterns. Record those in the artifact instead. If a user decision is pending, do not publish a profiled handoff that would automatically start another session; keep the current session waiting for the answer, or write an unprofiled handoff only when the user explicitly asks to stop.
+
 ## Publishing with Pi
 
 If `drift_publish` is available, use it to save research, plan and handoff artifacts. First read the relevant workflow file and write its required Markdown sections. Pass the confirmed feature, artifact kind, a safe lowercase slug, the body **without frontmatter**, and any source/previous/related artifact paths. References are repository-relative `drift/...` paths.
@@ -72,7 +78,7 @@ Without that tool, follow the manual disk-writing and indexing instructions belo
 
 For a new handoff, choose and pass `next_session_profile`: a portable lowercase-hyphenated name for the next work type. Use `research`, `planning`, or `implementation` for the three standard Drift work modes. It is a receiving-session recommendation, never a provider, model ID, credential, or billing instruction.
 
-After `drift_publish` successfully creates a profiled handoff, tell the user to start a fresh Pi thread/context and paste `drift-continue <published artifact path>`. Pi validates the repository-local artifact, resolves that profile through the receiving machine's explicitly configured model map, selects the model before inference, then asks it to follow the ordinary handoff-resume workflow. Missing/invalid profiles or unavailable models fail visibly; older handoffs without a profile retain the manual resume route. See `handoff.md` and README for the local configuration format.
+After `drift_publish` successfully creates a profiled handoff, report that Pi queues the next fresh session automatically; do not ask the user to copy/paste a continuation command. The new session validates the repository-local artifact, resolves that profile through the receiving machine's explicitly configured model map, selects the model before inference, then follows the ordinary handoff workflow. Missing/invalid profiles or unavailable models fail visibly and leave the handoff available for manual recovery with `drift-continue <published artifact path>`. See `handoff.md` and README for the local configuration format.
 
 ## Artifact Location
 

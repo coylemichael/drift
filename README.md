@@ -51,17 +51,15 @@ A handoff may declare the next task's portable profile: `research`, `planning`,
 or `implementation`. The model that performed the work writes its own handoff;
 the profile selects the model for the **next** independent task.
 
-After publishing a profiled handoff, start a fresh Pi thread and paste:
+After publishing a profiled handoff, Drift automatically queues a fresh Pi
+session. That session validates the repository-local handoff, resolves its
+profile through the local model map, selects the model and optional thinking
+level, then continues the recorded work. Each profiled handoff therefore starts
+the next independent task with a clean context window.
 
-```text
-drift-continue drift/<feature>/<NNN>-handoff-<description>.md
-```
-
-Before inference, Drift validates the repository-local handoff, reads its
-profile, resolves an explicit local model map, selects that model and optional
-thinking level, then asks it to continue the recorded work. Invalid paths,
-missing profiles, unavailable models, and authentication failures stop before a
-model request. Older handoffs can still be resumed manually.
+If automatic continuation cannot validate the artifact/profile/model, it leaves
+the published handoff intact and reports the error. Recover manually in a fresh
+Pi thread with `drift-continue drift/<feature>/<NNN>-handoff-<description>.md`.
 
 Configure defaults at `~/.pi/agent/drift-model-profiles.json` (or Pi's configured
 agent directory). A trusted project may override profiles at
@@ -83,6 +81,16 @@ The current GitHub Copilot starting policy is:
 Profile files allow only `provider`, `model`, and optional `thinkingLevel`
 (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`). Keep credentials
 out of them.
+
+## User decision checkpoints
+
+Drift asks and waits when work reveals a genuine requirement ambiguity, material
+plan/scope deviation, public-contract or data-model change, security/destructive
+risk, external integration/cost, priority change, or reversal of an accepted
+decision. It gives the evidence, bounded options, and one clear question.
+
+Routine implementation choices remain with the agent and are recorded in the
+artifact. A pending user decision never triggers a profiled automatic handoff.
 
 ## What Pi automates
 

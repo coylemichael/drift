@@ -107,10 +107,11 @@ async function fixture(t: any, broken = false) {
     const messages = payload.messages ?? [];
     const text = (message: any) => typeof message.content === "string" ? message.content : (message.content ?? []).map((part: any) => part.text ?? "").join("\n");
     const user = messages.findLastIndex((message: any) => message.role === "user" && !text(message).includes("Drift lifecycle is managed by the Pi extension"));
-    const publish = user >= 0 && /^PUBLISH_(RESEARCH|HANDOFF)/.test(text(messages[user])) && !messages.slice(user + 1).some((message: any) => message.role === "tool");
-    const kind = user >= 0 && text(messages[user]).startsWith("PUBLISH_RESEARCH") ? "research" : "handoff";
+    const marker = user >= 0 ? text(messages[user]) : "";
+    const publish = /^PUBLISH_(RESEARCH|HANDOFF|AUTO_HANDOFF)/.test(marker) && !messages.slice(user + 1).some((message: any) => message.role === "tool");
+    const kind = marker.startsWith("PUBLISH_RESEARCH") ? "research" : "handoff";
     // Real models may fill optional string fields with "" rather than omit them.
-    const args = { feature: "runtime", kind, slug: "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: "", related_artifacts: [], ...(kind === "handoff" ? { next_session_profile: "architecture" } : {}) };
+    const args = { feature: "runtime", kind, slug: "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: "", related_artifacts: [], ...(marker.startsWith("PUBLISH_AUTO_HANDOFF") ? { next_session_profile: "architecture" } : {}) };
     const delta = publish ? { role: "assistant", tool_calls: [{ index: 0, id: `publish-${kind}`, type: "function", function: { name: "drift_publish", arguments: JSON.stringify(args) } }] } : { role: "assistant", content: "Synthetic fixture response; preserve the bounded task and continue." };
     const common = { id: "drift-fixture", object: "chat.completion.chunk", created: 0, model: "fixture" };
     response.writeHead(200, { "content-type": "text/event-stream", connection: "close" });
@@ -213,19 +214,20 @@ test("actual Pi RPC: discovery, pre-inference record, context, resume/reload, co
   assert.equal(await fs.readFile(f.recordPath(fork.sessionId), "utf8"), "{}");
 });
 
-test("actual Pi drift-continue selects the configured handoff profile before inference", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+test("actual Pi automatically continues a profiled handoff in a fresh model-selected session", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
   const state = await client.request({ type: "get_state" });
-  await client.prompt("PUBLISH_HANDOFF");
+  const requestsBeforeHandoff = f.requests.length;
+  await client.prompt("PUBLISH_AUTO_HANDOFF");
   const completed = await f.readRecord(state.sessionId);
   const artifact = completed.completed!.path;
   assert.ok((await fs.readFile(join(f.repo, artifact), "utf8")).includes('next_session_profile: "architecture"'));
-  const requestsBeforeResume = f.requests.length;
-  await client.prompt(`drift-continue ${artifact}`);
-  assert.equal(f.requests.length, requestsBeforeResume + 1);
-  const request = f.requests.at(-1);
-  assert.equal(request.model, "architecture");
-  assert.ok(JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + artifact + "`"));
+  const replacement = await until(async () => {
+    const current = await client.request({ type: "get_state" });
+    return current.sessionId !== state.sessionId ? current : undefined;
+  }, "profiled handoff did not create a fresh session");
+  assert.notEqual(replacement.sessionId, state.sessionId);
+  await until(() => f.requests.slice(requestsBeforeHandoff + 1).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + artifact + "`")), "fresh session did not send the profiled continuation prompt");
   await fs.mkdir(join(f.repo, "drift/runtime"), { recursive: true });
   await fs.writeFile(join(f.repo, "drift/runtime/099-handoff-unprofiled.md"), '---\ntype: "handoff"\n---\n');
   const requestsBeforeFailure = f.requests.length;

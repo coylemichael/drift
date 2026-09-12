@@ -18,7 +18,7 @@ You are tasked with writing a handoff document that snapshots where you are so t
 - If the user is continuing or adding related work for the same feature, create a new numbered artifact in the same feature folder rather than modifying an older artifact.
 - Review the changes you made this session.
 - Check the source research doc and/or previous handoff to confirm what was planned vs. what actually happened.
-- Choose the portable **next-session profile** best suited to the next incomplete work: use `research`, `planning`, or `implementation` for Drift's three standard work modes. Use a configured local profile name when one is known; never invent a provider/model name in the artifact.
+- Choose the portable **next-session profile** best suited to the next incomplete work: use `research`, `planning`, or `implementation` for Drift's three standard work modes. Use a configured local profile name when one is known; never invent a provider/model name in the artifact. If a genuine user decision is pending, do not supply a profile that would automatically continue; ask the user and wait instead.
 - **Look for this thread's measured record.** Pi's Drift extension supplies its path and baseline in context. Read it and use it — see "Session Records" below. Outside Pi, use an explicitly supplied baseline if one exists; never invent the session start.
 - Run `git diff HEAD --stat` to review uncommitted changes, or `git log --stat -1` if changes are already committed. With a record, review `git diff --stat <startCommit>` and `git log <startCommit>..HEAD`, but also compare its starting fingerprint: the commit diff can include inherited or other threads' changes.
 
@@ -110,14 +110,7 @@ Use the recorded starting fingerprint as well as `git diff --stat <startCommit>`
 
 ### Profile-directed Pi continuation
 
-After a successful profiled handoff publication, give the user this exact final instruction, substituting the published path returned by `drift_publish`:
-
-```text
-Start a fresh Pi thread/context, then paste:
-drift-continue drift/<feature>/<NNN>-handoff-<description>.md
-```
-
-`drift-continue` validates that repository-local handoff, resolves its `next_session_profile` using the receiving machine's configured profile map, selects the mapped model and thinking level **before** it sends a resume prompt. It fails visibly without inference when the artifact/profile/configuration/model authentication is unavailable. For an older handoff with no profile, or outside Pi, use the ordinary manual resume procedure below and select a model yourself.
+After a successful profiled handoff publication, tell the user that Pi is creating the next fresh session automatically; do not ask for a copy/paste continuation action. The queued session uses `drift-continue` internally to validate the repository-local handoff, resolve its `next_session_profile` using the receiving machine's configured profile map, select the mapped model and thinking level **before** inference, and continue its Next Steps. It fails visibly without inference when the artifact/profile/configuration/model authentication is unavailable, leaving the published handoff intact. For an older unprofiled handoff, a failed automatic continuation, or outside Pi, use the ordinary manual resume procedure below and select a model yourself.
 
 Outside Pi, an explicitly supplied measured record can be used as evidence. Legacy records may use `start_branch`, `start_commit` and `start_fingerprint`. If none exists, omit `session_started`. Do not reconstruct a precise timestamp from memory or a previous artifact.
 
@@ -138,7 +131,7 @@ Leave other threads' and historical records untouched. An explicitly owned legac
 
 ## Resuming from a Handoff
 
-If you are pointed at an existing profiled handoff in a fresh Pi thread, prefer `drift-continue drift/<feature>/<NNN>-handoff-<description>.md`; it selects the declared local profile before asking any model to resume. Otherwise, if you are pointed at an existing handoff document to **continue** work:
+Automatic continuation is the normal Pi path for new profiled handoffs. To recover an existing profiled handoff manually in a fresh Pi thread, use `drift-continue drift/<feature>/<NNN>-handoff-<description>.md`; it selects the declared local profile before asking any model to continue. Otherwise, if you are pointed at an existing handoff document to **continue** work:
 
 1. Read the handoff document
 2. Read the source research document it references, if any
