@@ -101,7 +101,7 @@ Keep the working notes structured so the final handoff writes itself. Track at m
 
 For a plan that will exceed one context window, use each verified, self-contained implementation step (or another clear checkpoint in the plan) as a handoff boundary. Do not wait for context exhaustion: stop after the current safe checkpoint when the remaining work needs a fresh read of the plan, research, or codebase.
 
-Publish that handoff with the appropriate `next_session_profile`. In Pi, a successful profiled handoff automatically creates the next fresh session, selects its profile, and asks it to continue from the saved artifact. The next model reads the handoff and its referenced plan/research rather than receiving the old transcript. Do not ask the user to copy a continuation prompt in this normal path.
+Publish that handoff with the appropriate `next_session_profile`. In Pi, a successful profiled handoff automatically compacts to the next fresh context window, selects its profile, and asks it to continue from the saved artifact. The next model reads the handoff and its referenced plan/research rather than receiving the old transcript. Do not ask the user to copy a continuation prompt in this normal path.
 
 Keep each handoff's **Next Steps** to the next bounded unit, not the entire remaining plan. The receiving session repeats this process after its own verified checkpoint, producing a chain of small context windows with durable project-local context.
 

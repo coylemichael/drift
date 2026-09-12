@@ -214,7 +214,7 @@ test("actual Pi RPC: discovery, pre-inference record, context, resume/reload, co
   assert.equal(await fs.readFile(f.recordPath(fork.sessionId), "utf8"), "{}");
 });
 
-test("actual Pi automatically continues a profiled handoff in a fresh model-selected session", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+test("actual Pi automatically continues a profiled handoff after a fresh context compaction", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
   const state = await client.request({ type: "get_state" });
   const requestsBeforeHandoff = f.requests.length;
@@ -222,12 +222,10 @@ test("actual Pi automatically continues a profiled handoff in a fresh model-sele
   const completed = await f.readRecord(state.sessionId);
   const artifact = completed.completed!.path;
   assert.ok((await fs.readFile(join(f.repo, artifact), "utf8")).includes('next_session_profile: "architecture"'));
-  const replacement = await until(async () => {
-    const current = await client.request({ type: "get_state" });
-    return current.sessionId !== state.sessionId ? current : undefined;
-  }, "profiled handoff did not create a fresh session");
-  assert.notEqual(replacement.sessionId, state.sessionId);
-  await until(() => f.requests.slice(requestsBeforeHandoff + 1).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + artifact + "`")), "fresh session did not send the profiled continuation prompt");
+  const current = await client.request({ type: "get_state" });
+  assert.equal(current.sessionId, state.sessionId);
+  await until(async () => (await client.request({ type: "get_entries" })).entries.some((entry: any) => entry.type === "compaction"), "profiled handoff did not compact to a fresh context window");
+  await until(() => f.requests.slice(requestsBeforeHandoff + 1).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + artifact + "`")), "fresh context did not send the profiled continuation prompt");
   await fs.mkdir(join(f.repo, "drift/runtime"), { recursive: true });
   await fs.writeFile(join(f.repo, "drift/runtime/099-handoff-unprofiled.md"), '---\ntype: "handoff"\n---\n');
   const requestsBeforeFailure = f.requests.length;

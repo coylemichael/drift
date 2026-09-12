@@ -51,11 +51,11 @@ A handoff may declare the next task's portable profile: `research`, `planning`,
 or `implementation`. The model that performed the work writes its own handoff;
 the profile selects the model for the **next** independent task.
 
-After publishing a profiled handoff, Drift automatically queues a fresh Pi
-session. That session validates the repository-local handoff, resolves its
+After publishing a profiled handoff, Drift automatically compacts to a fresh
+context window. It then validates the repository-local handoff, resolves its
 profile through the local model map, selects the model and optional thinking
-level, then continues the recorded work. Each profiled handoff therefore starts
-the next independent task with a clean context window.
+level, and continues the recorded work. Each profiled handoff therefore starts
+the next independent task with minimal durable context rather than the old transcript.
 
 If automatic continuation cannot validate the artifact/profile/model, it leaves
 the published handoff intact and reports the error. Recover manually in a fresh

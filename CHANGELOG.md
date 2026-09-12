@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **Profile-directed Pi handoff continuation.** Handoff publication can store a portable `next_session_profile`; `drift-continue drift/<feature>/<NNN>-handoff-<description>.md` validates that local artifact, resolves its explicitly configured model profile, selects the model and optional thinking level before sending a continuation prompt, and fails without inference when routing cannot be resolved. Global/profile-local mappings deliberately keep provider/model choices out of portable artifacts. A successful profiled handoff now queues the next fresh Pi session automatically; manual `drift-continue` input is recovery-only.
+- **Profile-directed Pi handoff continuation.** Handoff publication can store a portable `next_session_profile`; `drift-continue drift/<feature>/<NNN>-handoff-<description>.md` validates that local artifact, resolves its explicitly configured model profile, selects the model and optional thinking level before sending a continuation prompt, and fails without inference when routing cannot be resolved. Global/profile-local mappings deliberately keep provider/model choices out of portable artifacts. A successful profiled handoff now queues a fresh Pi context compaction automatically; manual `drift-continue` input is recovery-only.
 - **User decision checkpoints.** Drift now stops for explicit user direction on genuine requirement ambiguity, material scope/plan changes, public-contract/data-model changes, security/destructive/external-cost risks, priority changes, and reversals of accepted decisions. Routine constrained implementation details remain agent decisions, and a pending user decision never triggers automatic continuation.
 
 ### Fixed

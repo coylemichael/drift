@@ -78,7 +78,7 @@ Without that tool, follow the manual disk-writing and indexing instructions belo
 
 For a new handoff, choose and pass `next_session_profile`: a portable lowercase-hyphenated name for the next work type. Use `research`, `planning`, or `implementation` for the three standard Drift work modes. It is a receiving-session recommendation, never a provider, model ID, credential, or billing instruction.
 
-After `drift_publish` successfully creates a profiled handoff, report that Pi queues the next fresh session automatically; do not ask the user to copy/paste a continuation command. The new session validates the repository-local artifact, resolves that profile through the receiving machine's explicitly configured model map, selects the model before inference, then follows the ordinary handoff workflow. Missing/invalid profiles or unavailable models fail visibly and leave the handoff available for manual recovery with `drift-continue <published artifact path>`. See `handoff.md` and README for the local configuration format.
+After `drift_publish` successfully creates a profiled handoff, report that Pi queues the next fresh context window automatically; do not ask the user to copy/paste a continuation command. After compaction, it validates the repository-local artifact, resolves that profile through the receiving machine's explicitly configured model map, selects the model before inference, then follows the ordinary handoff workflow. Missing/invalid profiles or unavailable models fail visibly and leave the handoff available for manual recovery with `drift-continue <published artifact path>`. See `handoff.md` and README for the local configuration format.
 
 ## Artifact Location
 
