@@ -4,51 +4,34 @@
 
 <h3 align="center"><em>Context drifts if you don't pin it down</em></h3>
 
-Drift preserves useful context across long-running coding sessions: what was
-investigated, what was decided, what changed, and what to do next.
+Drift preserves the useful state of multi-session coding work: research,
+decisions, changes, and the next task. Its portable skill guides the workflow;
+the Pi extension owns session metadata and artifact publication.
 
-**Portable skills. Pi-focused automation.** The prompts guide judgement; a small
-Pi extension handles session metadata and artifact publication. No separate agent
-runtime, background service or multi-agent installer.
+## Install
 
-## Install in Pi
-
-Requires Pi (tested with 0.85.1), Node 22.18+, Git and Python 3.7+ for the index
-renderer. The extension uses Node built-ins and packages already supplied by Pi;
-there is no build step or additional runtime dependency installation.
+Requires Pi 0.85.1+, Node 22.18+, Git, and Python 3.7+.
 
 ```sh
 git clone https://github.com/coylemichael/drift ~/projects/drift
 pi install ~/projects/drift
 ```
 
-Pi links the local package through its own settings without copying the checkout.
-Restart Pi or start a fresh **Pi ACP** thread in Zed. Keep your existing provider
-and authentication. The package loads both the extension and the root `SKILL.md`;
-an existing shared skill link need not be removed. First activation in an older
-session measures a new interval; it cannot reconstruct the pre-install baseline.
+Restart Pi or open a fresh Pi ACP thread after installation. Remove the package
+with `pi remove ~/projects/drift`; this does not remove the checkout, artifacts,
+or session records.
 
-Remove this package with `pi remove ~/projects/drift`. This removes the package
-registration, not your checkout, project artifacts or saved records. If you also
-have a separate skill link, manage that separately.
+## Workflow
 
-## Use the same workflow
+| Mode | Use |
+|---|---|
+| Research | `research.md` — document what exists. |
+| Plan | `plan.md` — turn research into a verifiable sequence. |
+| Execute | `execute.md` — carry out a plan or handoff. |
+| Handoff | `handoff.md` — record current state for the next task. |
 
-[`SKILL.md`](SKILL.md) routes to four portable prompts:
-
-| Mode | File | Example request |
-|---|---|---|
-| Research | [research.md](research.md) | “Use Drift to research the auth flow. Feature: auth-refactor.” |
-| Plan | [plan.md](plan.md) | “Plan the implementation from that research.” |
-| Execute | [execute.md](execute.md) | “Execute this plan, verifying each step.” |
-| Handoff/resume | [handoff.md](handoff.md) | “Write a handoff” / `drift-continue drift/auth-refactor/003-handoff-progress.md` in a fresh Pi thread. |
-
-Skip the formal workflow for trivial work that comfortably fits one session.
-Delegation in execute mode depends on the host's available tools; Drift does not
-install a sub-agent runtime.
-
-Artifacts stay in the **target project**, not the skill checkout or an editor's
-private memory:
+Ask for the appropriate Drift workflow in ordinary language. Artifacts are kept
+in the target repository, not the skill checkout:
 
 ```text
 drift/
@@ -59,90 +42,33 @@ drift/
     003-handoff-progress.md
 ```
 
-Each feature has its own sequence. `INDEX.md` is the cross-feature timeline,
-sorted by real timestamps including timezone offsets. Artifacts are ignored via
-`/drift/` by default; explicitly track them yourself if they should be shared.
+`INDEX.md` is the repository-wide chronological timeline. New artifacts are
+ignored by `/drift/` by default; explicitly track them if the project requires it.
 
-## What Pi automates
+## Profile-directed continuation
 
-- Opens an immediately persisted record before work, keyed by the actual Pi
-  session ID and canonical Git repository. Records live under
-  `~/.pi/agent/drift/<repo-hash>/<session-id>.json` (respecting Pi's agent-directory override).
-- Captures a real local-offset timestamp, branch, commit and dirty-file content
-  fingerprints; retains the baseline across turns, reload and resume.
-- Injects bounded current metadata and recent artifact pointers into ordinary
-  model requests, including after compaction. Detailed context stays in artifacts.
-- Checkpoints observed changes on settled turns and graceful teardown. Detaching
-  an ACP process is not treated as permanent completion.
-- Provides **`drift_publish`**: the model supplies feature/kind/slug, Markdown body
-  and optional references; code supplies metadata, numbering, safe paths, the
-  canonical index and a retryable publication receipt.
+A handoff may declare the next task's portable profile: `research`, `planning`,
+or `implementation`. The model that performed the work writes its own handoff;
+the profile selects the model for the **next** independent task.
 
-A published **handoff** completes the current work interval. Its receipt remains;
-Pi session logs are never deleted. The next model-run prompt starts a new measured
-interval (there is no language-based guess about whether a message is "substantive").
-Research and plan artifacts leave the interval active.
-
-The skill handles the content; the publisher validates mechanics, not prose
-accuracy. You still request a handoff. `drift_publish` remains usable through the
-existing `pi-acp` adapter; profile-directed resume is a Pi extension command.
-
-### Profile-directed handoff continuation
-
-A new handoff may declare a portable `next_session_profile`: use `research`,
-`planning`, or `implementation` for the three standard Drift work modes. It
-deliberately contains no provider/model selection. After a successful profiled publication, start
-a fresh Pi thread and paste the path returned by the tool:
+After publishing a profiled handoff, start a fresh Pi thread and paste:
 
 ```text
 drift-continue drift/<feature>/<NNN>-handoff-<description>.md
 ```
 
-Before sending a resume prompt to any model, the command validates that the argument
-is a repository-local current-format handoff, reads its profile, resolves it through
-an explicit local profile map, selects the mapped model, and applies its optional
-thinking level. It does not silently choose a fallback: an absent profile, malformed
-artifact/configuration, unavailable model, or failed authentication is reported
-without inference. Handoffs created before this feature can still be resumed by the
-ordinary manual workflow.
+Before inference, Drift validates the repository-local handoff, reads its
+profile, resolves an explicit local model map, selects that model and optional
+thinking level, then asks it to continue the recorded work. Invalid paths,
+missing profiles, unavailable models, and authentication failures stop before a
+model request. Older handoffs can still be resumed manually.
 
-Configure global defaults in `~/.pi/agent/drift-model-profiles.json` (or Pi's
-configured agent directory), and optionally override named profiles in the trusted
-project at `.pi/drift-model-profiles.json`:
+Configure defaults at `~/.pi/agent/drift-model-profiles.json` (or Pi's configured
+agent directory). A trusted project may override profiles at
+`.pi/drift-model-profiles.json`. Use Pi's **model IDs** from `pi --list-models`,
+not picker labels such as `Claude Opus 5`.
 
-```json
-{
-  "profiles": {
-    "research": {
-      "provider": "your-provider",
-      "model": "your-fast-research-model",
-      "thinkingLevel": "medium"
-    },
-    "planning": {
-      "provider": "your-provider",
-      "model": "your-planning-model",
-      "thinkingLevel": "high"
-    },
-    "implementation": {
-      "provider": "your-provider",
-      "model": "your-coding-model",
-      "thinkingLevel": "high"
-    }
-  }
-}
-```
-
-Profile names must be lowercase hyphenated. Each entry permits only `provider`,
-`model`, and optional `thinkingLevel` (`off`, `minimal`, `low`, `medium`, `high`,
-`xhigh`, or `max`). Set `model` to Pi's catalog **model ID** (for example
-`claude-opus-5`), not its human-readable picker label (for example `Claude Opus 5`);
-run `pi --list-models` to see IDs. Global profiles are defaults; a trusted project can override a
-profile with the same name. Configure the referenced providers/models through Pi
-normally. The profile map is intentionally local and should not be committed with
-credentials.
-
-For the current GitHub Copilot model set, the recommended three-profile starting
-point is:
+The current GitHub Copilot starting policy is:
 
 ```json
 {
@@ -154,48 +80,25 @@ point is:
 }
 ```
 
-This is a starting policy, not a claim that one benchmark predicts every repository.
-Keep the model that did the work on its handoff; the handoff profile selects the
-model for the next independent research, planning, or implementation task.
+Profile files allow only `provider`, `model`, and optional `thinkingLevel`
+(`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`). Keep credentials
+out of them.
 
-### Boundaries and recovery
+## What Pi automates
 
-- No guessing among nested repos: outside Git, automation is explicitly inactive.
-- Git deltas observe shared-worktree changes, not exclusive authorship. Unreadable
-  files have explicitly marked metadata-only fingerprints.
-- A loaded extension handles known initialization failures by stopping the prompt
-  and blocking tools. This is not a sandbox or a guarantee if the extension is
-  disabled/fails to load; Pi otherwise catches many extension errors and continues.
-- Context is reinjected after compaction; Drift does not replace Pi's summarizer
-  or claim injection into the separate summary request.
-- Abrupt termination retains the last durable record, not necessarily the last
-  file change. Records are not automatically reaped or turned into prose handoffs.
-- Optional reference paths may be omitted or blank; non-empty references must
-  name existing `drift/...md` artifacts. Correct invalid arguments before retrying.
-  Once a pending publication exists, retry **the same tool input**. Within the same
-  work interval, intent/receipts prevent premature completion or duplicate artifacts.
-  Conflicting partial files or stale locks require explicit inspection; never
-  delete another running thread's lock/record. Individual writes are atomic, not
-  a multi-file filesystem transaction.
-- The publisher rebuilds the index with the shared renderer. Existing artifact
-  contents remain untouched; index boilerplate is normalized. Manual index checks
-  are byte-canonical, so different prose can fail `--check` even with correct rows.
+- A durable record keyed to Pi's real session ID and Git repository.
+- Measured start metadata and dirty-file fingerprints that survive reload,
+  resume, and compaction.
+- Bounded Drift context on normal model requests and checkpoints after settled
+  turns or graceful teardown.
+- `drift_publish`, which validates artifact paths, writes measured frontmatter,
+  allocates numbers, rebuilds the index, and retains retryable receipts.
 
-Set `DRIFT_PYTHON` to a Python executable path if `python3` is not available.
+A published handoff completes only its current work interval. Pi conversation
+logs and session records are never deleted by Drift. The extension is inactive
+outside Git; the skill remains usable manually in other agents.
 
-## Other agents: skill only
-
-Place or link this checkout in your agent's skill directory, or have it read
-`SKILL.md` and the referenced workflow files from disk. The prompts retain manual
-artifact-writing instructions. Without a measured session baseline, omit
-`session_started`; never invent it.
-
-Drift no longer installs Claude/Copilot hooks or native-Zed personal instructions.
-When upgrading an older installation, remove its **Drift-owned** hook entries and
-marked `<!-- drift:start -->` block before removing the old scripts. Preserve
-unrelated settings, skill links, historical records and agent installations.
-
-## Development and checks
+## Development
 
 ```sh
 npm test
@@ -203,17 +106,7 @@ python3 scripts/build-index.py /path/to/project/drift --check
 git diff --check
 ```
 
-Tests use disposable repositories/homes and a loopback model stub. They cover
-record identity/fingerprints, publication failures/concurrency, actual Pi RPC
-lifecycle, reload/resume/compaction and the publisher. Missing Pi is reported as a
-skip; `PI_TEST_BINARY=/absolute/path/to/pi` selects it explicitly.
-
-To additionally exercise the installed ACP adapter, without downloading one:
-
-```sh
-PI_TEST_ACP=/path/to/pi-acp/dist/index.js npm test
-```
-
-These are runtime/mechanics checks, not Zed UI automation or proof of model-written
-handoff quality. Use ordinary work to judge the latter. Local package edits are
-live after restart/reload; preserve pending work before switching versions.
+`npm test` uses temporary repositories and loopback model fixtures. It covers
+record/publication safety and actual Pi RPC lifecycle, model selection, reload,
+resume, and compaction. Set `PI_TEST_ACP=/path/to/pi-acp/dist/index.js` to also
+run the installed ACP checks.
