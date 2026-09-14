@@ -318,3 +318,24 @@ test("one index renderer orders offsets/legacy/undated data; stdout never writes
   assert.ok(result.includes("(approx)")); assert.ok(result.includes("## Undated"));
   await assert.rejects(fs.stat(join(drift, "INDEX.md")), { code: "ENOENT" });
 });
+
+test("changed source files are surfaced as unpublished until a handoff completes the interval", async (t) => {
+  const { repo, agent } = await fixture(t);
+  const store = (await Records.open(repo, "session-a", agent))!;
+  assert.doesNotMatch(await store.context(), /Unpublished work/);
+
+  await fs.writeFile(join(repo, "file.txt"), "modified\n");
+  await store.checkpoint("settled");
+  assert.match(await store.context(), /Unpublished work in this interval: 1 file\(s\) changed \(file\.txt\)/);
+
+  await publish(store, input);
+  await store.checkpoint("settled");
+  assert.doesNotMatch(await store.context(), /Unpublished work/);
+
+  // The published artifact is not itself work awaiting publication.
+  await store.beginTurn();
+  await store.checkpoint("settled");
+  const next = await store.context();
+  assert.doesNotMatch(next, /Unpublished work/);
+  assert.match(next, /Previous interval handoff: drift\/TEST-1\//);
+});

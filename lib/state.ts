@@ -255,6 +255,12 @@ export class Records {
       "Read the record for the exact starting fingerprint. Git deltas include overlapping work, not exclusive authorship.",
     ];
     if (record.pending) lines.push(`Incomplete publication: ${record.pending.path}. Retry the SAME drift_publish input; do not delete the record.`);
+    // A rule in a doc only runs when the model reaches for it; this line arrives on the turn after work lands.
+    const unpublished = (record.checkpoint?.files ?? []).filter((name) => !name.startsWith("drift/"));
+    if (!record.completed && unpublished.length) {
+      const since = record.receipts.at(-1)?.path ?? record.previousHandoff;
+      lines.push(`Unpublished work in this interval: ${unpublished.length} file(s) changed${since ? ` since ${since}` : ""} (${unpublished.slice(0, 5).join(", ")}${unpublished.length > 5 ? ", …" : ""}). Before reporting this work finished, publish a handoff or say why none is needed. Publish when the session holds state the diff cannot show: commands that worked, dead ends, warnings for the next session, decisions still open.`);
+    }
     if (record.previousHandoff) lines.push(`Previous interval handoff: ${record.previousHandoff}`);
     if (Object.values(record.baseline).some((value) => value.startsWith("unreadable:"))) lines.push("Warning: some baseline files were unreadable; their fingerprints are metadata-only.");
     const index = join(this.repo, "drift", "INDEX.md");
