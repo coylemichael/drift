@@ -54,7 +54,7 @@ You are tasked with turning a research document into an actionable handoff for a
 
 ## Writing to Disk
 
-**When `drift_publish` is available:** follow `SKILL.md`'s "Publishing with Pi" section. Pass the required Markdown body, feature, `kind: plan`, slug and references. The tool supplies frontmatter, numbering and the index; do not also write those manually. Otherwise use the portable procedure below.
+**If a host overlay applies** (see "Host overlays" in `SKILL.md`), follow its publication instructions instead of writing frontmatter and the index yourself. Otherwise use the portable procedure below.
 
 Save to: `drift/<feature>/NNN-plan-<description>.md` at the **repository root**, where `<feature>` is inferred from the source research path and `NNN` is the next artifact number in that feature folder.
 

@@ -1,0 +1,5 @@
+{
+  "name": "drift",
+  "version": "0.4.0",
+  "description": "Context-continuity workflow for multi-session agentic coding: research, plans and handoffs kept in the target repository."
+}

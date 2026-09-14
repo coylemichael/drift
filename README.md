@@ -10,10 +10,16 @@ the Pi extension owns session metadata and artifact publication.
 
 ## Install
 
-Requires Pi 0.85.1+, Node 22.18+, Git, and Python 3.7+.
+Drift is one portable skill plus optional host automation. Clone it once; every
+host reads the same checkout. Git and Python 3.7+ are required everywhere.
 
 ```sh
 git clone https://github.com/coylemichael/drift ~/projects/drift
+```
+
+**Pi** (0.85.1+, Node 22.18+) — owns session records and artifact publication:
+
+```sh
 pi install ~/projects/drift
 ```
 
@@ -21,14 +27,27 @@ Restart Pi or open a fresh Pi ACP thread after installation. Remove the package
 with `pi remove ~/projects/drift`; this does not remove the checkout, artifacts,
 or session records.
 
+**Claude Code, including Zed's `claude-acp` agent** — the checkout carries a
+`.claude-plugin/plugin.json`, so a folder under `~/.claude/skills/` that points
+at it loads as the `drift` plugin on the next session with no install step:
+
+```sh
+ln -s ~/projects/drift ~/.claude/skills/drift
+```
+
+The skill is advertised as `drift:drift`. Remove the symlink to uninstall.
+
+Naming: `skills/drift/` in this checkout is the skill; `drift/` inside a target
+repository holds that repository's artifacts.
+
 ## Workflow
 
 | Mode | Use |
 |---|---|
-| Research | `research.md` — document what exists. |
-| Plan | `plan.md` — turn research into a verifiable sequence. |
-| Execute | `execute.md` — carry out a plan or handoff. |
-| Handoff | `handoff.md` — record current state for the next task. |
+| Research | `skills/drift/research.md` — document what exists. |
+| Plan | `skills/drift/plan.md` — turn research into a verifiable sequence. |
+| Execute | `skills/drift/execute.md` — carry out a plan or handoff. |
+| Handoff | `skills/drift/handoff.md` — record current state for the next task. |
 
 Ask for the appropriate Drift workflow in ordinary language. Artifacts are kept
 in the target repository, not the skill checkout:

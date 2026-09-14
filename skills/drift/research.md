@@ -45,7 +45,7 @@ When presenting findings, use this structure:
 
 ## Writing to Disk
 
-**When `drift_publish` is available:** follow `SKILL.md`'s "Publishing with Pi" section. Pass the required Markdown body, feature, `kind: research`, slug and references. The tool supplies frontmatter, numbering and the index; do not also write those manually. Otherwise use the portable procedure below.
+**If a host overlay applies** (see "Host overlays" in `SKILL.md`), follow its publication instructions instead of writing frontmatter and the index yourself. Otherwise use the portable procedure below.
 
 Save research documents to disk by default. Skip saving only if the user explicitly asks for a quick or informal answer.
 

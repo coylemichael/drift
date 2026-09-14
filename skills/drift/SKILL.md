@@ -66,19 +66,19 @@ Ask the user and wait before proceeding when a discovered fact creates a genuine
 
 Do not interrupt the user for routine implementation choices that are already constrained by the plan or established code patterns. Record those in the artifact instead. If a user decision is pending, do not publish a profiled handoff that would automatically start another session; keep the current session waiting for the answer, or write an unprofiled handoff only when the user explicitly asks to stop.
 
-## Publishing with Pi
+## Host overlays
 
-If `drift_publish` is available, use it to save research, plan and handoff artifacts. First read the relevant workflow file and write its required Markdown sections. Pass the confirmed feature, artifact kind, a safe lowercase slug, the body **without frontmatter**, and any source/previous/related artifact paths. References are repository-relative `drift/...` paths.
+The core of this skill is the manual baseline: it works in any agent that can read files and run a shell. Some hosts automate parts of it. Pick exactly one overlay by checking what is present, and read it before writing any artifact:
 
-The tool owns the measured frontmatter, sequence allocation, `.gitignore`, artifact/index writes and handoff completion. Do not duplicate those writes or delete session records yourself. It rebuilds the index using the shared renderer, which may normalize index boilerplate without rewriting historical artifacts. Optional source/previous references may be omitted or blank; use `[]` when there are no related artifacts. Correct argument validation errors before retrying. Once a pending publication exists, keep the record and retry the **same input**; report conflicts instead of deleting partial work.
+- The `drift_publish` tool is available → read `hosts/pi.md`.
+- The Drift plugin is present (agents named `drift:drift-orchestrator`, `drift:drift-research`, `drift:drift-planning`, `drift:drift-implementation` exist) → read `hosts/claude.md`.
+- Neither → follow the manual disk-writing, indexing and session-record instructions in this file and the workflow files.
 
-Without that tool, follow the manual disk-writing and indexing instructions below. The skill remains usable outside Pi; automation does not.
+An overlay says only what it replaces. Everything it does not mention still applies.
 
-## Profile-directed Pi handoffs
+## Profile-directed handoffs
 
-For a new handoff, choose and pass `next_session_profile`: a portable lowercase-hyphenated name for the next work type. Use `research`, `planning`, or `implementation` for the three standard Drift work modes. It is a receiving-session recommendation, never a provider, model ID, credential, or billing instruction.
-
-After `drift_publish` successfully creates a profiled handoff, report that Pi queues the next fresh context window automatically; do not ask the user to copy/paste a continuation command. After compaction, it validates the repository-local artifact, resolves that profile through the receiving machine's explicitly configured model map, selects the model before inference, then follows the ordinary handoff workflow. Missing/invalid profiles or unavailable models fail visibly and leave the handoff available for manual recovery with `drift-continue <published artifact path>`. See `handoff.md` and README for the local configuration format.
+For a new handoff, choose and record `next_session_profile`: a portable lowercase-hyphenated name for the next work type. Use `research`, `planning`, or `implementation` for the three standard Drift work modes. It is a receiving-session recommendation, never a provider, model ID, credential, or billing instruction. A host overlay may use it to start the next session automatically on a mapped model; without one, the user starts the next session from the handoff and chooses the model.
 
 ## Artifact Location
 
@@ -206,16 +206,9 @@ Two further rules:
 
 ## Session Records
 
-The Pi extension establishes a durable record before work and supplies its path and measured baseline in model context. It uses Pi's actual session ID, not a model-generated manual ID. Records live under Pi's agent directory, separately from project artifacts and Pi's conversation logs.
+A host may establish a measured record of the current work interval before work starts and supply its path and baseline in context: when the interval began, the starting branch and commit, and a fingerprint of the working tree. When one is supplied, use it for `session_started` and to separate this interval's changes from inherited ones; a Git diff can include other threads' work. Never delete a host's record or conversation log, never substitute another thread's baseline, and never treat a failed publication as completion.
 
-- Read **this thread's supplied record** when preparing an artifact. Its `started`, `startBranch`, `startCommit` and `baseline` describe the beginning of the current work interval. The publisher maps them into artifact frontmatter.
-- Records survive ordinary turns, reload, resume and compaction. Settled turns and teardown checkpoint observed changes; an ACP process detaching does not establish that the conversation is over.
-- A successful `drift_publish` handoff completes only the current interval. The extension retains a receipt for retries and establishes a new measured interval on the next working prompt. Research and plan publication leave the current interval active.
-- **Never delete Pi's session log or the extension's record.** Do not run retired manual hooks or substitute another thread's baseline. Publication failure must not be treated as completion.
-- A Git diff can include inherited or overlapping work. Compare the recorded starting fingerprint and actual task history; do not claim everything in `git diff HEAD` as this session's work. Unreadable files have explicitly marked metadata-only fingerprints.
-- A record is evidence about observed work, not proof that another thread is abandoned. Confirm ownership and the user's intent before using another thread's record for a reconstructed handoff; do not complete or consume it as your own.
-
-A skill cannot run at session start by itself. Outside Pi, use any explicitly supplied measured baseline, but otherwise omit `session_started` rather than estimating it. The manual artifact workflow still works without lifecycle automation. See `handoff.md` for how to distinguish original measurements from a later reconstruction.
+A skill cannot run at session start by itself. Without a supplied record, omit `session_started` rather than estimating it. The manual artifact workflow works without lifecycle automation. See `handoff.md` for how to distinguish original measurements from a later reconstruction.
 
 ## Gitignore Drift Artifacts
 
