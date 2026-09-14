@@ -82,7 +82,7 @@ For a new handoff, choose and record `next_session_profile`: a portable lowercas
 
 ## Artifact Location
 
-The Drift skill may live globally at `~/.agents/skills/drift`, but generated Drift artifacts must be written inside the current target project, not inside this skill repo.
+The Drift skill is normally installed outside the target project (in a host's skill directory or a shared checkout), but generated Drift artifacts must be written inside the current target project, never inside the skill checkout.
 
 Use one project-local **feature folder** per feature or work grouping. Keep all Drift artifacts for that feature directly inside the same folder so the file tree shows the whole narrative at a glance.
 

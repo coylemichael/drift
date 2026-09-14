@@ -36,6 +36,9 @@ ln -s ~/projects/drift ~/.claude/skills/drift
 ```
 
 The skill is advertised as `drift:drift`. Remove the symlink to uninstall.
+On this host Drift is currently the skill alone: artifacts are written by the
+portable manual procedure, and the profiled continuation chain described
+below is Pi-only until the Claude worker agents and hooks land.
 
 Naming: `skills/drift/` in this checkout is the skill; `drift/` inside a target
 repository holds that repository's artifacts.
