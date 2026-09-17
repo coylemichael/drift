@@ -86,7 +86,7 @@ class Client {
 }
 
 async function fixture(t: any, broken = false) {
-  const dir = await fs.mkdtemp(join(tmpdir(), "drift-pi-test-"));
+  const dir = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "drift-pi-test-")));
   const clients: Client[] = [];
   let server: ReturnType<typeof createServer> | undefined;
   t.after(async () => {

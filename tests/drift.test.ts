@@ -16,7 +16,7 @@ const body = sections.map((heading) => `## ${heading}\nA bounded fixture investi
 const input: ArtifactInput = { feature: "TEST-1", kind: "handoff", slug: "fixture", body };
 
 async function fixture(t: any) {
-  const dir = await fs.mkdtemp(join(tmpdir(), "drift-test-"));
+  const dir = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "drift-test-")));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const repo = join(dir, "repo with spaces");
   await fs.mkdir(repo);

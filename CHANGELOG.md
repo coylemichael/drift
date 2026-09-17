@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - README's Claude Code install section read as if that host had Pi's automation. It now says the host is skill-only for now: artifacts follow the portable manual procedure and the profiled continuation chain stays Pi-only until the worker agents and hooks land. `SKILL.md` also stopped naming `~/.agents/skills/drift` — a path from the retired native-Zed integration — and says only that the skill is installed outside the target project.
 - Profile mappings now document and diagnose the difference between Pi catalog model IDs and picker labels. `drift-continue` resolves IDs such as `claude-opus-5`; `pi --list-models` is the authoritative local list.
 - `drift_publish` treats blank optional artifact references as absent instead of rejecting `source_research: ""` or `previous_handoff: ""`. Non-empty references remain strictly validated. Retry guidance distinguishes invalid arguments from a recoverable pending publication; runtime fixtures now exercise research and handoff calls with explicit empty optional fields.
+- Tests pass on macOS. Both suites created temporary repositories under `os.tmpdir()`, which on macOS is `/var/folders/...`, a symlink to `/private/var/...`. The library canonicalizes paths with `realpath`, so record paths and repository roots came back under `/private` and three assertions compared the two spellings. The fixtures now `realpath` the temp directory once at creation; the code under test is unchanged.
 
 ### Changed
 
