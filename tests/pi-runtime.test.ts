@@ -108,10 +108,12 @@ async function fixture(t: any, broken = false) {
     const text = (message: any) => typeof message.content === "string" ? message.content : (message.content ?? []).map((part: any) => part.text ?? "").join("\n");
     const user = messages.findLastIndex((message: any) => message.role === "user" && !text(message).includes("Drift lifecycle is managed by the Pi extension"));
     const marker = user >= 0 ? text(messages[user]) : "";
-    const publish = /^PUBLISH_(RESEARCH|HANDOFF|AUTO_HANDOFF)/.test(marker) && !messages.slice(user + 1).some((message: any) => message.role === "tool");
+    const chainArtifact = /^Continue the work recorded.*`drift\/runtime\/(\d+)-handoff-chain\.md`/.exec(marker);
+    const chainStep = marker === "PUBLISH_CHAIN" ? 1 : chainArtifact ? Number(chainArtifact[1]) + 1 : 0;
+    const publish = (/^PUBLISH_(RESEARCH|HANDOFF|AUTO_HANDOFF)/.test(marker) || (chainStep > 0 && chainStep <= 3)) && !messages.slice(user + 1).some((message: any) => message.role === "tool");
     const kind = marker.startsWith("PUBLISH_RESEARCH") ? "research" : "handoff";
     // Real models may fill optional string fields with "" rather than omit them.
-    const args = { feature: "runtime", kind, slug: "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: "", related_artifacts: [], ...(marker.startsWith("PUBLISH_AUTO_HANDOFF") ? { next_session_profile: "architecture" } : {}) };
+    const args = { feature: "runtime", kind, slug: chainStep ? "chain" : "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: chainArtifact ? `drift/runtime/${chainArtifact[1]}-handoff-chain.md` : "", related_artifacts: [], ...(marker.startsWith("PUBLISH_AUTO_HANDOFF") || (chainStep > 0 && chainStep < 3) ? { next_session_profile: "architecture" } : {}) };
     const delta = publish ? { role: "assistant", tool_calls: [{ index: 0, id: `publish-${kind}`, type: "function", function: { name: "drift_publish", arguments: JSON.stringify(args) } }] } : { role: "assistant", content: "Synthetic fixture response; preserve the bounded task and continue." };
     const common = { id: "drift-fixture", object: "chat.completion.chunk", created: 0, model: "fixture" };
     response.writeHead(200, { "content-type": "text/event-stream", connection: "close" });
@@ -139,8 +141,8 @@ async function fixture(t: any, broken = false) {
   await fs.writeFile(join(repo, "file.txt"), "original\n"); await fs.writeFile(join(repo, ".gitignore"), "/drift/\n");
   await git(repo, ["add", "."]); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "fixture"]);
   await fs.writeFile(join(repo, "inherited.txt"), "already dirty\n");
-  const rpc = (sessionFile?: string) => {
-    const client = new Client(piBinary, ["--mode", "rpc", "--offline", "--no-context-files", ...(sessionFile ? ["--session", sessionFile] : [])], repo, env);
+  const rpc = (sessionFile?: string, flags: string[] = []) => {
+    const client = new Client(piBinary, ["--mode", "rpc", "--offline", "--no-context-files", ...flags, ...(sessionFile ? ["--session", sessionFile] : [])], repo, env);
     clients.push(client); return client;
   };
   const recordPath = (id: string) => join(agent, "drift", hash(repo).slice(0, 24), `${id}.json`);
@@ -232,6 +234,149 @@ test("actual Pi automatically continues a profiled handoff after a fresh context
   await client.request({ type: "prompt", message: "drift-continue drift/runtime/099-handoff-unprofiled.md" });
   await delay(100);
   assert.equal(f.requests.length, requestsBeforeFailure);
+});
+
+async function legacySkill(f: Awaited<ReturnType<typeof fixture>>) {
+  const dir = join(f.home, ".agents/skills/drift");
+  // Replace only the fixture's own link. Never touch the real user's skills.
+  if (process.platform !== "win32") await fs.unlink(dir);
+  await fs.mkdir(dir, { recursive: true });
+  const path = join(dir, "SKILL.md");
+  const content = "---\nname: drift\ndescription: STALE DRIFT FIXTURE\n---\n\n# Old Drift\nSTALE WORKFLOW MUST NOT REACH INFERENCE\n";
+  await fs.writeFile(path, content);
+  await fs.writeFile(join(dir, "user-changes.txt"), "preserve my local changes\n");
+  return { path, content };
+}
+
+function systemText(request: any): string {
+  return (request.messages ?? []).filter((message: any) => ["system", "developer"].includes(message.role)).map((message: any) => message.content).join("\n");
+}
+
+test("actual Pi binds stale standalone Drift skills without modifying settings or the old checkout", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+  const f = await fixture(t);
+  const legacy = await legacySkill(f);
+  const settings = await fs.readFile(join(f.agent, "settings.json"), "utf8");
+  let client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  // Reproduce the real collision: Pi's inventory selects the old standalone copy.
+  const commands = await client.request({ type: "get_commands" });
+  assert.equal(commands.commands.find((command: any) => command.name === "skill:drift").sourceInfo.path, legacy.path);
+  const assertBound = (request: any) => {
+    const system = systemText(request);
+    assert.ok(system.includes(join(root, "skills/drift/SKILL.md")), system);
+    assert.ok(!system.includes(legacy.path), system);
+    assert.ok(!system.includes("STALE DRIFT FIXTURE"));
+  };
+  await client.prompt("Use Drift execute for a bounded checkpoint.");
+  assertBound(f.requests.at(-1));
+  await client.prompt("/skill:drift execute the plan");
+  assertBound(f.requests.at(-1));
+  const expanded = JSON.stringify(f.requests.at(-1));
+  assert.ok(expanded.includes("Profile-directed handoffs"));
+  assert.ok(expanded.includes("execute the plan"));
+  assert.ok(!expanded.includes("STALE WORKFLOW MUST NOT REACH INFERENCE"));
+  // Direct RPC queue commands bypass Pi's input hook and expand the stale skill first.
+  await client.request({ type: "steer", message: "/skill:drift queued steering" });
+  await client.request({ type: "follow_up", message: "/skill:drift queued follow-up" });
+  await client.prompt("Process the queued instructions");
+  assert.ok(!JSON.stringify(f.requests).includes("STALE WORKFLOW MUST NOT REACH INFERENCE"));
+  assert.ok(JSON.stringify(f.requests).includes("queued steering"));
+  assert.ok(JSON.stringify(f.requests).includes("queued follow-up"));
+  const history = JSON.stringify(await client.request({ type: "get_messages" }));
+  assert.ok(history.includes("STALE WORKFLOW MUST NOT REACH INFERENCE"), "original session history was rewritten");
+  await client.request({ type: "prompt", message: "/fixture-reload" });
+  await client.prompt("Use Drift after reload");
+  assertBound(f.requests.at(-1));
+  await client.stop();
+  client = f.rpc(state.sessionFile);
+  await client.prompt("Use Drift after resume");
+  assertBound(f.requests.at(-1));
+  await client.request({ type: "compact", customInstructions: "Preserve the bounded next checkpoint." });
+  await client.prompt("Use Drift after compaction");
+  assertBound(f.requests.at(-1));
+  assert.equal(await fs.readFile(join(f.agent, "settings.json"), "utf8"), settings);
+  assert.equal(await fs.readFile(legacy.path, "utf8"), legacy.content);
+  assert.equal(await fs.readFile(join(f.home, ".agents/skills/drift/user-changes.txt"), "utf8"), "preserve my local changes\n");
+});
+
+test("actual Pi repeats handoff continuation with a stale skill and stops on the unprofiled final handoff", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+  const f = await fixture(t);
+  const legacy = await legacySkill(f);
+  const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  await client.prompt("PUBLISH_CHAIN");
+  await until(async () => (await f.readRecord(state.sessionId)).completed?.path === "drift/runtime/003-handoff-chain.md", "automatic chain did not publish three handoffs");
+  await until(async () => !(await client.request({ type: "get_state" })).isStreaming, "final interval did not settle");
+  const record = await f.readRecord(state.sessionId);
+  assert.equal(record.completed.path, "drift/runtime/003-handoff-chain.md");
+  assert.equal(record.receipts.length, 1); // Receipts belong to the current work interval.
+  assert.deepEqual((await fs.readdir(join(f.repo, "drift/runtime"))).sort(), ["001-handoff-chain.md", "002-handoff-chain.md", "003-handoff-chain.md"]);
+  const entries = await client.request({ type: "get_entries" });
+  assert.equal(entries.entries.filter((entry: any) => entry.type === "compaction").length, 2);
+  const continuations = f.requests.filter((request) => request.model === "architecture" && systemText(request).includes("available_skills"));
+  assert.ok(continuations.length >= 2);
+  for (const request of continuations) {
+    assert.ok(systemText(request).includes(join(root, "skills/drift/SKILL.md")));
+    assert.ok(!systemText(request).includes(legacy.path));
+  }
+  const final = await fs.readFile(join(f.repo, record.completed.path), "utf8");
+  assert.ok(!final.includes("next_session_profile:"));
+  const count = f.requests.length;
+  await delay(200);
+  assert.equal(f.requests.length, count, "completed plan kept looping");
+});
+
+test("actual Pi refuses a damaged bundled workflow and recovers on the next prompt after restoration", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+  const f = await fixture(t);
+  await legacySkill(f);
+  const copy = join(f.dir, "installed package with spaces");
+  await fs.mkdir(copy);
+  for (const path of ["package.json", "extensions", "lib", "skills", "scripts"]) await fs.cp(join(root, path), join(copy, path), { recursive: true });
+  const settingsPath = join(f.agent, "settings.json");
+  const settings = JSON.parse(await fs.readFile(settingsPath, "utf8"));
+  await fs.writeFile(settingsPath, JSON.stringify({ ...settings, packages: [copy] }));
+  const workflowPath = join(copy, "skills/drift/execute.md");
+  const workflow = await fs.readFile(workflowPath, "utf8");
+  await fs.unlink(workflowPath);
+  const client = f.rpc();
+  await client.request({ type: "get_state" });
+  await client.prompt("Use Drift, but do not use the stale fallback");
+  assert.equal(f.requests.length, 0);
+  assert.ok(JSON.stringify(await client.request({ type: "get_messages" })).includes("Drift workflow unavailable"));
+  await fs.writeFile(workflowPath, workflow);
+  await client.prompt("Use Drift again after the workflow file is restored");
+  assert.equal(f.requests.length, 1);
+  assert.ok(systemText(f.requests[0]).includes(join(copy, "skills/drift/SKILL.md")));
+  await fs.unlink(workflowPath);
+  await client.prompt("/skill:drift execute the plan");
+  assert.equal(f.requests.length, 1, "explicit invocation fell back to the stale skill");
+  await assert.rejects(client.request({ type: "compact" }), /cancelled/i);
+  await fs.writeFile(workflowPath, workflow);
+  await client.prompt("/skill:drift execute the plan after restoration");
+  assert.equal(f.requests.length, 2);
+  assert.ok(!JSON.stringify(f.requests.at(-1)).includes("STALE WORKFLOW MUST NOT REACH INFERENCE"));
+});
+
+test("actual Pi respects disabled discovery and keeps RPC skill expansion canonical with the picker disabled", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+  const f = await fixture(t);
+  await legacySkill(f);
+  let client = f.rpc(undefined, ["--no-skills"]);
+  await client.prompt("Ordinary work with skill discovery disabled");
+  assert.ok(!systemText(f.requests.at(-1)).includes("<available_skills>"));
+  const commands = await client.request({ type: "get_commands" });
+  assert.ok(!commands.commands.some((command: any) => command.name === "skill:drift"));
+  await client.stop();
+  const settingsPath = join(f.agent, "settings.json");
+  const settings = JSON.parse(await fs.readFile(settingsPath, "utf8"));
+  await fs.writeFile(settingsPath, JSON.stringify({ ...settings, enableSkillCommands: false }));
+  client = f.rpc();
+  // Pi still expands explicit RPC skill requests with the picker disabled.
+  await client.prompt("/skill:drift execute with the picker disabled");
+  const request = JSON.stringify(f.requests.at(-1));
+  assert.ok(request.includes("execute with the picker disabled"));
+  assert.ok(request.includes("Profile-directed handoffs"));
+  assert.ok(!request.includes("STALE WORKFLOW MUST NOT REACH INFERENCE"));
+  assert.ok(systemText(f.requests.at(-1)).includes(join(root, "skills/drift/SKILL.md")));
 });
 
 test("actual Pi handles initialization failure without inference or a success claim", { skip: !piPresent, timeout: 45_000 }, async (t) => {

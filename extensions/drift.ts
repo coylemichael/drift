@@ -4,9 +4,11 @@ import { Type } from "typebox";
 import { publish } from "../lib/artifacts.ts";
 import { repoRoot, Records } from "../lib/state.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
+import { registerSkillBinding } from "./skill-binding.ts";
 
 /** Pi owns lifecycle invocation; the portable skill still owns the workflow. */
 export default function drift(pi: ExtensionAPI) {
+  registerSkillBinding(pi);
   let key = "";
   let ready: Promise<Records | undefined> | undefined;
   let failure: string | undefined;

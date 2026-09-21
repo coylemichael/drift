@@ -2,6 +2,10 @@
 
 This overlay applies when the `drift_publish` tool is available. It says only what it replaces in the core skill; everything else in `SKILL.md`, `research.md`, `plan.md`, `execute.md` and `handoff.md` still applies.
 
+## Bundled workflow binding
+
+The Pi extension binds Drift's advertised skill and explicit `/skill:drift` requests to the skill shipped alongside that extension. A stale standalone copy may still appear in Pi's discovery inventory, but it does not supply the runtime workflow. Do not delete old skill checkouts or edit user settings to resolve that collision. Other skills and explicitly disabled discovery are preserved.
+
 ## Publishing with `drift_publish`
 
 Use `drift_publish` to save research, plan and handoff artifacts. First read the relevant workflow file and write its required Markdown sections. Pass the confirmed feature, artifact kind, a safe lowercase slug, the body **without frontmatter**, and any source/previous/related artifact paths. References are repository-relative `drift/...` paths.

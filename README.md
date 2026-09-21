@@ -27,6 +27,21 @@ Restart Pi or open a fresh Pi ACP thread after installation. Remove the package
 with `pi remove ~/projects/drift`; this does not remove the checkout, artifacts,
 or session records.
 
+**Workflow selection is self-healing on Pi.** The extension binds Drift's
+model-facing skill entry and explicit `/skill:drift` requests to the workflow
+shipped in the same package. An older standalone copy (for example under
+`~/.agents/skills/drift`) cannot silently supply an outdated workflow. This is
+reapplied on working prompts, including after reload, resume and compaction;
+there is no repair command or settings edit to run. Old checkouts, local edits,
+other skills and user settings are left untouched. Pi's discovery inventory may
+still report the duplicate; the runtime uses the bundled workflow.
+
+Explicitly disabled skill discovery stays disabled. If a required bundled
+workflow file is missing or unreadable, Drift blocks inference rather than
+falling back to another version, and retries on the next prompt after the file
+is restored. This does not invent model mappings or credentials: profile routing
+still uses your configuration below.
+
 **Claude Code, including Zed's `claude-acp` agent** — the checkout carries a
 `.claude-plugin/plugin.json`, so a folder under `~/.claude/skills/` that points
 at it loads as the `drift` plugin on the next session with no install step:
@@ -138,5 +153,7 @@ git diff --check
 
 `npm test` uses temporary repositories and loopback model fixtures. It covers
 record/publication safety and actual Pi RPC lifecycle, model selection, reload,
-resume, and compaction. Set `PI_TEST_ACP=/path/to/pi-acp/dist/index.js` to also
+resume, and compaction. Stale-skill regressions cover automatic runtime binding,
+explicit skill invocation, damaged-workflow recovery, disabled discovery, and a
+three-handoff chain that stops at completion. Set `PI_TEST_ACP=/path/to/pi-acp/dist/index.js` to also
 run the installed ACP checks.
