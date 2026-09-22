@@ -36,6 +36,16 @@ there is no repair command or settings edit to run. Old checkouts, local edits,
 other skills and user settings are left untouched. Pi's discovery inventory may
 still report the duplicate; the runtime uses the bundled workflow.
 
+To retire an older copy, save any local edits it holds, then replace it with a
+symlink to `skills/drift` in this checkout. The binding compares real paths, so
+the symlinked entry counts as the bundled file and the notice stops, and any host
+that reads that folder (Zed's native agent reads `~/.agents/skills`) follows the
+current workflow:
+
+```sh
+ln -s ~/projects/drift/skills/drift ~/.agents/skills/drift
+```
+
 Explicitly disabled skill discovery stays disabled. If a required bundled
 workflow file is missing or unreadable, Drift blocks inference rather than
 falling back to another version, and retries on the next prompt after the file
