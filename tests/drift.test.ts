@@ -137,6 +137,176 @@ test("publication supplies original metadata, stable numbering, references and a
   await run("python3", [join(root, "scripts/build-index.py"), join(repo, "drift"), "--check"], repo);
 });
 
+test("repo-local tracked artifacts publish without creating ignores or staging files", async (t) => {
+  const { repo, agent, dir } = await fixture(t);
+  await fs.writeFile(join(repo, ".drift.json"), '{"trackArtifacts":true}\n');
+  const store = (await Records.open(repo, "session-a", agent))!;
+  const receipt = await publish(store, input);
+  assert.deepEqual(await publish(store, input), receipt);
+  await assert.rejects(fs.stat(join(repo, ".gitignore")), { code: "ENOENT" });
+  const visible = (await git(repo, ["ls-files", "--others", "--exclude-standard"])).trim().split("\n");
+  assert.ok(visible.includes(receipt.path));
+  assert.ok(visible.includes("drift/INDEX.md"));
+  assert.equal(await git(repo, ["diff", "--cached", "--name-only"]), "");
+  await run("python3", [join(root, "scripts/build-index.py"), join(repo, "drift"), "--check"], repo);
+
+  // Explicitly committing is the user's job; the choice and handoff travel together.
+  await git(repo, ["add", ".drift.json", "drift"]);
+  await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "portable artifacts"]);
+  const clone = join(dir, "another machine");
+  await git(repo, ["clone", "--no-hardlinks", "-q", repo, clone]);
+  assert.equal(await fs.readFile(join(clone, receipt.path), "utf8"), await fs.readFile(join(repo, receipt.path), "utf8"));
+  const other = (await Records.open(clone, "session-b", agent))!;
+  const next = await publish(other, { ...input, slug: "next-machine" });
+  assert.match(next.path, /002-handoff-next-machine.md$/);
+  await assert.rejects(fs.stat(join(clone, ".gitignore")), { code: "ENOENT" });
+});
+
+test("tracked mode preserves existing ignore rules, negation and permissions", async (t) => {
+  const { repo, agent } = await fixture(t);
+  const ignore = "logs/*\n/drift/\n!/drift/\n";
+  await fs.writeFile(join(repo, ".gitignore"), ignore);
+  await fs.chmod(join(repo, ".gitignore"), 0o640);
+  await fs.writeFile(join(repo, ".drift.json"), '{"trackArtifacts":true}');
+  const store = (await Records.open(repo, "session-a", agent))!;
+  await publish(store, input);
+  assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), ignore);
+  if (process.platform !== "win32") assert.equal((await fs.stat(join(repo, ".gitignore"))).mode & 0o777, 0o640);
+});
+
+test("explicit false and empty config retain ignored-by-default publication", async (t) => {
+  for (const config of [{ trackArtifacts: false }, {}]) {
+    const { repo, agent } = await fixture(t);
+    await fs.writeFile(join(repo, ".drift.json"), JSON.stringify(config));
+    await fs.writeFile(join(repo, ".gitignore"), "logs/*");
+    const store = (await Records.open(repo, "session-a", agent))!;
+    const receipt = await publish(store, input);
+    assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), "logs/*\n/drift/\n");
+    assert.ok((await git(repo, ["check-ignore", "--no-index", receipt.path])).trim());
+  }
+});
+
+test("invalid repo flags fail before artifact/ignore writes and never complete the interval", async (t) => {
+  const { repo, agent } = await fixture(t);
+  const store = (await Records.open(repo, "session-a", agent))!;
+  for (const text of ["{broken", "null", "true", "[]", '{"trackArtifacts":"true"}',
+                      '{"trackArtifacts":1}', '{"trackArtifacts":null}', '{"trackArtifact":true}']) {
+    await fs.writeFile(join(repo, ".drift.json"), text);
+    await assert.rejects(publish(store, input), /Drift configuration/);
+    await assert.rejects(fs.stat(join(repo, "drift")), { code: "ENOENT" });
+    await assert.rejects(fs.stat(join(repo, ".gitignore")), { code: "ENOENT" });
+    assert.equal((await store.read()).pending, undefined);
+    assert.equal((await store.read()).completed, undefined);
+  }
+});
+
+test("tracked policy conflicts are actionable and never rewrite ignores or force-add", async (t) => {
+  const { repo, agent } = await fixture(t);
+  await fs.writeFile(join(repo, ".drift.json"), '{"trackArtifacts":true}');
+  const store = (await Records.open(repo, "session-a", agent))!;
+  for (const ignore of ["/drift/\n", "/drift/INDEX.md\n", "*.md\n"]) {
+    await fs.writeFile(join(repo, ".gitignore"), ignore);
+    await assert.rejects(publish(store, input), /trackArtifacts is true.*Git ignores/);
+    assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), ignore);
+    assert.equal(await git(repo, ["diff", "--cached", "--name-only"]), "");
+    assert.deepEqual(await fs.readdir(join(repo, "drift/TEST-1")), []);
+    assert.equal((await store.read()).pending, undefined);
+    assert.equal((await store.read()).completed, undefined);
+  }
+  await fs.writeFile(join(repo, ".gitignore"), "logs/*\n");
+  assert.match((await publish(store, input)).path, /001-handoff-fixture.md$/);
+});
+
+test("tracking existing artifacts or un-ignoring alone never implies repo opt-in", async (t) => {
+  const { repo, agent } = await fixture(t);
+  await fs.mkdir(join(repo, "drift/old"), { recursive: true });
+  await fs.writeFile(join(repo, "drift/old/context.md"), "existing context\n");
+  await git(repo, ["add", "drift/old/context.md"]);
+  const staged = await git(repo, ["diff", "--cached", "--name-only"]);
+  const ignore = "/drift/\n!/drift/\n";
+  await fs.writeFile(join(repo, ".gitignore"), ignore);
+  const store = (await Records.open(repo, "session-a", agent))!;
+  await assert.rejects(publish(store, input), /explicitly set.*trackArtifacts.*\.drift\.json/);
+  assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), ignore);
+  assert.equal(await git(repo, ["diff", "--cached", "--name-only"]), staged);
+  assert.equal((await store.read()).completed, undefined);
+});
+
+test("repo configuration is root-scoped, bounded and symlink-safe", async (t) => {
+  const { repo, agent, dir } = await fixture(t);
+  const nested = join(repo, "nested"); await fs.mkdir(nested);
+  await fs.writeFile(join(nested, ".drift.json"), '{"trackArtifacts":true}');
+  const store = (await Records.open(nested, "session-a", agent))!;
+  const receipt = await publish(store, input);
+  assert.ok((await git(repo, ["check-ignore", "--no-index", receipt.path])).trim());
+  const other = (await Records.open(repo, "session-b", agent))!;
+  const config = join(repo, ".drift.json");
+  await fs.mkdir(config);
+  await assert.rejects(publish(other, input), /regular file/);
+  await fs.rmdir(config);
+  await fs.writeFile(config, " ".repeat(64 * 1024 + 1));
+  await assert.rejects(publish(other, input), /64 KiB/);
+  if (process.platform !== "win32") {
+    await fs.unlink(config);
+    const outside = join(dir, "external-config.json");
+    await fs.writeFile(outside, '{"trackArtifacts":true}');
+    await fs.symlink(outside, config);
+    await assert.rejects(publish(other, input), /symlink/);
+    assert.equal(await fs.readFile(outside, "utf8"), '{"trackArtifacts":true}');
+  }
+  assert.equal((await other.read()).completed, undefined);
+});
+
+test("publication rereads the repo flag rather than caching the first choice", async (t) => {
+  const { repo, agent } = await fixture(t);
+  const config = join(repo, ".drift.json");
+  await fs.writeFile(config, '{"trackArtifacts":true}');
+  const store = (await Records.open(repo, "session-a", agent))!;
+  const research: ArtifactInput = { feature: "TEST-1", kind: "research", slug: "first", body: ["Research Question", "Summary", "Detailed Findings", "Code References", "Open Questions"].map((heading) => `## ${heading}\nObserved fact.\n`).join("\n") };
+  await publish(store, research);
+  await assert.rejects(fs.stat(join(repo, ".gitignore")), { code: "ENOENT" });
+  await fs.writeFile(config, '{"trackArtifacts":false}');
+  await publish(store, { ...research, slug: "second" });
+  assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), "/drift/\n");
+  await fs.writeFile(config, '{"trackArtifacts":true}');
+  await assert.rejects(publish(store, input), /trackArtifacts is true.*Git ignores/);
+  await fs.unlink(join(repo, ".gitignore"));
+  assert.match((await publish(store, input)).path, /003-handoff-fixture.md$/);
+});
+
+test("ignored default validates the index too, not only the artifact path", async (t) => {
+  const { repo, agent } = await fixture(t);
+  // A file negation only works when its parent directory is unignored too.
+  const ignore = "/drift/\n!/drift/\n/drift/*\n!/drift/INDEX.md\n";
+  await fs.writeFile(join(repo, ".gitignore"), ignore);
+  const store = (await Records.open(repo, "session-a", agent))!;
+  await assert.rejects(publish(store, input), /Git does not ignore.*INDEX.md/);
+  assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), ignore);
+  assert.equal((await store.read()).pending, undefined);
+  assert.equal((await store.read()).completed, undefined);
+});
+
+test("tracked publication retains normal pending-intent and replay safety", async (t) => {
+  const { repo, agent } = await fixture(t);
+  await fs.writeFile(join(repo, ".drift.json"), '{"trackArtifacts":true}');
+  const store = (await Records.open(repo, "session-a", agent))!;
+  await assert.rejects(publish(store, input, join(repo, "missing-python")), /failed/);
+  const pending = (await store.read()).pending!;
+  assert.ok(pending);
+  assert.equal((await store.read()).completed, undefined);
+  assert.equal(await fs.readFile(join(repo, pending.path), "utf8"), pending.content);
+  const receipt = await publish(store, input);
+  assert.deepEqual(await publish(store, input), receipt);
+  assert.equal((await store.read()).receipts.length, 1);
+  await assert.rejects(fs.stat(join(repo, ".gitignore")), { code: "ENOENT" });
+});
+
+test("a normal negative Git query is allowed but other Git failures are not", async (t) => {
+  const { repo } = await fixture(t);
+  assert.equal(await git(repo, ["check-ignore", "--no-index", "not-ignored.txt"], 1), "");
+  await assert.rejects(git(repo, ["check-ignore", "--unsupported-fixture-option"], 1), /git failed/);
+});
+
 test("handoff next-session profiles are persisted and restricted to handoffs", async (t) => {
   const { repo, agent } = await fixture(t);
   const store = (await Records.open(repo, "session-a", agent))!;

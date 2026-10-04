@@ -89,8 +89,33 @@ drift/
     003-handoff-progress.md
 ```
 
-`INDEX.md` is the repository-wide chronological timeline. New artifacts are
-ignored by `/drift/` by default; explicitly track them if the project requires it.
+`INDEX.md` is the repository-wide chronological timeline.
+
+### Artifact Git policy (per repository)
+
+Artifacts are ignored by default. To let handoffs travel between machines,
+commit this **repository-root** `.drift.json` alongside the artifacts:
+
+```json
+{ "trackArtifacts": true }
+```
+
+This is host-neutral project data, not a Pi user setting or a per-tool argument.
+The Pi publisher reads it on every publication; other hosts follow the same
+choice through the portable skill. Missing config, `{}` or `false` keeps the
+ignored default and adds `/drift/` to `.gitignore` if needed.
+
+With `true`, Drift does not create or edit `.gitignore`, stage files, commit, or
+push. Artifact and index paths must actually be unignored; resolve existing
+rules explicitly. The flag is permission to publish trackable files, **not** an
+automatic commit. Already-tracked artifacts or an `!/drift/` exception alone do
+not select this mode. Invalid JSON, unknown fields, non-boolean values and unsafe
+config paths fail rather than silently selecting a policy.
+
+After changing the extension code, reload Pi or open a new Pi adapter connection;
+already-running extensions keep their loaded publisher. Config edits alone need
+no reload. Review artifacts before committing: handoffs can contain private
+project context even though they must not contain credentials.
 
 ## Profile-directed continuation
 

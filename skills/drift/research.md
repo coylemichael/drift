@@ -51,7 +51,7 @@ Save research documents to disk by default. Skip saving only if the user explici
 
 - Save to `drift/<feature>/NNN-research-<topic>.md` at the **repository root**, where `<feature>` is the identifier confirmed above and `NNN` is the next artifact number in that feature folder.
 - Allocate `NNN` by scanning existing markdown files in `drift/<feature>/` whose names start with a three-digit prefix and hyphen. Use the next number after the highest prefix, or `001` if none exist.
-- Before creating `drift/` or writing the artifact, ensure the repository-root `.gitignore` exists and contains `/drift/`; create `.gitignore` or append the entry if needed.
+- Before creating `drift/` or writing the artifact, apply **Artifact Git Policy** in `SKILL.md`: repository-root `.drift.json` explicitly opts into tracked artifacts; missing/false uses the ignored default. With a host publisher, let it enforce the policy.
 - Create `drift/<feature>/` at the repository root if it doesn't exist.
 - Use the output format above.
 - After writing the artifact, append a row for it to `drift/INDEX.md` — the repo-wide chronological index. Create the index if it doesn't exist, and rebuild it from frontmatter if it has fallen out of sync with the folders. See the "Root Index" section of `SKILL.md` for the format, ordering, and rebuild rules.

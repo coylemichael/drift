@@ -42,18 +42,22 @@ export function now(): string {
   return `${local}${offset < 0 ? "-" : "+"}${String(Math.floor(Math.abs(offset) / 60)).padStart(2, "0")}:${String(Math.abs(offset) % 60).padStart(2, "0")}`;
 }
 
-export async function run(binary: string, args: string[], cwd: string, optional = false): Promise<string> {
+export async function run(binary: string, args: string[], cwd: string, optional: boolean | number = false): Promise<string> {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
   Object.assign(env, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: devNull, LC_ALL: "C" });
   try {
     return (await exec(binary, args, { cwd, env, timeout: 30_000, maxBuffer: 8 * 1024 * 1024 })).stdout;
   } catch (error: any) {
-    if (optional && typeof error.code === "number" && !error.killed) return "";
+    if (typeof error.code === "number" && !error.killed) {
+      // Some Git queries use 1 for a normal negative answer, not a failure.
+      if (typeof optional === "number" && error.code === optional) return error.stdout ?? "";
+      if (optional === true) return "";
+    }
     throw new Error(`${binary} failed: ${error.stderr?.trim() || error.message}`);
   }
 }
 
-export const git = (repo: string, args: string[], optional = false) =>
+export const git = (repo: string, args: string[], optional: boolean | number = false) =>
   run("git", ["--no-optional-locks", "-c", "core.fsmonitor=false", ...args], repo, optional);
 
 export async function repoRoot(cwd: string): Promise<string | undefined> {

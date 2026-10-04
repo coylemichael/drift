@@ -72,14 +72,38 @@ async function validate(repo: string, input: ArtifactInput): Promise<ArtifactInp
   };
 }
 
-async function ensureIgnored(repo: string, artifact: string): Promise<void> {
-  const path = await safePath(repo, join(repo, ".gitignore"));
-  const text = await exists(path) ? await fs.readFile(path, "utf8") : "";
-  if (!text.split(/\r?\n/).includes("/drift/")) {
-    const mode = await exists(path) ? (await fs.stat(path)).mode & 0o777 : 0o644;
-    await atomicWrite(path, text + (text && !text.endsWith("\n") ? "\n" : "") + "/drift/\n", mode);
+/** Host-neutral, repo-local opt-in. Never infer consent from tracked history. */
+async function trackArtifacts(repo: string): Promise<boolean> {
+  const path = await safePath(repo, join(repo, ".drift.json"));
+  if (!(await exists(path))) return false;
+  const stat = await fs.stat(path);
+  if (!stat.isFile() || stat.size > 64 * 1024) throw new Error(`Drift configuration must be a regular file of at most 64 KiB: ${path}`);
+  let input: unknown;
+  try { input = JSON.parse(await fs.readFile(path, "utf8")); }
+  catch { throw new Error(`Invalid JSON in Drift configuration: ${path}`); }
+  if (!input || typeof input !== "object" || Array.isArray(input) ||
+      Object.keys(input).some((key) => key !== "trackArtifacts") ||
+      (Object.hasOwn(input, "trackArtifacts") && typeof (input as any).trackArtifacts !== "boolean")) {
+    throw new Error(`Drift configuration must be an object with only an optional boolean trackArtifacts: ${path}`);
   }
-  await git(repo, ["check-ignore", "--no-index", "-q", artifact]);
+  return (input as { trackArtifacts?: boolean }).trackArtifacts ?? false;
+}
+
+async function ensureArtifactPolicy(repo: string, paths: string[], tracked: boolean): Promise<void> {
+  if (!tracked) {
+    const path = await safePath(repo, join(repo, ".gitignore"));
+    const text = await exists(path) ? await fs.readFile(path, "utf8") : "";
+    if (!text.split(/\r?\n/).includes("/drift/")) {
+      const mode = await exists(path) ? (await fs.stat(path)).mode & 0o777 : 0o644;
+      await atomicWrite(path, text + (text && !text.endsWith("\n") ? "\n" : "") + "/drift/\n", mode);
+    }
+  }
+  for (const path of paths) {
+    // Exit 1 means not ignored; all other Git failures still stop publication.
+    const ignored = Boolean((await git(repo, ["check-ignore", "--no-index", path], 1)).trim());
+    if (tracked && ignored) throw new Error(`trackArtifacts is true in .drift.json, but Git ignores ${path}. Resolve the ignore rule explicitly; Drift will not change it or force-add files.`);
+    if (!tracked && !ignored) throw new Error(`Drift artifacts must be ignored by default, but Git does not ignore ${path}. To commit artifacts, explicitly set {"trackArtifacts":true} in the repository-root .drift.json; otherwise resolve the ignore exception.`);
+  }
 }
 
 async function prepare(repo: string, record: RecordData, input: ArtifactInput, digest: string): Promise<Pending> {
@@ -119,6 +143,7 @@ function validatePending(record: RecordData, pending: Pending): void {
 /** Code, not the model, supplies identity/frontmatter and completes the interval. */
 export async function publish(store: Records, raw: ArtifactInput, python = process.env.DRIFT_PYTHON || "python3"): Promise<Receipt> {
   const input = await validate(store.repo, raw);
+  const tracked = await trackArtifacts(store.repo);
   const drift = await safePath(store.repo, join(store.repo, "drift"));
   await fs.mkdir(drift, { recursive: true });
   const index = await safePath(store.repo, join(drift, "INDEX.md"));
@@ -133,7 +158,7 @@ export async function publish(store: Records, raw: ArtifactInput, python = proce
     if (!artifactPathPattern.test(relativePath)) throw new Error("Invalid publication path in record");
     const path = await safePath(store.repo, resolve(store.repo, relativePath));
     if (!relativePath.startsWith(`drift/${input.feature}/`)) throw new Error("Mismatched publication receipt");
-    await ensureIgnored(store.repo, path);
+    await ensureArtifactPolicy(store.repo, [path, index], tracked);
     if (pending) {
       validatePending(record, pending);
       record.pending = pending;

@@ -216,6 +216,23 @@ test("actual Pi RPC: discovery, pre-inference record, context, resume/reload, co
   assert.equal(await fs.readFile(f.recordPath(fork.sessionId), "utf8"), "{}");
 });
 
+test("actual Pi publishes repo-opted-in tracked artifacts without changing ignores or staging", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+  const f = await fixture(t);
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"trackArtifacts":true}\n');
+  await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
+  const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  await client.prompt("PUBLISH_HANDOFF");
+  const record = await f.readRecord(state.sessionId);
+  assert.ok(record.completed, client.stderr);
+  assert.equal(await fs.readFile(join(f.repo, ".gitignore"), "utf8"), "logs/*\n");
+  const visible = await git(f.repo, ["ls-files", "--others", "--exclude-standard"]);
+  assert.ok(visible.includes(record.completed.path));
+  assert.ok(visible.includes("drift/INDEX.md"));
+  assert.equal(await git(f.repo, ["diff", "--cached", "--name-only"]), "");
+  assert.ok(client.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && !event.isError));
+});
+
 test("actual Pi automatically continues a profiled handoff after a fresh context compaction", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
   const state = await client.request({ type: "get_state" });
@@ -401,8 +418,10 @@ test("actual pi-acp initialization failure returns without inference", { skip: !
   assert.ok(JSON.stringify(client.events).includes("No successful recording is claimed"), "ACP did not surface the failure notice");
 });
 
-test("actual pi-acp loads the package and executes drift_publish without extension slash commands", { skip: !acpBinary || !piPresent, timeout: 90_000 }, async (t) => {
+test("actual pi-acp loads the package and publishes tracked artifacts without extension slash commands", { skip: !acpBinary || !piPresent, timeout: 90_000 }, async (t) => {
   const f = await fixture(t);
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"trackArtifacts":true}');
+  await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
   const env = { ...f.env, PI_ACP_PI_COMMAND: piBinary };
   const client = new Client(process.execPath, [resolve(acpBinary!)], f.repo, env); f.clients.push(client);
   const request = (method: string, params: any) => client.request({ jsonrpc: "2.0", method, params });
@@ -425,4 +444,7 @@ test("actual pi-acp loads the package and executes drift_publish without extensi
   assert.ok(JSON.stringify(f.requests).includes(original.intervalId));
   assert.ok(client.events.some((event: any) => JSON.stringify(event).includes("drift_publish")));
   assert.ok((await fs.readFile(join(f.repo, completed.completed.path), "utf8")).includes(original.sessionId));
+  assert.equal(await fs.readFile(join(f.repo, ".gitignore"), "utf8"), "logs/*\n");
+  assert.ok((await git(f.repo, ["ls-files", "--others", "--exclude-standard"])).includes(completed.completed.path));
+  assert.equal(await git(f.repo, ["diff", "--cached", "--name-only"]), "");
 });

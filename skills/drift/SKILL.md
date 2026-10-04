@@ -210,13 +210,17 @@ A host may establish a measured record of the current work interval before work 
 
 A skill cannot run at session start by itself. Without a supplied record, omit `session_started` rather than estimating it. The manual artifact workflow works without lifecycle automation. See `handoff.md` for how to distinguish original measurements from a later reconstruction.
 
-## Gitignore Drift Artifacts
+## Artifact Git Policy
 
-Drift artifacts are local agent context and should not be committed by default. Before creating the first `drift/` directory or writing any Drift artifact in a target project:
+Drift artifacts are local agent context and are ignored **by default**. A project may explicitly choose to commit them so handoffs travel between machines. The single host-neutral setting lives in the target **repository-root** `.drift.json`:
 
-1. Check the repository-root `.gitignore`.
-2. If `.gitignore` does not exist, create it.
-3. Ensure it contains an entry that ignores the project-local Drift folder, preferably `/drift/`.
-4. Preserve existing `.gitignore` contents; append the Drift entry if needed.
+```json
+{ "trackArtifacts": true }
+```
 
-Do this as part of the Drift workflow without requiring a separate user request.
+Read this before creating `drift/` or writing an artifact. Missing config, `{}` or `{"trackArtifacts": false}` selects the ignored default. The file must be a regular, non-symlink JSON object of at most 64 KiB, with only the optional boolean `trackArtifacts` field. Stop on malformed/unsupported config rather than guessing. Do not infer opt-in from tracked history, ignore exceptions or another repo's settings. Create/change the flag only after the user chooses the policy; commit it when the repo should share that choice.
+
+- **Ignored (default):** ensure repository-root `.gitignore` exists and contains `/drift/`, preserving all other contents. Verify artifact and index paths are ignored. If a negation prevents that, report the conflict; do not silently override an accepted project choice.
+- **Tracked (`true`):** leave `.gitignore` untouched. Verify artifact and index paths are not ignored, and report conflicting rules for explicit resolution. Do not force-add, stage, commit or push automatically. Review handoff contents before committing; trackable does not mean public or credential-safe.
+
+With a host publisher, it enforces this policy; do not duplicate its writes. Under the manual baseline, perform the checks yourself (`git check-ignore --no-index` returns 0 for ignored, 1 for not ignored; other failures are errors). The setting changes Git visibility only; it never permits secrets in artifacts or deleting records/session logs.
