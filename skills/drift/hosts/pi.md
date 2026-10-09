@@ -20,6 +20,8 @@ The publisher writes the artifact's initial `status` (see "Artifact Status" in `
 
 When the repository has run `/drift-changelog on` (session context and `/drift-changelog status` say so), pass `changelog: { section, text }` with any artifact that records a user-visible change: the publisher writes `changelog.d/<feature>-<NNN>-<slug>.md` in the same transaction and regenerates `CHANGELOG.md`; the tool result names the fragment and says whether the changelog was regenerated. Never edit the generated region of `CHANGELOG.md` yourself; if the result reports unrecognised lines, tell the user which lines and leave them. Without the opt-in, omit `changelog` and suggest the command when the user wants a changelog kept.
 
+Where `.drift.json` sets `land.auto`, a handoff publication lands the interval itself before the continuation: the tool result reports `Landed ... on origin/<branch>` or `Not landed: <cause>`. On `Not landed`, the handoff is published and the continuation is held; report the cause to the user and do not try to push or resolve the conflict yourself unless asked. Commit the interval's work **before** publishing the handoff, since uncommitted tracked changes stop the landing. `/drift-land` is the user's manual form of the same sequence.
+
 For a handoff, also pass `next_session_profile` (see "Profile-directed handoffs" in `SKILL.md`). The profile names the kind of receiving work, not a provider/model. Successful handoff publication completes only this thread's current interval; do not delete its record.
 
 ## Profile-directed continuation

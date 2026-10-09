@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { publish, setArtifactTracking, syncIndex, trackArtifacts, type TrackingRequest } from "../lib/artifacts.ts";
 import { sections, setChangelog, syncChangelog, type ChangelogRequest, type ChangelogSync } from "../lib/changelog.ts";
 import { attributeFor, changelogDriver, changelogDriverCommand, indexDriver, indexDriverCommand, installDriver } from "../lib/git-drivers.ts";
+import { describeLanding, land } from "../lib/land.ts";
 import { artifactStore, driftConfig, repoRoot, Records } from "../lib/state.ts";
 import { pickup } from "../lib/pickup.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
@@ -192,6 +193,21 @@ export default function drift(pi: ExtensionAPI) {
     },
   });
 
+  // The manual form of landing; the automatic form runs after a handoff where land.auto is set.
+  pi.registerCommand("drift-land", {
+    description: "Land the current branch on origin's default branch: fetch, rebase, verify, check, push; never squash or force",
+    handler: async (_args, ctx) => {
+      try {
+        const repo = await repoRoot(ctx.cwd);
+        if (!repo) throw new Error("/drift-land requires Pi's working directory to be inside the target Git repository");
+        const records = await store(ctx);
+        ctx.ui.notify(describeLanding(await land(repo, { records })), "info");
+      } catch (error) {
+        ctx.ui.notify(`Not landed: ${errorText(error)}`, "error");
+      }
+    },
+  });
+
   // Bare syntax keeps the copy/paste continuation prompt from being interpreted as a slash command by hosts that reserve those.
   pi.on("input", async (event, ctx) => {
     const match = /^drift-continue(?:\s+([\s\S]*))?$/.exec(event.text.trim());
@@ -303,10 +319,22 @@ export default function drift(pi: ExtensionAPI) {
         try { changelog = `\nFragment: ${receipt.fragment}\nChangelog: ${describeSync(await syncChangelog(records.repo))}`; }
         catch (error) { changelog = `\nFragment: ${receipt.fragment}\nChangelog: not regenerated (${errorText(error)}); it is rebuilt on the next publication or session.`; }
       }
-      const autoContinue = params.kind === "handoff" && params.next_session_profile;
+      // A completed interval lands itself where the repo has opted in: handoff -> land -> compaction -> continue.
+      // A halt keeps the handoff, holds the continuation, and says exactly what blocked.
+      let landed = "";
+      let held = false;
+      if (params.kind === "handoff" && (await driftConfig(records.repo)).land?.auto) {
+        try { landed = `\n${describeLanding(await land(records.repo, { records }))}`; }
+        catch (error) {
+          held = true;
+          landed = `\nNot landed: ${errorText(error)}\nThe handoff is published. Automatic continuation is held; fix the cause, then /drift-land.`;
+          ctx.ui.notify(`Drift did not land the interval: ${errorText(error)}`, "error");
+        }
+      }
+      const autoContinue = params.kind === "handoff" && params.next_session_profile && !held;
       if (autoContinue) pendingContinuationPath = receipt.path;
       return {
-        content: [{ type: "text" as const, text: `Published ${receipt.path}\nIndex: drift/INDEX.md${changelog}\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${autoContinue ? "\nA fresh profiled context window is queued automatically." : ""}` }],
+        content: [{ type: "text" as const, text: `Published ${receipt.path}\nIndex: drift/INDEX.md${changelog}${landed}\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${autoContinue ? "\nA fresh profiled context window is queued automatically." : ""}` }],
         details: receipt,
       };
     },

@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { artifactStore, atomicWrite, delta, driftConfig, fingerprint, git, mainWorktree, mergeInProgress, python, Records, run, safePath, withLock } from "../lib/state.ts";
 import { END, START, setChangelog, syncChangelog } from "../lib/changelog.ts";
+import { describeLanding, land, LandHalt, landingGuard } from "../lib/land.ts";
 import { pickup } from "../lib/pickup.ts";
 import { attributeFor, hasAttribute, indexDriverCommand, installDriver } from "../lib/git-drivers.ts";
 import { publish, setArtifactTracking, syncIndex } from "../lib/artifacts.ts";
@@ -807,4 +808,88 @@ test("/drift-changelog on refuses a repository with its own fragment system or a
   await fs.writeFile(join(repo, ".gitignore"), "/drift/\n");
   assert.match(await setChangelog(repo, "on"), /created CHANGELOG\.md/);
   assert.equal(await fs.readFile(join(repo, "CHANGELOG.md"), "utf8"), `# Changelog\n\n${START}\n${END}\n`);
+});
+
+async function landing(t: any) {
+  const { repo, agent, dir } = await fixture(t);
+  const bare = join(dir, "origin.git");
+  await git(dir, ["init", "-q", "--bare", bare]);
+  await git(repo, ["remote", "add", "origin", bare]);
+  const branch = (await git(repo, ["symbolic-ref", "--short", "HEAD"])).trim();
+  await git(repo, ["push", "-q", "-u", "origin", branch]);
+  await git(repo, ["remote", "set-head", "origin", branch]);
+  const other = join(dir, "other clone");
+  await git(dir, ["clone", "-q", bare, other]);
+  for (const [key, value] of [["user.name", "Other thread"], ["user.email", "other@example.invalid"], ["commit.gpgsign", "false"]]) await git(other, ["config", key, value]);
+  return { repo, agent, dir, bare, branch, other: await fs.realpath(other) };
+}
+
+async function commitFile(dir: string, name: string, text: string) {
+  await fs.writeFile(join(dir, name), text);
+  await git(dir, ["add", name]);
+  await git(dir, ["-c", "commit.gpgsign=false", "commit", "-qm", `add ${name}`]);
+}
+
+const remoteFiles = async (repo: string, branch: string) => (await git(repo, ["ls-tree", "--name-only", `origin/${branch}`])).trim().split("\n").sort();
+
+test("landing rebases onto a moved origin, redoes a push that lost the race, checkpoints, and runs the repo's checks", async (t) => {
+  const { repo, agent, branch, other } = await landing(t);
+  const store = (await Records.open(repo, "session-a", agent))!;
+
+  // Another thread landed first; ours rebases onto it and pushes both.
+  await commitFile(other, "b.txt", "b\n"); await git(other, ["push", "-q", "origin", `HEAD:${branch}`]);
+  await commitFile(repo, "a.txt", "a\n");
+  const first = await land(repo, { records: store });
+  assert.equal(first.target, branch);
+  assert.equal(first.attempts, 1);
+  assert.equal(first.note, "no check configured");
+  assert.deepEqual(await remoteFiles(repo, branch), ["a.txt", "b.txt", "file.txt"]);
+  assert.equal((await store.read()).checkpoint?.reason, "land");
+  assert.match(describeLanding(first), /^Landed \S+ on origin\/\S+ at [0-9a-f]+; no check configured\.$/);
+
+  // The tip moves between our checks and our push: the push is rejected, the rebase redone, the push repeated.
+  await commitFile(other, "c.txt", "c\n");
+  await commitFile(repo, "d.txt", "d\n");
+  const second = await land(repo, { beforePush: async () => { await git(other, ["pull", "-q", "--rebase", "origin", branch]); await git(other, ["push", "-q", "origin", `HEAD:${branch}`]); } });
+  assert.equal(second.attempts, 2);
+  assert.deepEqual(await remoteFiles(repo, branch), ["a.txt", "b.txt", "c.txt", "d.txt", "file.txt"]);
+  assert.match(describeLanding(second), /attempt 2: the tip moved/);
+
+  // The repo's own check, any shell command: a failure stops before the push, a pass is counted.
+  await commitFile(repo, "e.txt", "e\n");
+  await fs.writeFile(join(repo, ".drift.json"), '{ "land": { "check": ["node -e \\"process.exit(3)\\""] } }\n');
+  await git(repo, ["add", ".drift.json"]); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "config"]);
+  await assert.rejects(land(repo), (error: any) => error instanceof LandHalt && error.stage === "check" && /Check failed \(exit 3\): node -e[\s\S]*Nothing was pushed/.test(error.message));
+  assert.ok(!(await remoteFiles(repo, branch)).includes("e.txt"));
+  await fs.writeFile(join(repo, ".drift.json"), '{ "land": { "check": ["node -e \\"process.exit(0)\\"", "node -e \\"console.log(1)\\""] } }\n');
+  await git(repo, ["add", ".drift.json"]); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "config"]);
+  const third = await land(repo);
+  assert.equal(third.checks, 2);
+  assert.ok((await remoteFiles(repo, branch)).includes("e.txt"));
+});
+
+test("landing halts on a real conflict with the branch untouched, on uncommitted tracked changes, and on the guard", async (t) => {
+  const { repo, branch, other } = await landing(t);
+  await fs.writeFile(join(other, "file.txt"), "theirs\n"); await git(other, ["commit", "-qam", "theirs"]); await git(other, ["push", "-q", "origin", `HEAD:${branch}`]);
+  await fs.writeFile(join(repo, "file.txt"), "ours\n"); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qam", "ours"]);
+  const before = (await git(repo, ["rev-parse", "HEAD"])).trim();
+  await assert.rejects(land(repo), (error: any) => error instanceof LandHalt && error.stage === "conflict" && /conflicts in file\.txt; the rebase was aborted and \S+ is unchanged/.test(error.message));
+  assert.equal((await git(repo, ["rev-parse", "HEAD"])).trim(), before);
+  assert.equal(await mergeInProgress(repo), false);
+  assert.equal((await git(repo, ["status", "--porcelain"])).trim(), "");
+
+  await fs.writeFile(join(repo, "file.txt"), "ours, edited again\n");
+  await assert.rejects(land(repo), (error: any) => error instanceof LandHalt && error.stage === "tree" && /Uncommitted changes to tracked files[\s\S]*file\.txt/.test(error.message));
+  await git(repo, ["checkout", "--", "file.txt"]);
+
+  // A branch behind upstream that has not been rebased shows upstream's new file as its own removal: the guard's case.
+  await git(repo, ["reset", "-q", "--hard", `origin/${branch}`]); // Adopt theirs to clear the conflict.
+  await commitFile(other, "landed-by-other.txt", "x\n"); await git(other, ["push", "-q", "origin", `HEAD:${branch}`]);
+  await git(repo, ["fetch", "-q", "origin"]);
+  assert.deepEqual(await landingGuard(repo, `origin/${branch}`), ["landed-by-other.txt"]);
+  await commitFile(repo, "mine.txt", "m\n");
+  assert.deepEqual(await landingGuard(repo, `origin/${branch}`), ["landed-by-other.txt"]); // Still not ours until a rebase.
+  await land(repo); // The rebase makes it ours-free; the guard passes and the landing goes through.
+  assert.deepEqual(await landingGuard(repo, `origin/${branch}`), []);
+  assert.ok((await remoteFiles(repo, branch)).includes("mine.txt"));
 });

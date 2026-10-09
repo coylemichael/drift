@@ -220,6 +220,10 @@ One Markdown bullet. Further lines continue the same bullet; no blank lines.
 
 Two rules about the generated region: a bullet may be edited there if its trailing id comment stays, and the edit is written back to its fragment on the next regeneration; a line without an id is reported and left alone, and regeneration stops until it is moved into a fragment or deleted. Text outside the markers is the project's own and is never touched. If the repository already keeps fragments another way (changesets, towncrier), follow that convention instead.
 
+### Landing
+
+When many threads push to one branch, land in this order and no other: commit your work; fetch; rebase onto the fresh upstream (keep both sides of any conflict in a derived or shared file, or let the merge drivers do it); confirm `git diff origin/<default> --name-only` lists only files your own commits touch; run the project's checks; push; if the push is rejected because the tip moved, start again from the fetch. Never squash with `git reset --soft origin/<default>` or any other moving ref, never force-push, never resolve a conflict by taking one side whole. A host may run this sequence for you after a completed handoff when the repository has opted in (`land.auto` in `.drift.json`); a halt there is a real conflict or a guard failure, and is the user's to resolve.
+
 ### Rebuilding the Index
 
 Rebuild from scratch when the index is missing, when it has drifted out of sync with the folders, or when adopting the index in a repo that already has Drift artifacts. Frontmatter is the source of truth — the index is a derived view and can always be regenerated.

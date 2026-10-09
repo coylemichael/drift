@@ -8,7 +8,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { git, hash } from "../lib/state.ts";
+import { git, hash, mergeInProgress } from "../lib/state.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const piBinary = process.env.PI_TEST_BINARY || "pi";
@@ -323,6 +323,56 @@ test("actual Pi: /drift-changelog on, a publication carrying a changelog entry, 
   await second.request({ type: "get_state" });
   const driver = await until(async () => (await git(f.repo, ["config", "--get", "merge.drift-changelog.driver"], 1)).trim(), "changelog driver was not installed at session start");
   assert.match(driver, /^\S+ -I \S+\/scripts\/build-changelog\.py --merge %O %A %B$/);
+});
+
+async function withOrigin(f: Awaited<ReturnType<typeof fixture>>) {
+  const bare = join(f.dir, "origin.git");
+  await git(f.dir, ["init", "-q", "--bare", bare]);
+  await git(f.repo, ["remote", "add", "origin", bare]);
+  const branch = (await git(f.repo, ["symbolic-ref", "--short", "HEAD"])).trim();
+  await git(f.repo, ["push", "-q", "-u", "origin", branch]);
+  await git(f.repo, ["remote", "set-head", "origin", branch]);
+  const other = join(f.dir, "other");
+  await git(f.dir, ["clone", "-q", bare, other]);
+  for (const [key, value] of [["user.name", "Other"], ["user.email", "other@example.invalid"], ["commit.gpgsign", "false"]]) await git(other, ["config", key, value]);
+  return { bare, branch, other: await fs.realpath(other) };
+}
+
+test("actual Pi lands a completed interval itself where the repo opts in, then continues; a conflict holds the continuation", { skip: !piPresent, timeout: 120_000 }, async (t) => {
+  const f = await fixture(t);
+  const { branch, other } = await withOrigin(f);
+  await fs.writeFile(join(f.repo, ".drift.json"), '{ "land": { "auto": true } }\n');
+  await fs.writeFile(join(f.repo, "work.txt"), "done\n");
+  await git(f.repo, ["add", ".drift.json", "work.txt"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "work"]);
+  await fs.writeFile(join(other, "theirs.txt"), "t\n"); await git(other, ["add", "theirs.txt"]); await git(other, ["commit", "-qm", "theirs"]); await git(other, ["push", "-q", "origin", `HEAD:${branch}`]);
+
+  const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  const before = f.requests.length;
+  await client.prompt("PUBLISH_AUTO_HANDOFF");
+  const record = await f.readRecord(state.sessionId);
+  assert.ok(record.completed, client.stderr);
+  const landed = (await git(f.repo, ["ls-tree", "--name-only", `origin/${branch}`])).trim().split("\n").sort();
+  assert.deepEqual(landed, [".drift.json", ".gitignore", "file.txt", "theirs.txt", "work.txt"]); // Rebased onto the other thread's landing and pushed.
+  assert.ok(client.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && /Landed \S+ on origin\//.test(JSON.stringify(event))));
+  assert.ok(record.checkpoint && ["land", "settled", "publish"].includes(record.checkpoint.reason));
+  await until(() => f.requests.slice(before + 1).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + record.completed.path + "`")), "landed handoff did not continue");
+
+  // Second interval: a real conflict. The handoff publishes, nothing is pushed, and no continuation prompt follows.
+  await git(other, ["pull", "-q", "--rebase", "origin", branch]); // The first landing moved origin past this clone.
+  await fs.writeFile(join(other, "file.txt"), "theirs\n"); await git(other, ["commit", "-qam", "theirs again"]); await git(other, ["push", "-q", "origin", `HEAD:${branch}`]);
+  await fs.writeFile(join(f.repo, "file.txt"), "ours\n"); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qam", "ours"]);
+  const second = f.rpc();
+  const secondState = await second.request({ type: "get_state" });
+  const requestsBefore = f.requests.length;
+  await second.prompt("PUBLISH_AUTO_HANDOFF");
+  const secondRecord = await f.readRecord(secondState.sessionId);
+  assert.ok(secondRecord.completed, second.stderr);
+  assert.ok(second.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && /Not landed: Rebase onto origin\/\S+ conflicts in file\.txt[\s\S]*Automatic continuation is held/.test(JSON.stringify(event))));
+  assert.ok(!(await git(f.repo, ["log", "--oneline", `origin/${branch}`])).includes("ours"));
+  assert.equal(await mergeInProgress(f.repo), false);
+  await delay(1500);
+  assert.ok(!f.requests.slice(requestsBefore).some((request) => JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + secondRecord.completed.path + "`")), "a held landing must not continue");
 });
 
 test("actual Pi automatically continues a profiled handoff after a fresh context compaction", { skip: !piPresent, timeout: 60_000 }, async (t) => {

@@ -194,6 +194,34 @@ write. `on` refuses a repository that already uses changesets or towncrier.
 `changelog.d/README.md` states the convention for anything else that reads the
 repository. Nothing is staged or committed.
 
+### Landing (per repository)
+
+Drift already knows when a unit of work ends: the handoff that completes the
+interval. With a one-time opt-in, that handoff lands itself:
+
+```json
+{ "land": { "auto": true, "check": "pytest -q" } }
+{ "land": { "auto": true, "check": ["cargo fmt --check", "cargo test"] } }
+```
+
+The sequence is fetch; rebase onto origin's default branch (the index and
+changelog drivers resolve their files); verify the derived files; the guard
+(`git diff origin/<default> --name-only` may list only files the branch's own
+commits touch, which is how a squash against a moved ref or a push from a stale
+index reverts other threads' work); the repo's check commands, any shell
+command run in order, stopping at the first failure, nothing assumed about the
+toolchain and nothing run when unset; `git push origin HEAD:<default>`; redo
+from the fetch when the tip moved, at most three times; a `land` checkpoint on
+the record. Then the profiled continuation starts from landed `main`. It never
+squashes, force-pushes or resets against a moving ref, and never commits:
+uncommitted tracked changes stop it before anything happens.
+
+A real conflict in a non-derived file, or the guard tripping, halts the chain:
+the rebase is aborted, the branch is left as it was, the handoff stays
+published, continuation is held, and the tool result says what blocked.
+`/drift-land` is the same sequence as a manual command. Landings are
+serialised across a repository's worktrees.
+
 In Zed, Pi extension commands only appear in the `/` menu with an adapter that
 advertises them; upstream `pi-acp` v0.0.33 does not, and also leaves a turn
 open until a model run settles, so a command that never starts one spins.

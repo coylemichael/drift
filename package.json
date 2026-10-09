@@ -1,6 +1,6 @@
 {
   "name": "drift-pi",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Portable Drift workflows with Pi-owned lifecycle and artifact publication",
   "type": "module",
