@@ -113,8 +113,20 @@ export async function atomicWrite(path: string, text: string, mode = 0o600): Pro
     const file = await fs.open(temp, "wx", mode);
     try { await file.writeFile(text, "utf8"); await file.sync(); }
     finally { await file.close(); }
-    await fs.rename(temp, path);
+    await replace(temp, path);
   } finally { await fs.rm(temp, { force: true }); }
+}
+
+/** Windows refuses to rename over a file another process (a reader, antivirus) has open; that clears quickly, so retry briefly. */
+async function replace(from: string, to: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  for (;;) {
+    try { return await fs.rename(from, to); }
+    catch (error: any) {
+      if (process.platform !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(error.code) || Date.now() >= deadline) throw error;
+      await delay(20);
+    }
+  }
 }
 
 /** Cross-process exclusion. Never guess whether a timed-out lock is abandoned. */

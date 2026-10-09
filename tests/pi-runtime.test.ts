@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir, devNull } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -11,9 +12,21 @@ import { git, hash } from "../lib/state.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const piBinary = process.env.PI_TEST_BINARY || "pi";
+// Node cannot spawn npm's Windows .cmd shims without a shell; run the script the shim points at instead.
+function launcher(binary: string): [string, string[]] {
+  if (process.platform !== "win32" || /[\\/]/.test(binary)) return [binary, []];
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    const shim = join(dir, `${binary}.cmd`);
+    if (!existsSync(shim)) continue;
+    const script = /"%dp0%\\([^"]+\.js)"/.exec(readFileSync(shim, "utf8"))?.[1];
+    if (script) return [process.execPath, [join(dirname(shim), script)]];
+  }
+  return [binary, []];
+}
+const [piCommand, piPrefix] = launcher(piBinary);
 // Opt in to the installed adapter without downloading anything.
 const acpBinary = process.env.PI_TEST_ACP;
-const piPresent = spawnSync(piBinary, ["--version"], { env: { PATH: process.env.PATH, PI_OFFLINE: "1", PI_TELEMETRY: "0" } }).status === 0;
+const piPresent = spawnSync(piCommand, [...piPrefix, "--version"], { env: { PATH: process.env.PATH, PI_OFFLINE: "1", PI_TELEMETRY: "0" } }).status === 0;
 const body = ["Objective", "Source Documents", "Status", "What Changed", "Codebase Context", "What Deviated from Plan", "Open Questions", "Next Steps"].map((name) => `## ${name}\nA synthetic runtime fixture; no semantic model-quality claim.\n`).join("\n");
 const researchBody = ["Research Question", "Summary", "Detailed Findings", "Code References", "Open Questions"].map((name) => `## ${name}\nA synthetic research fixture with no source artifacts.\n`).join("\n");
 
@@ -136,13 +149,13 @@ async function fixture(t: any, broken = false) {
   if (broken) await fs.writeFile(join(agent, "drift"), "block record directory creation");
   const env: NodeJS.ProcessEnv = {};
   for (const key of ["PATH", "PATHEXT", "SystemRoot", "WINDIR", "COMSPEC", "TMP", "TEMP", "TMPDIR"]) if (process.env[key]) env[key] = process.env[key];
-  Object.assign(env, { HOME: home, USERPROFILE: home, PI_CODING_AGENT_DIR: agent, PI_OFFLINE: "1", PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: devNull, XDG_CONFIG_HOME: join(home, ".config"), XDG_CACHE_HOME: join(home, ".cache"), XDG_DATA_HOME: join(home, ".local/share"), XDG_STATE_HOME: join(home, ".local/state") });
+  Object.assign(env, { HOME: home, USERPROFILE: home, PI_CODING_AGENT_DIR: agent, PI_OFFLINE: "1", PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : devNull, XDG_CONFIG_HOME: join(home, ".config"), XDG_CACHE_HOME: join(home, ".cache"), XDG_DATA_HOME: join(home, ".local/share"), XDG_STATE_HOME: join(home, ".local/state") });
   await git(repo, ["init", "-q"]); await git(repo, ["config", "user.name", "Drift runtime"]); await git(repo, ["config", "user.email", "drift@example.invalid"]);
   await fs.writeFile(join(repo, "file.txt"), "original\n"); await fs.writeFile(join(repo, ".gitignore"), "/drift/\n");
   await git(repo, ["add", "."]); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "fixture"]);
   await fs.writeFile(join(repo, "inherited.txt"), "already dirty\n");
   const rpc = (sessionFile?: string, flags: string[] = []) => {
-    const client = new Client(piBinary, ["--mode", "rpc", "--offline", "--no-context-files", ...flags, ...(sessionFile ? ["--session", sessionFile] : [])], repo, env);
+    const client = new Client(piCommand, [...piPrefix, "--mode", "rpc", "--offline", "--no-context-files", ...flags, ...(sessionFile ? ["--session", sessionFile] : [])], repo, env);
     clients.push(client); return client;
   };
   const recordPath = (id: string) => join(agent, "drift", hash(repo).slice(0, 24), `${id}.json`);
