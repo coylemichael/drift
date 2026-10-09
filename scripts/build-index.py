@@ -243,6 +243,9 @@ def render(dated, undated):
 
 
 def main(argv):
+    # --stdout feeds the Pi publisher byte for byte: LF everywhere, not the platform's text-mode translation.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(newline="\n")
     args = [a for a in argv[1:] if not a.startswith("-")]
     flags = {a for a in argv[1:] if a.startswith("-")}
     if flags & {"-h", "--help"}:
