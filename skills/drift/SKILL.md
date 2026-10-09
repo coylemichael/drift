@@ -185,6 +185,16 @@ Appending to the index is part of writing an artifact, not a separate request. A
 
 A new artifact is almost always the newest, so a plain append is correct. If you are backfilling an artifact with an older `date`, insert it in the right position instead and renumber the `#` column from that row down.
 
+### At Session Start
+
+Before reading or writing any artifact in a session, make sure the index matches the folders. Another host, another machine or a hand-written artifact may never have appended its row, and resuming, executing and the host's recent-artifact context all navigate by the index.
+
+1. If the target repo has no `drift/` directory, or it holds no artifacts, do nothing. Do not create `drift/` or an empty index.
+2. Otherwise, if `drift/INDEX.md` is missing or out of sync, rebuild it (see below). With a shell, `scripts/build-index.py <repo>/drift --check` reports which, without writing.
+3. Check the artifact Git policy for `drift/INDEX.md` first (see "Artifact Git Policy"). If the index would land on the wrong side of it, report the conflict and leave both `.gitignore` and the index alone; a rebuild of a derived view never justifies changing ignore rules.
+
+This is a rebuild, not a publication: it writes no artifact, changes no `status` and never stages or commits. A host overlay may do it automatically.
+
 ### Rebuilding the Index
 
 Rebuild from scratch when the index is missing, when it has drifted out of sync with the folders, or when adopting the index in a repo that already has Drift artifacts. Frontmatter is the source of truth — the index is a derived view and can always be regenerated.

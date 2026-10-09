@@ -26,6 +26,8 @@ To recover an existing profiled handoff manually in a fresh Pi thread, run `drif
 
 ## Session records
 
+Before establishing the record, the extension performs the session-start index check from `SKILL.md` ("At Session Start"): when `drift/` holds artifacts and `drift/INDEX.md` is missing or differs from the shared renderer's output, it rewrites the index, so the measured baseline already includes it. It never creates `drift/` or edits `.gitignore`; a Git-policy mismatch or renderer failure is shown as a warning and does not block recording. Do not repeat the check yourself on Pi.
+
 The Pi extension establishes a durable record before work and supplies its path and measured baseline in model context. It uses Pi's actual session ID, not a model-generated manual ID. Records live under Pi's agent directory, separately from project artifacts and Pi's conversation logs.
 
 - Read **this thread's supplied record** when preparing an artifact. Its `started`, `startBranch`, `startCommit`, `baseline` and any `checkpoint` contain measurements, not a reconstruction from conversation memory. The publisher maps the original start into `session_started` and takes a fresh clock read for `date`.

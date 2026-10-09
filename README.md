@@ -181,6 +181,9 @@ artifact. A pending user decision never triggers a profiled automatic handoff.
 ## What Pi automates
 
 - A durable record keyed to Pi's real session ID and Git repository.
+- A current `drift/INDEX.md` at session start: when the repo already holds
+  artifacts (for example, written by Claude or Zed's native agent) and the
+  index is missing or stale, it is rebuilt before the record's baseline is taken.
 - Measured start metadata and dirty-file fingerprints that survive reload,
   resume, and compaction.
 - Bounded Drift context on normal model requests and checkpoints after settled

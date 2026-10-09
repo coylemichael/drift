@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { artifactPathPattern, atomicWrite, exists, git, hash, now, python, Records, run, safePath, withLock } from "./state.ts";
 import type { Pending, Receipt, RecordData } from "./state.ts";
@@ -108,12 +108,38 @@ async function ensureArtifactPolicy(repo: string, paths: string[], tracked: bool
       await atomicWrite(path, text + (text && !text.endsWith("\n") ? "\n" : "") + "/drift/\n", mode);
     }
   }
-  for (const path of paths) {
-    // Exit 1 means not ignored; all other Git failures still stop publication.
-    const ignored = Boolean((await git(repo, ["check-ignore", "--no-index", path], 1)).trim());
-    if (tracked && ignored) throw new Error(`trackArtifacts is true in .drift.json, but Git ignores ${path}. Resolve the ignore rule explicitly; Drift will not change it or force-add files.`);
-    if (!tracked && !ignored) throw new Error(`Drift artifacts must be ignored by default, but Git does not ignore ${path}. To commit artifacts, explicitly set {"trackArtifacts":true} in the repository-root .drift.json; otherwise resolve the ignore exception.`);
-  }
+  for (const path of paths) await checkArtifactPolicy(repo, path, tracked);
+}
+
+async function checkArtifactPolicy(repo: string, path: string, tracked: boolean): Promise<void> {
+  // Exit 1 means not ignored; all other Git failures still stop the write.
+  const ignored = Boolean((await git(repo, ["check-ignore", "--no-index", path], 1)).trim());
+  if (tracked && ignored) throw new Error(`trackArtifacts is true in .drift.json, but Git ignores ${path}. Resolve the ignore rule explicitly; Drift will not change it or force-add files.`);
+  if (!tracked && !ignored) throw new Error(`Drift artifacts must be ignored by default, but Git does not ignore ${path}. To commit artifacts, explicitly set {"trackArtifacts":true} in the repository-root .drift.json; otherwise resolve the ignore exception.`);
+}
+
+/**
+ * Session-start refresh. Artifacts written by hand or by another host may never have reached the index, so
+ * render it from frontmatter and write it when missing or different. Never creates drift/ or an empty index,
+ * and never edits .gitignore: a policy mismatch is reported, not repaired. Returns whether it wrote.
+ */
+export async function syncIndex(repo: string, interpreter?: string): Promise<boolean> {
+  const drift = await safePath(repo, join(repo, "drift"));
+  if (!(await exists(drift))) return false;
+  // Same scope as the renderer, which refuses an artifact-free tree: drift/**/*.md except any INDEX.md.
+  const names = await fs.readdir(drift, { recursive: true });
+  if (!names.some((name) => name.endsWith(".md") && basename(name) !== "INDEX.md")) return false;
+  const index = await safePath(repo, join(drift, "INDEX.md"));
+  const lock = await safePath(repo, join(drift, ".publish.lock"));
+  return withLock(lock, async () => {
+    const content = await run(interpreter ?? await python(), ["-I", builder, drift, "--stdout"], repo);
+    if (!/^\| \d+ \|/m.test(content)) return false;
+    if (await exists(index) && await fs.readFile(index, "utf8") === content) return false;
+    await checkArtifactPolicy(repo, index, await trackArtifacts(repo));
+    const mode = await exists(index) ? (await fs.stat(index)).mode & 0o777 : 0o644;
+    await atomicWrite(index, content, mode);
+    return true;
+  });
 }
 
 async function prepare(repo: string, record: RecordData, input: ArtifactInput, digest: string): Promise<Pending> {

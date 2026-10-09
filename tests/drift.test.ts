@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { atomicWrite, delta, fingerprint, git, python, Records, run, safePath, withLock } from "../lib/state.ts";
-import { publish } from "../lib/artifacts.ts";
+import { publish, syncIndex } from "../lib/artifacts.ts";
 import type { ArtifactInput } from "../lib/artifacts.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
 
@@ -548,4 +548,43 @@ test("a record held open without delete sharing (an editor buffer) is still upda
     holder.kill(); // Before the fixture removal runs, or Windows cannot delete the held file.
     await exited;
   }
+});
+
+test("session-start index sync builds a missing index from hand-written artifacts, then leaves it alone", async (t) => {
+  const { repo } = await fixture(t);
+  assert.equal(await syncIndex(repo), false);
+  await assert.rejects(fs.stat(join(repo, "drift")), { code: "ENOENT" }); // Never creates drift/.
+
+  await fs.mkdir(join(repo, "drift", "TEST-1"), { recursive: true });
+  await fs.writeFile(join(repo, "drift", "TEST-1", "notes.txt"), "not an artifact\n");
+  assert.equal(await syncIndex(repo), false);
+  await assert.rejects(fs.stat(join(repo, "drift", "INDEX.md")), { code: "ENOENT" }); // No empty index.
+
+  await fs.writeFile(join(repo, ".gitignore"), "/drift/\n");
+  const artifact = join(repo, "drift", "TEST-1", "001-research-by-hand.md");
+  await fs.writeFile(artifact, '---\ndate: "2026-08-28T20:30:00+01:00"\nfeature: "TEST-1"\nsequence: "001"\ntype: "research"\nstatus: "complete"\n---\n\n## Summary\nWritten by another host.\n');
+  assert.equal(await syncIndex(repo), true);
+  const index = join(repo, "drift", "INDEX.md");
+  assert.match(await fs.readFile(index, "utf8"), /\| 001 \| .* \| TEST-1 \| research \| \[001-research-by-hand\]\(TEST-1\/001-research-by-hand\.md\) \|/);
+  await run(await python(), [join(root, "scripts/build-index.py"), join(repo, "drift"), "--check"], repo);
+  assert.equal(await syncIndex(repo), false); // In sync: not rewritten.
+
+  await fs.writeFile(index, "stale\n");
+  assert.equal(await syncIndex(repo), true);
+  assert.match(await fs.readFile(index, "utf8"), /001-research-by-hand/);
+  assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), "/drift/\n");
+  await assert.rejects(fs.stat(join(repo, "drift", ".publish.lock")), { code: "ENOENT" });
+});
+
+test("session-start index sync reports a Git-policy mismatch without editing ignores or writing", async (t) => {
+  const { repo } = await fixture(t);
+  await fs.mkdir(join(repo, "drift", "TEST-1"), { recursive: true });
+  await fs.writeFile(join(repo, "drift", "TEST-1", "001-research-by-hand.md"), '---\ndate: "2026-08-28T20:30:00+01:00"\nfeature: "TEST-1"\nsequence: "001"\ntype: "research"\n---\n\n## Summary\nx\n');
+  await assert.rejects(syncIndex(repo), /must be ignored by default/);
+  await assert.rejects(fs.stat(join(repo, ".gitignore")), { code: "ENOENT" });
+  await assert.rejects(fs.stat(join(repo, "drift", "INDEX.md")), { code: "ENOENT" });
+
+  await fs.writeFile(join(repo, ".drift.json"), '{"trackArtifacts":true}');
+  assert.equal(await syncIndex(repo), true); // Tracked mode: a visible index is the expected state.
+  assert.ok((await git(repo, ["ls-files", "--others", "--exclude-standard"])).includes("drift/INDEX.md"));
 });

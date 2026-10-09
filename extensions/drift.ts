@@ -1,7 +1,7 @@
 import { CONFIG_DIR_NAME, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { publish } from "../lib/artifacts.ts";
+import { publish, syncIndex } from "../lib/artifacts.ts";
 import { repoRoot, Records } from "../lib/state.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
 import { registerSkillBinding } from "./skill-binding.ts";
@@ -22,12 +22,25 @@ export default function drift(pi: ExtensionAPI) {
     if (identity !== key || !ready) {
       key = identity;
       failure = reported = uiReported = undefined;
-      ready = Records.open(ctx.cwd, ctx.sessionManager.getSessionId(), getAgentDir()).catch((error) => {
+      // Index first, so the measured baseline already includes it.
+      ready = refreshIndex(ctx).then(() => Records.open(ctx.cwd, ctx.sessionManager.getSessionId(), getAgentDir())).catch((error) => {
         failure = errorText(error);
         throw error;
       });
     }
     return ready;
+  }
+
+  /** A stale index degrades navigation only; it never blocks the record or the session. */
+  async function refreshIndex(ctx: ExtensionContext) {
+    try {
+      const repo = await repoRoot(ctx.cwd);
+      if (repo && await syncIndex(repo)) ctx.ui.notify("Drift rebuilt drift/INDEX.md from the repository's artifacts", "info");
+    } catch (error) {
+      const content = `Drift could not refresh drift/INDEX.md: ${errorText(error)}\nRecording continues; the index is rebuilt on the next publication or session.`;
+      pi.sendMessage({ customType: "drift-index", content, display: true });
+      if (ctx.mode === "rpc") ctx.ui.notify(content, "warning");
+    }
   }
 
   function report(message: string, ctx?: ExtensionContext) {
