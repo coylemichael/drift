@@ -1,11 +1,11 @@
 import { CONFIG_DIR_NAME, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { publish, setArtifactTracking, syncIndex, trackArtifacts, type TrackingRequest } from "../lib/artifacts.ts";
-import { sections, setChangelog, syncChangelog, type ChangelogRequest, type ChangelogSync } from "../lib/changelog.ts";
+import { ensureIndexAttribute, publish, setArtifactTracking, syncIndex, trackArtifacts, type TrackingRequest } from "../lib/artifacts.ts";
+import { changelogState, sections, setChangelog, syncChangelog, type ChangelogRequest, type ChangelogSync } from "../lib/changelog.ts";
 import { attributeFor, changelogDriver, changelogDriverCommand, indexDriver, indexDriverCommand, installDriver } from "../lib/git-drivers.ts";
 import { describeLanding, land } from "../lib/land.ts";
-import { artifactStore, driftConfig, repoRoot, Records } from "../lib/state.ts";
+import { artifactStore, driftConfig, hasOrigin, repoRoot, Records } from "../lib/state.ts";
 import { pickup } from "../lib/pickup.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
 import { registerSkillBinding } from "./skill-binding.ts";
@@ -62,6 +62,7 @@ export default function drift(pi: ExtensionAPI) {
       if (await syncIndex(repo)) ctx.ui.notify("Drift rebuilt drift/INDEX.md from the repository's artifacts", "info");
       await installIndexDriver(repo, ctx);
       const changelog = await syncChangelog(repo);
+      if (changelog.adopted) ctx.ui.notify(`Drift now generates this repository's CHANGELOG.md from changelog.d/ (it has an origin remote): ${changelog.adopted.join("; ")}. Commit those with your next change, or set "changelog": false in .drift.json to keep it hand-written.`, "info");
       if (changelog.status === "written") ctx.ui.notify("Drift regenerated CHANGELOG.md from changelog.d/", "info");
       else if (changelog.status === "unrecognised") ctx.ui.notify(`Drift did not regenerate CHANGELOG.md: ${changelog.detail}`, "warning");
       await installChangelogDriver(repo, ctx);
@@ -77,14 +78,17 @@ export default function drift(pi: ExtensionAPI) {
    * driver; the command cannot be committed, so each clone gets it here. A foreign driver is left alone.
    */
   async function installIndexDriver(repo: string, ctx: ExtensionContext) {
-    if (!(await trackArtifacts(repo)) || await attributeFor(repo, indexDriver.path) !== indexDriver.name) return;
+    if (!(await trackArtifacts(repo))) return;
+    // A committed index only meets another copy where there is a shared branch: the remote is the trigger.
+    if (await hasOrigin(repo) && await ensureIndexAttribute(repo)) ctx.ui.notify('Drift added "drift/INDEX.md merge=drift-index" to .gitattributes so tracked index rows merge on rebase; commit it with your next change', "info");
+    if (await attributeFor(repo, indexDriver.path) !== indexDriver.name) return;
     const result = await installDriver(repo, indexDriver.name, indexDriver.description, await indexDriverCommand());
     if (result.status === "installed") ctx.ui.notify("Drift installed its drift/INDEX.md merge driver in this clone; other threads' index rows now merge on rebase", "info");
     if (result.status === "conflict") ctx.ui.notify(`Drift left merge.${indexDriver.name}.driver as already configured (${result.existing}); the bundled driver was not installed`, "warning");
   }
 
   async function installChangelogDriver(repo: string, ctx: ExtensionContext) {
-    if ((await driftConfig(repo)).changelog === false || await attributeFor(repo, changelogDriver.path) !== changelogDriver.name) return;
+    if (!(await changelogState(repo)).enabled || await attributeFor(repo, changelogDriver.path) !== changelogDriver.name) return;
     const result = await installDriver(repo, changelogDriver.name, changelogDriver.description, await changelogDriverCommand());
     if (result.status === "installed") ctx.ui.notify("Drift installed its CHANGELOG.md merge driver in this clone; other threads' entries now merge on rebase", "info");
     if (result.status === "conflict") ctx.ui.notify(`Drift left merge.${changelogDriver.name}.driver as already configured (${result.existing}); the bundled driver was not installed`, "warning");
@@ -92,7 +96,7 @@ export default function drift(pi: ExtensionAPI) {
 
   const describeSync = (sync: ChangelogSync) =>
     sync.status === "written" ? "CHANGELOG.md regenerated" : sync.status === "unchanged" ? "CHANGELOG.md already current" :
-    sync.status === "unrecognised" ? `CHANGELOG.md not regenerated: ${sync.detail}` : sync.status === "skipped" ? `CHANGELOG.md not regenerated: ${sync.detail}` : "changelog generation is off";
+    sync.status === "unrecognised" ? `CHANGELOG.md not regenerated: ${sync.detail}` : sync.status === "skipped" ? `CHANGELOG.md not regenerated: ${sync.detail}` : `changelog generation is off (${sync.detail})`;
 
   function report(message: string, ctx?: ExtensionContext) {
     const content = `Drift could not establish/update its record: ${message}\nFix the cause and reload/start a fresh Pi thread. No successful recording is claimed.`;
@@ -178,7 +182,7 @@ export default function drift(pi: ExtensionAPI) {
   // The user's choice to generate CHANGELOG.md from fragments. A command, never a model turn.
   const changelogRequests = ["on", "off", "status"] as const;
   pi.registerCommand("drift-changelog", {
-    description: "Generate this repo's CHANGELOG.md from changelog.d/ fragments: on, off or status (no argument toggles)",
+    description: "Override whether CHANGELOG.md is generated from changelog.d/ (automatic with an origin remote): on, off or status",
     getArgumentCompletions: (prefix) => changelogRequests.filter((value) => value.startsWith(prefix.trim())).map((value) => ({ value, label: value })),
     handler: async (args, ctx) => {
       try {
@@ -233,6 +237,10 @@ export default function drift(pi: ExtensionAPI) {
       if (failure) throw new Error(failure);
       content = records ? await records.context() :
         "Drift automation is inactive: Pi's working directory is not inside a Git repository. Do not guess a nested repository or claim a measured baseline. Open the intended repo to use drift_publish; portable skill instructions remain available.";
+      // The model learns whether to pass a changelog entry from context, not by trying and being refused.
+      if (records && (await changelogState(records.repo)).enabled) {
+        content += "\nChangelog: CHANGELOG.md is generated from changelog.d/ here. Pass changelog: { section, text } to drift_publish for a user-visible change; never edit the generated region of CHANGELOG.md.";
+      }
     } catch (error) {
       failure = errorText(error);
       report(failure, ctx);
@@ -304,7 +312,7 @@ export default function drift(pi: ExtensionAPI) {
       changelog: Type.Optional(Type.Object({
         section: StringEnum(sections),
         text: Type.String({ description: "One Markdown bullet describing the user-visible change; no blank lines", maxLength: 4096 }),
-      }, { additionalProperties: false, description: "The change's changelog entry, written as a changelog.d/ fragment beside the artifact. Only when the repo has run /drift-changelog on; omit otherwise." })),
+      }, { additionalProperties: false, description: "The change's changelog entry, written as a changelog.d/ fragment beside the artifact. Only when context says the changelog is generated here; omit otherwise." })),
     }, { additionalProperties: false }),
     async execute(_id, params, signal, _update, ctx) {
       if (signal?.aborted) throw new Error("Publication cancelled before starting");

@@ -138,9 +138,10 @@ is named. Nothing is staged or committed. In other hosts, make the same edits
 and commit them.
 
 **Many threads, one index.** A tracked index is committed, so two worktrees'
-copies meet at every rebase. `/drift-track-artifacts on` also writes
-`drift/INDEX.md merge=drift-index` to `.gitattributes`, and at session start
-the Pi extension installs the matching driver in the clone
+copies meet at every rebase. In a tracked repository with an `origin` remote,
+Drift writes `drift/INDEX.md merge=drift-index` to `.gitattributes` at session
+start (`/drift-track-artifacts on` writes it too) and installs the matching
+driver in the clone
 (`build-index.py --merge`): rows from both sides are unioned, reordered by
 timestamp and renumbered, so the rebase never stops on the index. Without the
 driver git falls back to its normal text merge; nothing else changes. In
@@ -161,15 +162,18 @@ with the branch.
 ### Changelog from fragments (per repository)
 
 Many agents editing one `[Unreleased]` section conflict on every rebase and lose
-entries to "keep mine" resolutions. `/drift-changelog on` makes `CHANGELOG.md`
-a generated file instead: one fragment per change in `changelog.d/`, named after
-the artifact so names never collide, and the file rebuilt between two marker
-comments at each publication and session start, with the project's own text
-outside the markers preserved byte for byte. Entries are grouped by the first
+entries to "keep mine" resolutions. That can only happen where two copies of the
+file can meet in git, so the trigger is a shared branch: in a repository with an
+`origin` remote and a root `CHANGELOG.md`, Drift makes the changelog a generated
+file at the first session start or publication, with no command. One fragment per
+change goes in `changelog.d/`, named after the artifact so names never collide,
+and the file is rebuilt between two marker comments at each publication and
+session start, with the project's own text outside the markers preserved byte
+for byte. A local-only repository has one writer and is left alone. Entries are grouped by the first
 version tag whose tree contains the fragment (`v*` by default; configurable as
 `changelog.tags` in `.drift.json`), so releases need no step of their own;
 untagged entries are `[Unreleased]`, and a repository without version tags is
-grouped by day. `on` also writes `CHANGELOG.md merge=drift-changelog` to
+grouped by day. Adoption also writes `CHANGELOG.md merge=drift-changelog` to
 `.gitattributes`; the matching driver, installed per clone at session start,
 unions entries by id on rebase and three-way merges the hand-written parts.
 
@@ -190,7 +194,10 @@ A bullet edited in `CHANGELOG.md` that keeps its trailing id comment is written
 back to its fragment. A line added to the generated region without an id is
 reported with its line number and left alone; regeneration skips until it is
 moved into a fragment or deleted. Drift does not guess at text it did not
-write. `on` refuses a repository that already uses changesets or towncrier.
+write. A repository that already uses changesets or towncrier is left to its own
+convention. `.drift.json` overrides the trigger: `"changelog": false` keeps a
+shared repository's changelog hand-written, `true` (or `{ "tags": ... }`) forces
+generation in a local one; `/drift-changelog on|off|status` sets or explains it.
 `changelog.d/README.md` states the convention for anything else that reads the
 repository. Nothing is staged or committed.
 

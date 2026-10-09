@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { changelogState } from "./changelog.ts";
 import { artifactStore, driftConfig, exists, git, mergeInProgress, python, run, withLock, type DriftConfig, type Records } from "./state.ts";
 
 const indexBuilder = fileURLToPath(new URL("../scripts/build-index.py", import.meta.url));
@@ -66,7 +67,7 @@ async function verifyDerived(repo: string, config: DriftConfig): Promise<void> {
       }
     }
   }
-  if (config.changelog !== false) {
+  if ((await changelogState(repo)).enabled) {
     try { await run(await python(), ["-I", changelogBuilder, repo, "--check"], repo); }
     catch (error) {
       const text = String(error).replace(/^.*?failed: /, "").trim();

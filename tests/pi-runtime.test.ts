@@ -375,6 +375,22 @@ test("actual Pi lands a completed interval itself where the repo opts in, then c
   assert.ok(!f.requests.slice(requestsBefore).some((request) => JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + secondRecord.completed.path + "`")), "a held landing must not continue");
 });
 
+test("actual Pi adopts a shared repository's changelog at session start and publishes fragments without a command", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+  const f = await fixture(t);
+  await withOrigin(f);
+  await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
+  const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  await until(() => fs.stat(join(f.repo, "changelog.d", "README.md")).catch(() => undefined), "session start did not adopt the changelog");
+  assert.match(await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8"), /<!-- drift:changelog/);
+  await client.prompt("PUBLISH_HANDOFF_CHANGELOG");
+  const record = await f.readRecord(state.sessionId);
+  assert.equal(record.completed?.fragment, "changelog.d/runtime-001-fixture.md");
+  assert.match(await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8"), /- Fixture change\. <!-- changelog\.d\/runtime-001-fixture\.md/);
+  // The model learns from context that the changelog is generated here.
+  assert.ok(f.requests.some((request) => JSON.stringify(request).includes("CHANGELOG.md is generated from changelog.d/ here")));
+});
+
 test("actual Pi automatically continues a profiled handoff after a fresh context compaction", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
   const state = await client.request({ type: "get_state" });

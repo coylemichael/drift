@@ -113,7 +113,8 @@ export function mainWorktree(repo: string): Promise<string | undefined> {
 /** Repository-root `.drift.json`, validated. Every field is an explicit, host-neutral project choice; nothing is inferred. */
 export interface DriftConfig {
   trackArtifacts: boolean;
-  changelog: false | { tags: string };
+  /** `auto`: on when the repo has an origin remote and a CHANGELOG.md. `on`/`off`: the repo's explicit override. */
+  changelog: { mode: "auto" | "on" | "off"; tags: string };
   land: { auto: boolean; check: string[] } | undefined;
 }
 
@@ -149,9 +150,17 @@ export async function driftConfig(repo: string): Promise<DriftConfig> {
   const land = raw?.land as { auto?: boolean; check?: string | string[] } | undefined;
   return {
     trackArtifacts: (raw?.trackArtifacts as boolean | undefined) ?? false,
-    changelog: !changelog ? false : { tags: (typeof changelog === "object" && changelog.tags?.trim()) || "v*" },
+    changelog: {
+      mode: changelog === undefined ? "auto" : changelog === false ? "off" : "on",
+      tags: (typeof changelog === "object" && changelog.tags?.trim()) || "v*",
+    },
     land: land ? { auto: land.auto ?? false, check: land.check === undefined ? [] : Array.isArray(land.check) ? land.check : [land.check] } : undefined,
   };
+}
+
+/** A shared branch exists somewhere else: the trigger for everything that only matters when two copies of a file can meet. */
+export async function hasOrigin(repo: string): Promise<boolean> {
+  return Boolean((await git(repo, ["remote", "get-url", "origin"], true)).trim());
 }
 
 /** Write a partial update, keeping every other field. The existing file is validated before it is touched. */
