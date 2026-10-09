@@ -123,10 +123,24 @@ async function replace(from: string, to: string): Promise<void> {
   for (;;) {
     try { return await fs.rename(from, to); }
     catch (error: any) {
-      if (process.platform !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(error.code) || Date.now() >= deadline) throw error;
+      if (process.platform !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(error.code)) throw error;
+      if (Date.now() >= deadline) return overwrite(from, to, error);
       await delay(20);
     }
   }
+}
+
+/**
+ * A long-lived handle without delete sharing (an editor buffer, e.g. Zed holding a file the agent read) blocks
+ * rename-over indefinitely but usually still permits writes. Rewrite in place; callers already hold the lock.
+ */
+async function overwrite(from: string, to: string, cause: Error): Promise<void> {
+  const text = await fs.readFile(from);
+  let file;
+  try { file = await fs.open(to, "r+"); }
+  catch { throw cause; }
+  try { await file.truncate(0); await file.write(text, 0, text.length, 0); await file.sync(); }
+  finally { await file.close(); }
 }
 
 /** Cross-process exclusion. Never guess whether a timed-out lock is abandoned. */

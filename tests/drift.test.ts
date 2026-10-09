@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { delta, fingerprint, git, python, Records, run, safePath, withLock } from "../lib/state.ts";
+import { atomicWrite, delta, fingerprint, git, python, Records, run, safePath, withLock } from "../lib/state.ts";
 import { publish } from "../lib/artifacts.ts";
 import type { ArtifactInput } from "../lib/artifacts.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
@@ -524,4 +524,28 @@ test("changed source files are surfaced as unpublished until a handoff completes
   const next = await store.context();
   assert.doesNotMatch(next, /Unpublished work/);
   assert.match(next, /Previous interval handoff: drift\/TEST-1\//);
+});
+
+test("a record held open without delete sharing (an editor buffer) is still updated", { skip: process.platform !== "win32" }, async (t) => {
+  const { dir, repo, agent } = await fixture(t);
+  const store = (await Records.open(repo, "session-a", agent))!;
+  const ready = join(dir, "held");
+  // FileShare.ReadWrite omits Delete, which is what blocks rename-over; Node's own handles always share delete.
+  const holder = spawn("powershell", ["-NoProfile", "-NonInteractive", "-Command",
+    "$f = [IO.File]::Open($env:DRIFT_HELD, 'Open', 'Read', 'ReadWrite'); New-Item $env:DRIFT_READY | Out-Null; Start-Sleep 60; $f.Close()"],
+    { env: { ...process.env, DRIFT_HELD: store.file, DRIFT_READY: ready }, stdio: "ignore" });
+  const exited = new Promise((resolve) => holder.on("exit", resolve));
+  try {
+    const deadline = Date.now() + 20_000;
+    while (!await fs.stat(ready).catch(() => undefined)) {
+      assert.ok(Date.now() < deadline && holder.exitCode === null, "holder did not open the record");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    await atomicWrite(store.file, "{\"replaced\":true}\n");
+    assert.equal(await fs.readFile(store.file, "utf8"), "{\"replaced\":true}\n");
+    assert.deepEqual((await fs.readdir(join(store.file, ".."))).filter((name) => name.endsWith(".tmp")), []);
+  } finally {
+    holder.kill(); // Before the fixture removal runs, or Windows cannot delete the held file.
+    await exited;
+  }
 });
