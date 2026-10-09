@@ -18,6 +18,8 @@ This skill is the single entrypoint for Drift. Do not split Drift into separate 
 
 If the user invokes Drift but the mode is unclear, ask whether they want research, planning, execution, or handoff/resume.
 
+If the user asks to pick up or continue without naming an artifact, use the newest row of `drift/INDEX.md` (bring it up to date first; see "At Session Start"). Route it by kind: an `in-progress` handoff resumes through `handoff.md`, a `pending` or `in-progress` plan runs through `execute.md`, and research goes to `plan.md`. If that newest artifact is a `complete` handoff or plan, or is `superseded`, there is no open work: say so, show the last few index rows and ask what to pick up. Do not reach back for an older open artifact. A named artifact always wins over the default.
+
 When routing to a prompt file:
 
 1. Treat that file as the active workflow instructions.

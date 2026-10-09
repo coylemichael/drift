@@ -6,6 +6,10 @@ This overlay applies when the `drift_publish` tool is available. It says only wh
 
 The Pi extension binds Drift's advertised skill and explicit `/skill:drift` requests to the skill shipped alongside that extension. A stale standalone copy may still appear in Pi's discovery inventory, but it does not supply the runtime workflow. Do not delete old skill checkouts or edit user settings to resolve that collision. Other skills and explicitly disabled discovery are preserved.
 
+## `/drift`
+
+`/drift` is the user's entry point on Pi. The extension chooses the artifact in code before the turn reaches you, then hands you an ordinary Drift skill request: with nothing named, the newest artifact in `drift/INDEX.md` routed by the pick-up rule in `SKILL.md`; with a link, path or file name, that artifact plus the user's words; with anything else, the request as typed. Trust the named path in that request and do not re-pick.
+
 ## Publishing with `drift_publish`
 
 Use `drift_publish` to save research, plan and handoff artifacts. First read the relevant workflow file and write its required Markdown sections. Pass the confirmed feature, artifact kind, a safe lowercase slug, the body **without frontmatter**, and any source/previous/related artifact paths. References are repository-relative `drift/...` paths.

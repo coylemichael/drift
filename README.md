@@ -193,9 +193,27 @@ decision. It gives the evidence, bounded options, and one clear question.
 Routine implementation choices remain with the agent and are recorded in the
 artifact. A pending user decision never triggers a profiled automatic handoff.
 
+## Picking up work: `/drift`
+
+On Pi, `/drift` is the one entry point:
+
+| You type | Drift does |
+|---|---|
+| `/drift` | Picks the newest artifact in `drift/INDEX.md`: resumes an `in-progress` handoff, executes a `pending` plan, plans from research. If it is already `complete`, it says so and asks rather than reopening it. |
+| `/drift <link, path or file name>` | Picks up that artifact; anything else you write is passed on as your note. Zed `@` mentions and Windows paths work. |
+| `/drift <anything else>` | An ordinary Drift request, like `/skill:drift`. |
+
+The choice is made in code, not by the model, and is announced ("Drift: picking up …").
+It keeps the current model; `drift-continue <handoff>` is the variant that switches
+to the handoff's `next_session_profile`. In Zed, `/drift` appears in the `/` menu
+as a Pi prompt command and needs no adapter patch. Other hosts follow the same
+pick-up rule from `SKILL.md` when you ask to "pick up" without naming an artifact.
+
 ## What Pi automates
 
 - A durable record keyed to Pi's real session ID and Git repository.
+- `/drift`, which picks up the newest artifact (or the one you name) and
+  routes it to the right workflow.
 - A current `drift/INDEX.md` at session start: when the repo already holds
   artifacts (for example, written by Claude or Zed's native agent) and the
   index is missing or stale, it is rebuilt before the record's baseline is taken.

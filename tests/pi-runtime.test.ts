@@ -268,6 +268,21 @@ test("actual Pi /drift-track-artifacts is an extension command that toggles trac
   assert.deepEqual(JSON.parse(await fs.readFile(join(f.repo, ".drift.json"), "utf8")), { trackArtifacts: false });
 });
 
+test("actual Pi /drift picks up the newest handoff through the bundled skill as an ordinary turn", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+  const f = await fixture(t); const client = f.rpc();
+  await fs.mkdir(join(f.repo, "drift/runtime"), { recursive: true });
+  await fs.writeFile(join(f.repo, "drift/runtime/001-handoff-latest.md"), '---\ndate: "2026-10-09T12:00:00+01:00"\nfeature: "runtime"\nsequence: "001"\ntype: "handoff"\nstatus: "in-progress"\n---\n\n## Next Steps\nx\n');
+  const listed = (await client.request({ type: "get_commands" })).commands.find((command: any) => command.name === "drift");
+  assert.equal(listed?.source, "prompt"); // Advertised to Zed's slash menu like any prompt template.
+  const before = f.requests.length;
+  await client.prompt("/drift");
+  const request = await until(() => f.requests.slice(before).find((r) => JSON.stringify(r).includes("Continue the work recorded in the Drift handoff at `drift/runtime/001-handoff-latest.md`")), "/drift did not send the pickup prompt");
+  const sent = JSON.stringify(request);
+  assert.ok(sent.includes("Skill Router"), "the bundled Drift skill was not expanded"); // The binding expanded /skill:drift.
+  assert.ok(!sent.includes("/skill:drift Continue"), "the skill command reached the model unexpanded");
+  assert.ok(client.events.some((event: any) => event.type === "extension_ui_request" && event.method === "notify" && /picking up drift\/runtime\/001-handoff-latest\.md/.test(event.message)));
+});
+
 test("actual Pi automatically continues a profiled handoff after a fresh context compaction", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
   const state = await client.request({ type: "get_state" });

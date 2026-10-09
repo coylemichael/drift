@@ -8,10 +8,11 @@
   "engines": { "node": ">=22.18.0" },
   "pi": {
     "extensions": ["./extensions/drift.ts"],
-    "skills": ["./skills/drift/SKILL.md"]
+    "skills": ["./skills/drift/SKILL.md"],
+    "prompts": ["./prompts"]
   },
   "files": [
-    "skills/", ".claude-plugin/",
+    "skills/", "prompts/", ".claude-plugin/",
     "extensions/", "lib/", "scripts/build-index.py", "README.md", "CHANGELOG.md", "assets/"
   ],
   "peerDependencies": {

@@ -3,11 +3,26 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { publish, setArtifactTracking, syncIndex, type TrackingRequest } from "../lib/artifacts.ts";
 import { repoRoot, Records } from "../lib/state.ts";
+import { pickup } from "../lib/pickup.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
 import { registerSkillBinding } from "./skill-binding.ts";
 
 /** Pi owns lifecycle invocation; the portable skill still owns the workflow. */
 export default function drift(pi: ExtensionAPI) {
+  // `/drift [artifact | request]`, before the skill binding so it expands the /skill:drift request this produces.
+  // A rewrite rather than a command: the result is an ordinary model turn, which every host completes normally.
+  pi.on("input", async (event, ctx) => {
+    const match = /^\/drift(?:\s+([\s\S]*))?$/.exec(event.text.trim());
+    if (!match) return { action: "continue" };
+    try {
+      const { text, artifact } = await pickup(await repoRoot(ctx.cwd), match[1] ?? "");
+      if (artifact) ctx.ui.notify(`Drift: picking up ${artifact}`, "info");
+      return { action: "transform", text };
+    } catch (error) {
+      ctx.ui.notify(`Drift could not choose an artifact: ${error instanceof Error ? error.message : String(error)}`, "warning");
+      return { action: "transform", text: `/skill:drift ${match[1] ?? ""}`.trim() };
+    }
+  });
   registerSkillBinding(pi);
   let key = "";
   let ready: Promise<Records | undefined> | undefined;
