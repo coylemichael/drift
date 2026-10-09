@@ -1,8 +1,10 @@
 import * as fs from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { artifactPathPattern, atomicWrite, exists, git, hash, now, python, Records, run, safePath, withLock } from "./state.ts";
+import { artifactPathPattern, artifactStore, atomicWrite, exists, git, hash, mergeInProgress, now, python, Records, run, safePath, trackArtifacts, withLock } from "./state.ts";
 import type { Pending, Receipt, RecordData } from "./state.ts";
+export { trackArtifacts } from "./state.ts";
+import { hasAttribute, indexAttributeLine, indexDriver } from "./git-drivers.ts";
 
 export interface ArtifactInput {
   feature: string;
@@ -82,23 +84,7 @@ async function validate(repo: string, input: ArtifactInput): Promise<ArtifactInp
   };
 }
 
-/** Host-neutral, repo-local opt-in. Never infer consent from tracked history. */
-async function trackArtifacts(repo: string): Promise<boolean> {
-  const path = await safePath(repo, join(repo, ".drift.json"));
-  if (!(await exists(path))) return false;
-  const stat = await fs.stat(path);
-  if (!stat.isFile() || stat.size > 64 * 1024) throw new Error(`Drift configuration must be a regular file of at most 64 KiB: ${path}`);
-  let input: unknown;
-  try { input = JSON.parse(await fs.readFile(path, "utf8")); }
-  catch { throw new Error(`Invalid JSON in Drift configuration: ${path}`); }
-  if (!input || typeof input !== "object" || Array.isArray(input) ||
-      Object.keys(input).some((key) => key !== "trackArtifacts") ||
-      (Object.hasOwn(input, "trackArtifacts") && typeof (input as any).trackArtifacts !== "boolean")) {
-    throw new Error(`Drift configuration must be an object with only an optional boolean trackArtifacts: ${path}`);
-  }
-  return (input as { trackArtifacts?: boolean }).trackArtifacts ?? false;
-}
-
+/** `root` is the checkout whose drift/ is in use (see artifactStore), so the ignore rule lands beside the folder. */
 async function ensureArtifactPolicy(repo: string, paths: string[], tracked: boolean): Promise<void> {
   if (!tracked) {
     const path = await safePath(repo, join(repo, ".gitignore"));
@@ -159,11 +145,14 @@ export async function setArtifactTracking(repo: string, request: TrackingRequest
   const tracked = request === "toggle" ? !current : request === "on";
   const config = await safePath(repo, join(repo, ".drift.json"));
   const ignore = await safePath(repo, join(repo, ".gitignore"));
+  const attributes = await safePath(repo, join(repo, ".gitattributes"));
   const originalConfig = await exists(config) ? await fs.readFile(config, "utf8") : undefined;
   const originalIgnore = await exists(ignore) ? await fs.readFile(ignore, "utf8") : undefined;
+  const originalAttributes = await exists(attributes) ? await fs.readFile(attributes, "utf8") : undefined;
   const modeOf = async (path: string) => await exists(path) ? (await fs.stat(path)).mode & 0o777 : 0o644;
   const changes: string[] = [];
   let nextIgnore = originalIgnore;
+  let nextAttributes = originalAttributes;
   if (tracked) {
     const lines = originalIgnore?.split(/(?<=\n)/) ?? [];
     const kept = lines.filter((line) => !driftIgnoreRules.has(line.trim()));
@@ -176,6 +165,13 @@ export async function setArtifactTracking(repo: string, request: TrackingRequest
     nextIgnore = text + (text && !text.endsWith("\n") ? "\n" : "") + "/drift/\n";
     changes.push("added /drift/ to .gitignore");
   }
+  // A committed index meets other threads' copies at rebase; the attribute names the driver that merges them.
+  // Committed with the repo and inert until a clone installs the command, so it stays in place on "off".
+  if (tracked && !hasAttribute(originalAttributes ?? "", indexDriver.path, indexDriver.name)) {
+    const text = originalAttributes ?? "";
+    nextAttributes = text + (text && !text.endsWith("\n") ? "\n" : "") + indexAttributeLine + "\n";
+    changes.push(`added "${indexAttributeLine}" to .gitattributes`);
+  }
   // Off writes false only over an explicit true: a missing file already means the default.
   const writeConfig = tracked !== current && (tracked || originalConfig !== undefined);
   if (writeConfig) {
@@ -183,16 +179,17 @@ export async function setArtifactTracking(repo: string, request: TrackingRequest
     changes.unshift(`set trackArtifacts to ${tracked} in .drift.json`);
   }
   if (nextIgnore !== originalIgnore) await atomicWrite(ignore, nextIgnore!, await modeOf(ignore));
+  if (nextAttributes !== originalAttributes) await atomicWrite(attributes, nextAttributes!, await modeOf(attributes));
   const problem = await policyProblem(repo, tracked);
   if (problem) {
-    if (writeConfig) {
-      if (originalConfig === undefined) await fs.rm(config, { force: true });
-      else await atomicWrite(config, originalConfig, await modeOf(config));
-    }
-    if (nextIgnore !== originalIgnore) {
-      if (originalIgnore === undefined) await fs.rm(ignore, { force: true });
-      else await atomicWrite(ignore, originalIgnore, await modeOf(ignore));
-    }
+    const restore = async (path: string, original: string | undefined, changed: boolean) => {
+      if (!changed) return;
+      if (original === undefined) await fs.rm(path, { force: true });
+      else await atomicWrite(path, original, await modeOf(path));
+    };
+    await restore(config, originalConfig, writeConfig);
+    await restore(ignore, originalIgnore, nextIgnore !== originalIgnore);
+    await restore(attributes, originalAttributes, nextAttributes !== originalAttributes);
     throw new Error(`${problem}. Nothing was changed; resolve that rule, then run /drift-track-artifacts ${tracked ? "on" : "off"} again.`);
   }
   const summary = changes.length ? `: ${changes.join("; ")}` : "; nothing needed changing";
@@ -200,7 +197,8 @@ export async function setArtifactTracking(repo: string, request: TrackingRequest
     return [
       `Drift artifacts are now tracked${summary}.`,
       "Nothing was staged or committed. Review drift/ for anything that should not be shared, then commit:",
-      "  git add .drift.json .gitignore drift && git commit -m \"chore: track Drift artifacts\"",
+      "  git add .drift.json .gitignore .gitattributes drift && git commit -m \"chore: track Drift artifacts\"",
+      "In clones where Drift runs, drift/INDEX.md now merges itself on rebase; the merge driver is installed at session start.",
     ].join("\n");
   }
   const committed = (await git(repo, ["ls-files", "--", "drift"])).split("\n").filter(Boolean).length;
@@ -219,28 +217,48 @@ export async function setArtifactTracking(repo: string, request: TrackingRequest
  * and never edits .gitignore: a policy mismatch is reported, not repaired. Returns whether it wrote.
  */
 export async function syncIndex(repo: string, interpreter?: string): Promise<boolean> {
-  const drift = await safePath(repo, join(repo, "drift"));
+  const tracked = await trackArtifacts(repo);
+  const { root } = await artifactStore(repo, tracked);
+  const drift = await safePath(root, join(root, "drift"));
   if (!(await exists(drift))) return false;
+  // Mid-rebase the file may hold conflict markers the driver is about to resolve; writing now would race it.
+  if (await mergeInProgress(root)) return false;
   // Same scope as the renderer, which refuses an artifact-free tree: drift/**/*.md except any INDEX.md.
   const names = await fs.readdir(drift, { recursive: true });
   if (!names.some((name) => name.endsWith(".md") && basename(name) !== "INDEX.md")) return false;
-  const index = await safePath(repo, join(drift, "INDEX.md"));
-  const lock = await safePath(repo, join(drift, ".publish.lock"));
+  const index = await safePath(root, join(drift, "INDEX.md"));
+  const lock = await safePath(root, join(drift, ".publish.lock"));
   return withLock(lock, async () => {
-    const content = await run(interpreter ?? await python(), ["-I", builder, drift, "--stdout"], repo);
+    const content = await run(interpreter ?? await python(), ["-I", builder, drift, "--stdout"], root);
     if (!/^\| \d+ \|/m.test(content)) return false;
     if (await exists(index) && await fs.readFile(index, "utf8") === content) return false;
-    await checkArtifactPolicy(repo, index, await trackArtifacts(repo));
+    await checkArtifactPolicy(root, index, tracked);
     const mode = await exists(index) ? (await fs.stat(index)).mode & 0o777 : 0o644;
     await atomicWrite(index, content, mode);
     return true;
   });
 }
 
-async function prepare(repo: string, record: RecordData, input: ArtifactInput, digest: string): Promise<Pending> {
-  const folder = await safePath(repo, join(repo, "drift", input.feature));
+const sequenceOf = (name: string) => /^(\d{3})-.*\.md$/.exec(basename(name))?.[1];
+
+/** Sequence numbers a feature already uses on any remote-tracking ref, as of the last fetch. No network. */
+async function remoteSequenceNumbers(repo: string, feature: string): Promise<number[]> {
+  const refs = (await git(repo, ["for-each-ref", "--format=%(refname)", "refs/remotes"], true)).split("\n").filter(Boolean);
+  const numbers: number[] = [];
+  for (const ref of refs) {
+    const names = (await git(repo, ["ls-tree", "--name-only", ref, "--", `drift/${feature}/`], true)).split("\n");
+    for (const name of names) { const sequence = sequenceOf(name); if (sequence) numbers.push(Number(sequence)); }
+  }
+  return numbers;
+}
+
+/** `repo` is the worktree doing the work (its branch and commit are recorded); `root` is where drift/ lives. */
+async function prepare(repo: string, root: string, record: RecordData, input: ArtifactInput, digest: string, tracked: boolean): Promise<Pending> {
+  const folder = await safePath(root, join(root, "drift", input.feature));
   await fs.mkdir(folder, { recursive: true });
-  const numbers = (await fs.readdir(folder)).map((name) => /^(\d{3})-.*\.md$/.exec(name)).filter(Boolean).map((match) => Number(match![1]));
+  const numbers = (await fs.readdir(folder)).map(sequenceOf).filter((sequence): sequence is string => Boolean(sequence)).map(Number);
+  // Committed artifacts travel: a number another worktree already landed upstream is taken even if it has not been pulled yet.
+  if (tracked) numbers.push(...await remoteSequenceNumbers(repo, input.feature));
   const number = Math.max(0, ...numbers) + 1;
   if (number > 999) throw new Error("Feature has exhausted its three-digit sequence; choose a new feature explicitly");
   const sequence = String(number).padStart(3, "0");
@@ -273,23 +291,24 @@ function validatePending(record: RecordData, pending: Pending): void {
 
 /** Code, not the model, supplies identity/frontmatter and completes the interval. */
 export async function publish(store: Records, raw: ArtifactInput, interpreter?: string): Promise<Receipt> {
-  const input = await validate(store.repo, raw);
   const tracked = await trackArtifacts(store.repo);
-  const drift = await safePath(store.repo, join(store.repo, "drift"));
+  const { root } = await artifactStore(store.repo, tracked);
+  const input = await validate(root, raw);
+  const drift = await safePath(root, join(root, "drift"));
   await fs.mkdir(drift, { recursive: true });
-  const index = await safePath(store.repo, join(drift, "INDEX.md"));
-  const lock = await safePath(store.repo, join(drift, ".publish.lock"));
+  const index = await safePath(root, join(drift, "INDEX.md"));
+  const lock = await safePath(root, join(drift, ".publish.lock"));
   return store.update(async (record) => withLock(lock, async () => {
     const digest = hash(JSON.stringify({ interval: record.intervalId, input }));
     const receipt = record.receipts.find((item) => item.digest === digest);
     if (record.pending && record.pending.digest !== digest) throw new Error(`Incomplete publication ${record.pending.path}; retry the SAME input before publishing another artifact`);
     if (record.completed && !receipt) throw new Error("This work interval already has a handoff; start a new working prompt before publishing more");
-    const pending = record.pending ?? (receipt ? undefined : await prepare(store.repo, record, input, digest));
+    const pending = record.pending ?? (receipt ? undefined : await prepare(store.repo, root, record, input, digest, tracked));
     const relativePath = pending?.path ?? receipt!.path;
     if (!artifactPathPattern.test(relativePath)) throw new Error("Invalid publication path in record");
-    const path = await safePath(store.repo, resolve(store.repo, relativePath));
+    const path = await safePath(root, resolve(root, relativePath));
     if (!relativePath.startsWith(`drift/${input.feature}/`)) throw new Error("Mismatched publication receipt");
-    await ensureArtifactPolicy(store.repo, [path, index], tracked);
+    await ensureArtifactPolicy(root, [path, index], tracked);
     if (pending) {
       validatePending(record, pending);
       record.pending = pending;
@@ -308,9 +327,9 @@ export async function publish(store: Records, raw: ArtifactInput, interpreter?: 
       throw new Error(`Published artifact was removed or changed: ${relativePath}; receipt retained`);
     }
     // One shared renderer; no second TS index implementation. stdout permits atomic replacement.
-    const content = await run(interpreter ?? await python(), ["-I", builder, drift, "--stdout"], store.repo);
+    const content = await run(interpreter ?? await python(), ["-I", builder, drift, "--stdout"], root);
     if (!content.includes(`](${relativePath.slice("drift/".length)})`)) throw new Error("Index renderer did not include the artifact");
-    await safePath(store.repo, index);
+    await safePath(root, index);
     const mode = await exists(index) ? (await fs.stat(index)).mode & 0o777 : 0o644;
     await atomicWrite(index, content, mode);
     if (await fs.readFile(index, "utf8") !== content) throw new Error("Index verification failed");

@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { artifactPathPattern, exists, safePath } from "./state.ts";
+import { artifactPathPattern, artifactStore, exists, safePath } from "./state.ts";
 
 export const profilePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -95,7 +95,8 @@ export async function readHandoffRoute(repo: string, artifact: string): Promise<
   if (!handoffPathPattern.test(artifact) || !artifactPathPattern.test(artifact)) {
     throw new Error("drift-continue requires a repository-relative Drift handoff path");
   }
-  const path = await safePath(repo, resolve(repo, artifact));
+  const { root } = await artifactStore(repo); // A private linked worktree's handoffs live in the main worktree's drift/.
+  const path = await safePath(root, resolve(root, artifact));
   const stat = await fs.stat(path);
   if (!stat.isFile()) throw new Error(`Drift handoff is not a regular file: ${artifact}`);
   if (stat.size > maxHandoffBytes) throw new Error(`Drift handoff exceeds ${maxHandoffBytes} bytes: ${artifact}`);

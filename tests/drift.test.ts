@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { atomicWrite, delta, fingerprint, git, python, Records, run, safePath, withLock } from "../lib/state.ts";
+import { artifactStore, atomicWrite, delta, fingerprint, git, mainWorktree, mergeInProgress, python, Records, run, safePath, withLock } from "../lib/state.ts";
+import { pickup } from "../lib/pickup.ts";
+import { attributeFor, hasAttribute, indexDriverCommand, installDriver } from "../lib/git-drivers.ts";
 import { publish, setArtifactTracking, syncIndex } from "../lib/artifacts.ts";
 import type { ArtifactInput } from "../lib/artifacts.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
@@ -594,9 +596,11 @@ test("/drift-track-artifacts on/off toggles only Drift's flag and ignore rule, n
   const ignore = "logs/*\n# Local research, plans and session handoffs.\n/drift/\nbuild/\n";
   await fs.writeFile(join(repo, ".gitignore"), ignore);
   assert.match(await setArtifactTracking(repo, "status"), /are ignored \(the default\)\.$/);
-  assert.match(await setArtifactTracking(repo, "toggle"), /now tracked: set trackArtifacts to true in \.drift\.json; removed 1 drift\/ rule/);
+  await fs.writeFile(join(repo, ".gitattributes"), "*.png binary\n");
+  assert.match(await setArtifactTracking(repo, "toggle"), /now tracked: set trackArtifacts to true in \.drift\.json; removed 1 drift\/ rule\(s\) from \.gitignore; added "drift\/INDEX\.md merge=drift-index" to \.gitattributes/);
   assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { trackArtifacts: true });
   assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), "logs/*\n# Local research, plans and session handoffs.\nbuild/\n");
+  assert.equal(await fs.readFile(join(repo, ".gitattributes"), "utf8"), "*.png binary\ndrift/INDEX.md merge=drift-index\n");
   assert.equal(await git(repo, ["diff", "--cached", "--name-only"]), "");
   assert.match(await setArtifactTracking(repo, "on"), /now tracked; nothing needed changing/);
   assert.match(await setArtifactTracking(repo, "status"), /are tracked: trackArtifacts is true/);
@@ -614,6 +618,7 @@ test("/drift-track-artifacts on/off toggles only Drift's flag and ignore rule, n
   assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), "logs/*\n# Local research, plans and session handoffs.\nbuild/\n/drift/\n");
   assert.equal((await git(repo, ["ls-files", "--", "drift"])).trim().split("\n").length, 2); // Still tracked: the user decides.
   assert.match(await setArtifactTracking(repo, "off"), /now ignored; nothing needed changing/);
+  assert.equal(await fs.readFile(join(repo, ".gitattributes"), "utf8"), "*.png binary\ndrift/INDEX.md merge=drift-index\n"); // Inert without the driver; stays.
 });
 
 test("/drift-track-artifacts restores both files and names the rule that defeats the choice", async (t) => {
@@ -623,6 +628,7 @@ test("/drift-track-artifacts restores both files and names the rule that defeats
   await assert.rejects(setArtifactTracking(repo, "on"), /Git still ignores drift\/INDEX\.md because of rule "\*\.md" in \.gitignore\. Nothing was changed/);
   assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), ignore);
   await assert.rejects(fs.stat(join(repo, ".drift.json")), { code: "ENOENT" });
+  await assert.rejects(fs.stat(join(repo, ".gitattributes")), { code: "ENOENT" }); // The attribute is rolled back with the rest.
 
   await fs.writeFile(join(repo, ".gitignore"), "/drift/\n!/drift/\n"); // An exception after Drift's own rule.
   await assert.rejects(setArtifactTracking(repo, "off"), /Git does not ignore drift\/INDEX\.md; an exception such as !\/drift\/ re-includes it\. Nothing was changed/);
@@ -632,4 +638,105 @@ test("/drift-track-artifacts restores both files and names the rule that defeats
   await fs.writeFile(join(repo, ".drift.json"), '{"trackArtifacts":"yes"}');
   await assert.rejects(setArtifactTracking(repo, "on"), /Drift configuration/); // Invalid config is reported, not overwritten.
   assert.equal(await fs.readFile(join(repo, ".drift.json"), "utf8"), '{"trackArtifacts":"yes"}');
+});
+
+test("the index merge driver installs once per clone with a forward-slash path and never replaces a foreign driver", async (t) => {
+  const { repo } = await fixture(t);
+  assert.equal(await attributeFor(repo, "drift/INDEX.md"), undefined);
+  await fs.writeFile(join(repo, ".gitattributes"), "drift/INDEX.md merge=drift-index\n");
+  assert.equal(await attributeFor(repo, "drift/INDEX.md"), "drift-index");
+  const command = await indexDriverCommand();
+  assert.match(command, /^\S+ -I \S+\/scripts\/build-index\.py --merge %O %A %B$/);
+  assert.ok(!command.includes("\\"), "git runs drivers through sh -c, which eats backslashes");
+  assert.deepEqual(await installDriver(repo, "drift-index", "Drift index row merge", command), { status: "installed" });
+  assert.equal((await git(repo, ["config", "--get", "merge.drift-index.driver"])).trim(), command);
+  assert.equal((await git(repo, ["config", "--get", "merge.drift-index.name"])).trim(), "Drift index row merge");
+  assert.deepEqual(await installDriver(repo, "drift-index", "Drift index row merge", command), { status: "present" });
+  await git(repo, ["config", "merge.drift-index.driver", "other-tool %O %A %B"]);
+  assert.deepEqual(await installDriver(repo, "drift-index", "Drift index row merge", command), { status: "conflict", existing: "other-tool %O %A %B" });
+  assert.equal((await git(repo, ["config", "--get", "merge.drift-index.driver"])).trim(), "other-tool %O %A %B");
+  assert.ok(hasAttribute("drift/INDEX.md  diff=x merge=drift-index\n", "drift/INDEX.md", "drift-index"));
+  assert.ok(!hasAttribute("drift/INDEX.md merge=drift-indexer\n", "drift/INDEX.md", "drift-index"));
+  assert.ok(!hasAttribute("drift/other.md merge=drift-index\n", "drift/INDEX.md", "drift-index"));
+});
+
+test("session-start index sync leaves a worktree alone while a merge is in progress", async (t) => {
+  const { repo } = await fixture(t);
+  await fs.writeFile(join(repo, ".gitignore"), "/drift/\n");
+  await fs.mkdir(join(repo, "drift", "TEST-1"), { recursive: true });
+  await fs.writeFile(join(repo, "drift", "TEST-1", "001-research-by-hand.md"), '---\ndate: "2026-08-28T20:30:00+01:00"\nfeature: "TEST-1"\nsequence: "001"\ntype: "research"\n---\n\n## Summary\nx\n');
+  assert.equal(await syncIndex(repo), true);
+  const index = join(repo, "drift", "INDEX.md");
+  await fs.writeFile(join(repo, ".git", "MERGE_HEAD"), "0".repeat(40) + "\n");
+  assert.equal(await mergeInProgress(repo), true);
+  await fs.writeFile(index, "stale\n");
+  assert.equal(await syncIndex(repo), false); // The driver owns the file until the merge ends.
+  assert.equal(await fs.readFile(index, "utf8"), "stale\n");
+  await fs.rm(join(repo, ".git", "MERGE_HEAD"));
+  assert.equal(await mergeInProgress(repo), false);
+  assert.equal(await syncIndex(repo), true);
+});
+
+test("tracked publication numbers past artifacts that exist only on a remote-tracking ref; private mode does not", async (t) => {
+  for (const tracked of [true, false]) {
+    const { repo, agent } = await fixture(t);
+    if (tracked) await fs.writeFile(join(repo, ".drift.json"), '{"trackArtifacts":true}\n');
+    // A teammate landed 003 upstream: our last fetch saw it, our checkout has not merged it.
+    await git(repo, ["checkout", "-qb", "upstream"]);
+    await fs.mkdir(join(repo, "drift", "TEST-1"), { recursive: true });
+    await fs.writeFile(join(repo, "drift", "TEST-1", "003-handoff-remote.md"), '---\ntype: "handoff"\n---\n');
+    await git(repo, ["add", "-f", "drift"]); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "remote"]);
+    const sha = (await git(repo, ["rev-parse", "HEAD"])).trim();
+    await git(repo, ["checkout", "-q", "-"]);
+    await git(repo, ["update-ref", "refs/remotes/origin/upstream", sha]);
+    await git(repo, ["branch", "-qD", "upstream"]);
+    await assert.rejects(fs.stat(join(repo, "drift", "TEST-1", "003-handoff-remote.md")), { code: "ENOENT" });
+    const store = (await Records.open(repo, "session-a", agent))!;
+    const receipt = await publish(store, input);
+    assert.equal(receipt.path, tracked ? "drift/TEST-1/004-handoff-fixture.md" : "drift/TEST-1/001-handoff-fixture.md");
+  }
+});
+
+test("private worktrees use the main worktree's drift/ and hold none of their own; tracked and legacy worktrees keep theirs", async (t) => {
+  const { repo, agent, dir } = await fixture(t);
+  await fs.writeFile(join(repo, ".gitignore"), "/drift/\n");
+  const wt = join(dir, "worktree a");
+  await git(repo, ["worktree", "add", "-q", "-b", "wt-a", wt]);
+  const wtRoot = await fs.realpath(wt);
+  assert.equal(await mainWorktree(wtRoot), repo);
+  assert.deepEqual(await artifactStore(repo), { root: repo, state: "own" });
+  assert.deepEqual(await artifactStore(wtRoot), { root: repo, state: "shared" });
+
+  const fromWorktree = (await Records.open(wtRoot, "session-wt", agent))!;
+  const first = await publish(fromWorktree, input);
+  assert.equal(first.path, "drift/TEST-1/001-handoff-fixture.md");
+  await fs.stat(join(repo, "drift", "TEST-1", "001-handoff-fixture.md")); // Landed in the main worktree's store.
+  await assert.rejects(fs.lstat(join(wtRoot, "drift")), { code: "ENOENT" }); // Nothing in the worktree for git to delete through.
+  assert.match(await fs.readFile(join(repo, "drift", "TEST-1", "001-handoff-fixture.md"), "utf8"), /^branch: "wt-a"$/m); // The worktree's own branch is recorded.
+  assert.match(await fromWorktree.context(), /artifacts for this repository live in .*drift, shared by every worktree; this linked worktree holds no drift\/ of its own/);
+  const fromMain = (await Records.open(repo, "session-main", agent))!;
+  assert.equal((await publish(fromMain, { ...input, slug: "second" })).path, "drift/TEST-1/002-handoff-second.md"); // One sequence.
+  assert.equal(await syncIndex(wtRoot), false); // Already in sync.
+  assert.equal((await pickup(wtRoot, "")).artifact, "drift/TEST-1/002-handoff-second.md"); // /drift sees the shared history.
+  await git(repo, ["worktree", "remove", "--force", wt]);
+  await fs.stat(join(repo, "drift", "TEST-1", "001-handoff-fixture.md")); // History survives the worktree.
+
+  // Tracked: a folder per worktree, since those artifacts travel with the branch.
+  const wtB = join(dir, "worktree b");
+  await git(repo, ["worktree", "add", "-q", "-b", "wt-b", wtB]);
+  const wtBRoot = await fs.realpath(wtB);
+  await fs.writeFile(join(wtBRoot, ".drift.json"), '{"trackArtifacts":true}\n');
+  assert.deepEqual(await artifactStore(wtBRoot), { root: wtBRoot, state: "own" });
+  const fromB = (await Records.open(wtBRoot, "session-b", agent))!;
+  await publish(fromB, input);
+  await fs.stat(join(wtBRoot, "drift", "TEST-1", "001-handoff-fixture.md"));
+
+  // Legacy: a private worktree that already holds its own artifacts keeps them and is reported, never merged.
+  const wtC = join(dir, "worktree c");
+  await git(repo, ["worktree", "add", "-q", "-b", "wt-c", wtC]);
+  const wtCRoot = await fs.realpath(wtC);
+  await fs.mkdir(join(wtCRoot, "drift", "OLD"), { recursive: true });
+  await fs.writeFile(join(wtCRoot, "drift", "OLD", "001-research-old.md"), '---\ntype: "research"\n---\n');
+  assert.deepEqual(await artifactStore(wtCRoot), { root: wtCRoot, state: "two-stores" });
+  assert.match(await (await Records.open(wtCRoot, "session-c", agent))!.context(), /holds its own drift\/ as well as the repository's shared store/);
 });

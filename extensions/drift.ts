@@ -1,8 +1,9 @@
 import { CONFIG_DIR_NAME, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { publish, setArtifactTracking, syncIndex, type TrackingRequest } from "../lib/artifacts.ts";
-import { repoRoot, Records } from "../lib/state.ts";
+import { publish, setArtifactTracking, syncIndex, trackArtifacts, type TrackingRequest } from "../lib/artifacts.ts";
+import { attributeFor, indexDriver, indexDriverCommand, installDriver } from "../lib/git-drivers.ts";
+import { artifactStore, repoRoot, Records } from "../lib/state.ts";
 import { pickup } from "../lib/pickup.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
 import { registerSkillBinding } from "./skill-binding.ts";
@@ -31,6 +32,7 @@ export default function drift(pi: ExtensionAPI) {
   let reported: string | undefined;
   let uiReported: string | undefined;
   const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+  const storesReported = new Set<string>();
 
   function store(ctx: ExtensionContext): Promise<Records | undefined> {
     const identity = `${ctx.cwd}\0${ctx.sessionManager.getSessionId()}`;
@@ -50,12 +52,29 @@ export default function drift(pi: ExtensionAPI) {
   async function refreshIndex(ctx: ExtensionContext) {
     try {
       const repo = await repoRoot(ctx.cwd);
-      if (repo && await syncIndex(repo)) ctx.ui.notify("Drift rebuilt drift/INDEX.md from the repository's artifacts", "info");
+      if (!repo) return;
+      // Where drift/ lives is also stated in every turn's context; the notice is for the first sight of an odd layout.
+      const { state } = await artifactStore(repo);
+      if (state === "two-stores" && !storesReported.has(repo)) ctx.ui.notify("Drift found artifacts in this worktree's own drift/ as well as the repository's shared store in its main worktree; both are kept and this worktree keeps using its own. Move the folder's contents into the main worktree's drift/ to share them.", "warning");
+      storesReported.add(repo);
+      if (await syncIndex(repo)) ctx.ui.notify("Drift rebuilt drift/INDEX.md from the repository's artifacts", "info");
+      await installIndexDriver(repo, ctx);
     } catch (error) {
       const content = `Drift could not refresh drift/INDEX.md: ${errorText(error)}\nRecording continues; the index is rebuilt on the next publication or session.`;
       pi.sendMessage({ customType: "drift-index", content, display: true });
       if (ctx.mode === "rpc") ctx.ui.notify(content, "warning");
     }
+  }
+
+  /**
+   * A tracked repo commits its index, so two threads' copies meet at rebase. The committed attribute names the
+   * driver; the command cannot be committed, so each clone gets it here. A foreign driver is left alone.
+   */
+  async function installIndexDriver(repo: string, ctx: ExtensionContext) {
+    if (!(await trackArtifacts(repo)) || await attributeFor(repo, indexDriver.path) !== indexDriver.name) return;
+    const result = await installDriver(repo, indexDriver.name, indexDriver.description, await indexDriverCommand());
+    if (result.status === "installed") ctx.ui.notify("Drift installed its drift/INDEX.md merge driver in this clone; other threads' index rows now merge on rebase", "info");
+    if (result.status === "conflict") ctx.ui.notify(`Drift left merge.${indexDriver.name}.driver as already configured (${result.existing}); the bundled driver was not installed`, "warning");
   }
 
   function report(message: string, ctx?: ExtensionContext) {

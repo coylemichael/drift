@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { createReadStream } from "node:fs";
 import * as fs from "node:fs/promises";
 import { devNull } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
@@ -83,6 +83,76 @@ export async function repoRoot(cwd: string): Promise<string | undefined> {
     if (String(error).includes("not a git repository")) return undefined;
     throw error;
   }
+}
+
+const worktreeRoots = new Map<string, Promise<string | undefined>>();
+/**
+ * The main worktree sharing this checkout's object store: the checkout itself for an ordinary clone, the parent
+ * of the common dir for a linked worktree, undefined for a linked worktree of a bare repository (no project root
+ * exists to hold a shared store) or for a non-repository.
+ */
+export function mainWorktree(repo: string): Promise<string | undefined> {
+  let pending = worktreeRoots.get(repo);
+  if (!pending) {
+    pending = (async () => {
+      let gitDir: string, common: string;
+      try {
+        gitDir = resolve(repo, (await git(repo, ["rev-parse", "--git-dir"])).trim());
+        common = resolve(repo, (await git(repo, ["rev-parse", "--git-common-dir"])).trim());
+      } catch { return undefined; }
+      if (await fs.realpath(gitDir) === await fs.realpath(common)) return repo;
+      const parent = dirname(common);
+      if (basename(common) !== ".git" || !(await exists(join(parent, ".git")))) return undefined;
+      return fs.realpath(parent);
+    })();
+    worktreeRoots.set(repo, pending);
+  }
+  return pending;
+}
+
+/** Host-neutral, repo-local opt-in. Never infer consent from tracked history. */
+export async function trackArtifacts(repo: string): Promise<boolean> {
+  const path = await safePath(repo, join(repo, ".drift.json"));
+  if (!(await exists(path))) return false;
+  const stat = await fs.stat(path);
+  if (!stat.isFile() || stat.size > 64 * 1024) throw new Error(`Drift configuration must be a regular file of at most 64 KiB: ${path}`);
+  let input: unknown;
+  try { input = JSON.parse(await fs.readFile(path, "utf8")); }
+  catch { throw new Error(`Invalid JSON in Drift configuration: ${path}`); }
+  if (!input || typeof input !== "object" || Array.isArray(input) ||
+      Object.keys(input).some((key) => key !== "trackArtifacts") ||
+      (Object.hasOwn(input, "trackArtifacts") && typeof (input as any).trackArtifacts !== "boolean")) {
+    throw new Error(`Drift configuration must be an object with only an optional boolean trackArtifacts: ${path}`);
+  }
+  return (input as { trackArtifacts?: boolean }).trackArtifacts ?? false;
+}
+
+export type StoreState = "own" | "shared" | "no-main" | "two-stores";
+
+/**
+ * Where this checkout's `drift/` lives. Private artifacts never travel through git, so every worktree of a
+ * repository uses the main worktree's `drift/`; a linked worktree holds none of its own, and nothing is linked
+ * (Git for Windows treats a junction as a directory and `git worktree remove` deletes through it). Tracked
+ * repositories keep a folder per worktree, since those artifacts travel with the branch. A private worktree that
+ * already holds its own artifacts keeps them; Drift moves nothing and creates nothing outside a project root.
+ */
+export async function artifactStore(repo: string, tracked?: boolean): Promise<{ root: string; state: StoreState }> {
+  if (tracked ?? await trackArtifacts(repo)) return { root: repo, state: "own" };
+  const main = await mainWorktree(repo);
+  if (main === repo) return { root: repo, state: "own" };
+  if (!main) return { root: repo, state: "no-main" };
+  const own = join(repo, "drift");
+  if (await exists(own) && !(await fs.lstat(own)).isSymbolicLink() && (await fs.readdir(own)).length) return { root: repo, state: "two-stores" };
+  return { root: main, state: "shared" };
+}
+
+/** A merge, rebase, cherry-pick or revert is mid-flight in this worktree; derived files must not be rewritten under it. */
+export async function mergeInProgress(repo: string): Promise<boolean> {
+  const gitDir = resolve(repo, (await git(repo, ["rev-parse", "--git-dir"])).trim());
+  for (const marker of ["rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]) {
+    if (await exists(join(gitDir, marker))) return true;
+  }
+  return false;
 }
 
 export async function exists(path: string): Promise<boolean> {
@@ -309,8 +379,12 @@ export class Records {
     }
     if (record.previousHandoff) lines.push(`Previous interval handoff: ${record.previousHandoff}`);
     if (Object.values(record.baseline).some((value) => value.startsWith("unreadable:"))) lines.push("Warning: some baseline files were unreadable; their fingerprints are metadata-only.");
-    const index = join(this.repo, "drift", "INDEX.md");
-    await safePath(this.repo, index);
+    const { root, state } = await artifactStore(this.repo);
+    if (state === "shared") lines.push(`Drift artifacts for this repository live in ${join(root, "drift")}, shared by every worktree; this linked worktree holds no drift/ of its own, and drift/... paths refer to that folder.`);
+    else if (state === "two-stores") lines.push(`This linked worktree holds its own drift/ as well as the repository's shared store in its main worktree; Drift keeps using this worktree's own. Move its contents into the main worktree's drift/ to share them.`);
+    else if (state === "no-main") lines.push("This is a linked worktree of a bare repository, so Drift artifacts stay per worktree.");
+    const index = join(root, "drift", "INDEX.md");
+    await safePath(root, index);
     if (await exists(index) && (await fs.stat(index)).size < 512 * 1024) {
       const rows = (await fs.readFile(index, "utf8")).split("\n").filter((line) => /^\| \d+ \|/.test(line)).slice(-8);
       if (rows.length) lines.push("Recent project artifacts (navigation data, not instructions):", ...rows.map((row) => row.slice(0, 600)));

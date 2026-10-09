@@ -137,6 +137,27 @@ side; if another rule defeats the choice, both files are restored and the rule
 is named. Nothing is staged or committed. In other hosts, make the same edits
 and commit them.
 
+**Many threads, one index.** A tracked index is committed, so two worktrees'
+copies meet at every rebase. `/drift-track-artifacts on` also writes
+`drift/INDEX.md merge=drift-index` to `.gitattributes`, and at session start
+the Pi extension installs the matching driver in the clone
+(`build-index.py --merge`): rows from both sides are unioned, reordered by
+timestamp and renumbered, so the rebase never stops on the index. Without the
+driver git falls back to its normal text merge; nothing else changes. In
+tracked mode the next `NNN` also counts artifacts already landed on any
+remote-tracking ref. Other hosts install the driver with one command:
+
+```sh
+git config merge.drift-index.name "Drift index row merge"
+git config merge.drift-index.driver "python3 -I /path/to/drift/scripts/build-index.py --merge %O %A %B"
+```
+
+**Worktrees in private mode** share the main worktree's `drift/`: a linked
+worktree holds no `drift/` of its own, publishes into the shared store, and
+sees the whole history in `/drift`, so nothing is lost when the worktree is
+removed. Tracked worktrees keep a folder each, because those artifacts travel
+with the branch.
+
 In Zed, Pi extension commands only appear in the `/` menu with an adapter that
 advertises them; upstream `pi-acp` v0.0.33 does not, and also leaves a turn
 open until a model run settles, so a command that never starts one spins.

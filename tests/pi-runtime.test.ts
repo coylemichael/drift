@@ -283,6 +283,26 @@ test("actual Pi /drift picks up the newest handoff through the bundled skill as 
   assert.ok(client.events.some((event: any) => event.type === "extension_ui_request" && event.method === "notify" && /picking up drift\/runtime\/001-handoff-latest\.md/.test(event.message)));
 });
 
+test("actual Pi installs the index merge driver at session start in a tracked clone that carries the attribute", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+  const f = await fixture(t);
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"trackArtifacts":true}\n');
+  await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
+  await fs.writeFile(join(f.repo, ".gitattributes"), "drift/INDEX.md merge=drift-index\n");
+  const client = f.rpc();
+  await client.request({ type: "get_state" });
+  const driver = await until(async () => (await git(f.repo, ["config", "--get", "merge.drift-index.driver"], 1)).trim(), "driver was not installed at session start");
+  assert.match(driver, /^\S+ -I \S+\/scripts\/build-index\.py --merge %O %A %B$/);
+  assert.ok(!driver.includes("\\"));
+  assert.equal((await git(f.repo, ["config", "--get", "merge.drift-index.name"])).trim(), "Drift index row merge");
+
+  // Private mode, or a repo without the attribute, gets no driver.
+  const g = await fixture(t);
+  await fs.writeFile(join(g.repo, ".gitattributes"), "drift/INDEX.md merge=drift-index\n");
+  const other = g.rpc();
+  await other.prompt("hello");
+  assert.equal((await git(g.repo, ["config", "--get", "merge.drift-index.driver"], 1)).trim(), "");
+});
+
 test("actual Pi automatically continues a profiled handoff after a fresh context compaction", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
   const state = await client.request({ type: "get_state" });

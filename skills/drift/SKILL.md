@@ -197,6 +197,12 @@ Before reading or writing any artifact in a session, make sure the index matches
 
 This is a rebuild, not a publication: it writes no artifact, changes no `status` and never stages or commits. A host overlay may do it automatically.
 
+### Derived Files Under Many Agents
+
+The index is derived: when it disagrees with the folders, rebuild it; never edit a row, a number or the footer by hand, and never resolve a merge conflict in it by choosing a side. Two threads that each appended a row have both appended correctly; the right result is the union, reordered by date and renumbered. `scripts/build-index.py --merge <base> <ours> <theirs>` computes exactly that and works as a git merge driver: with `drift/INDEX.md merge=drift-index` in `.gitattributes` (written by Drift when artifacts are tracked) and `merge.drift-index.driver` configured in the clone, a rebase never stops on the index. Without the driver, take either side and rebuild.
+
+**Linked worktrees.** Artifacts that are ignored never travel through git, so in a linked worktree of a repository that keeps artifacts private, Drift uses the **main worktree's** `drift/` for the whole repository: publish there, read the index there, and treat `drift/...` paths as relative to it. The linked worktree holds no `drift/` of its own, and nothing is linked (a junction is deleted through by `git worktree remove`). A host that supplies session context says where the store is. Tracked repositories keep a `drift/` per worktree, because those artifacts commit with the branch.
+
 ### Rebuilding the Index
 
 Rebuild from scratch when the index is missing, when it has drifted out of sync with the folders, or when adopting the index in a repo that already has Drift artifacts. Frontmatter is the source of truth — the index is a derived view and can always be regenerated.

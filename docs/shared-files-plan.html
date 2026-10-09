@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drift plan: shared files under many agents</title>
+<style>
+  :root { --ink: #1c1c1c; --muted: #5c5c5c; --rule: #d9d9d9; --accent: #205a86; --soft: #f4f6f8; --warn: #8a4b00; --warn-bg: #fff6e8; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #e6e6e6; --muted: #a8a8a8; --rule: #3a3a3a; --accent: #7fb3dd; --soft: #1e2226; --warn: #f0b36a; --warn-bg: #2a2117; }
+    body { background: #121416; }
+  }
+  body { font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); max-width: 56rem; margin: 2.5rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 .25rem; }
+  h2 { font-size: 1.35rem; margin: 2.5rem 0 .75rem; padding-top: 1.25rem; border-top: 1px solid var(--rule); }
+  h3 { font-size: 1.05rem; margin: 1.75rem 0 .5rem; }
+  p, li { max-width: 48rem; }
+  .meta { color: var(--muted); margin: 0 0 1.5rem; }
+  .lede { font-size: 1.1rem; }
+  code, pre { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .9em; }
+  code { background: var(--soft); padding: .1em .35em; border-radius: 3px; }
+  pre { background: var(--soft); padding: .9rem 1rem; border-radius: 6px; overflow-x: auto; line-height: 1.45; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .95rem; }
+  th, td { text-align: left; vertical-align: top; padding: .5rem .6rem; border-bottom: 1px solid var(--rule); }
+  th { font-weight: 600; color: var(--muted); font-size: .85rem; text-transform: uppercase; letter-spacing: .03em; }
+  .box { background: var(--soft); border-left: 3px solid var(--accent); padding: .75rem 1rem; margin: 1rem 0; border-radius: 0 6px 6px 0; }
+  .warn { background: var(--warn-bg); border-left-color: var(--warn); }
+  .steps { counter-reset: step; list-style: none; padding: 0; }
+  .steps > li { counter-increment: step; position: relative; padding: .6rem 0 .6rem 2.6rem; border-left: 2px solid var(--rule); margin-left: .9rem; }
+  .steps > li::before { content: counter(step); position: absolute; left: -.95rem; top: .55rem; width: 1.8rem; height: 1.8rem; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 600; font-size: .85rem; display: grid; place-items: center; }
+  .steps strong { display: block; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 40rem) { .cols { grid-template-columns: 1fr; } }
+  .tag { display: inline-block; font-size: .75rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: .1em .5em; border-radius: 3px; background: var(--soft); color: var(--muted); vertical-align: middle; }
+  dl { margin: 0; } dt { font-weight: 600; margin-top: .75rem; } dd { margin: .15rem 0 0 0; color: var(--ink); }
+  footer { margin: 3rem 0 1rem; color: var(--muted); font-size: .9rem; border-top: 1px solid var(--rule); padding-top: 1rem; }
+</style>
+</head>
+<body>
+
+<h1>Shared files under many agents</h1>
+<p class="meta">Drift plan · drafted 2026-10-09 · status: <span class="tag">pending</span></p>
+
+<p class="lede">When a dozen agents land on one branch within minutes of each other, the files every one of them touches, <code>drift/INDEX.md</code> and <code>CHANGELOG.md</code>, conflict on nearly every rebase, and the hand resolutions silently lose work. This plan makes both files <em>derived</em>: rebuilt from per-thread source files that cannot collide, merged by code when two versions meet, and never resolved by a model or a person. A third piece, <code>/drift-land</code>, turns the landing rulebook into one command.</p>
+
+<h2 id="problem">1. What went wrong</h2>
+
+<p>Observed in perimeter, 5–8 October 2026, with 8–12 coordinated threads landing hourly:</p>
+<ul>
+  <li><strong>Every rebase conflicted</strong> on <code>CHANGELOG.md</code> (two sections inserted at the top of <code>[Unreleased]</code>) and <code>drift/INDEX.md</code> (two rows appended, both numbered <em>last + 1</em>, footer count changed).</li>
+  <li><strong>Resolutions lost work silently.</strong> A "keep mine" resolution erased the other thread's entry with no test failing (Ashguard's tier-2 entry, knocked off <code>main</code> twice in four hours). A reverse patch replaced the Hook's entry instead of keeping both (<code>c05327c6</code>).</li>
+  <li><strong>Hand edits corrupted the index:</strong> duplicate <code>#</code> numbers, rows above the header (<code>c955acdc</code>), a stale footer.</li>
+  <li><strong>The landing race</strong> did the worst damage: a <code>git reset --soft origin/main</code> after <code>origin/main</code> had moved reverted three other threads' landings, twenty files (<code>e6f4938b</code>, repaired in <code>d8b3b8c0</code>).</li>
+  <li>At release, 27 per-thread changelog sections had to be collapsed by hand (<code>drift/programme/148</code>).</li>
+</ul>
+<p>The rules written afterwards ("insert only your own hunk", "keep both sides", "<code>git diff origin/main --stat</code> must list only your files") are correct and were followed most of the time. Discipline is not the fix; the file layout is.</p>
+
+<h2 id="principle">2. The principle</h2>
+
+<div class="box">
+<p><strong>A shared file is either append-only-by-unique-name or derived.</strong> Large projects never let N writers edit one changelog in flight: CPython (<code>Misc/NEWS.d/</code>), Twisted and pip (towncrier), JS monorepos (changesets) and GitLab all write one new, uniquely named file per change and generate the human file from them. Kubernetes and Rust harvest release notes from the PR itself. The Linux kernel has no changelog file at all.</p>
+</div>
+
+<p>Drift already applies this to the index: artifacts are the source, <code>INDEX.md</code> is a view rebuilt from their frontmatter. What was missing is (a) a way for two <em>committed</em> views to meet without a textual conflict, and (b) the same treatment for the changelog.</p>
+
+<p>Git's purpose-built hook for "both sides changed this file" is the <strong>merge driver</strong>: a per-file program named in <code>.gitattributes</code> that runs during every merge, rebase, cherry-pick and stash pop, receives base/ours/theirs, and writes the result. A prototype row-level driver for <code>INDEX.md</code> was run through a rebase and a merge of two threads that each appended row <code>003</code>: both completed with no stop and no markers, four rows ordered by true timestamp (the 11:30 row ahead of the 12:00 one that landed first), renumbered, footer recounted. With the driver <em>undefined</em>, git falls back silently to a normal text merge, so the attribute is safe to commit anywhere.</p>
+
+<h2 id="scope">3. Scope and requirements</h2>
+
+<dl>
+  <dt>Drift-only</dt>
+  <dd>The self-merging index and changelog work in clones where Drift is installed and has configured the driver. Merges done on a web UI or in a bare clone get a plain git conflict; that is outside what Drift supports, and is stated as such.</dd>
+  <dt>Never lose a fragment, never guess</dt>
+  <dd>Fragments (artifacts, changelog entries) are the source and are never deleted by Drift. Anything Drift cannot interpret is carried through unchanged and reported, never dropped or repaired by inference. This matches how Drift already treats malformed <code>.drift.json</code> and ignore-rule conflicts.</dd>
+  <dt>Deterministic</dt>
+  <dd>Every derived file is a pure function of the set of source files, ordered by true timestamp with the id as tie-break, so two worktrees compute identical text from identical inputs. That is the property the merge driver depends on.</dd>
+  <dt>No new manual steps</dt>
+  <dd>Threads keep doing what they do today: publish, commit, fetch, rebase, push. The steps that disappear are the conflict resolution, renumbering, footer recount and diff check.</dd>
+  <dt>Out of scope</dt>
+  <dd>Cross-machine clock skew (seconds, cosmetic; Drift already refuses estimated timestamps). Agents that write to the generated region in a format Drift does not define (see §5.5). Serialising landings across machines (a merge queue is a project concern).</dd>
+</dl>
+
+<h2 id="index">4. Piece A: the self-merging index</h2>
+
+<div class="box">
+<p><strong>The index is kept accurate in every mode, and worktrees always come back together.</strong> It is rebuilt from the artifacts on disk at publish, at session start and inside <code>/drift-land</code>, whether or not it is ever committed. Each mode has its own consolidation point: in tracked mode artifacts travel through commits and git merges them at the rebase (§4.1–4.3); in private mode git carries nothing, so every worktree of a repo shares one local store from the start (§4.5). The changelog (§5) is a repo file whether or not <code>drift/</code> is tracked, so <code>/drift-changelog on</code> stands alone and does not consult the tracking flag.</p>
+</div>
+
+<h3>4.1 <code>build-index.py --merge O A B</code></h3>
+<p>A new mode of the existing stdlib renderer, usable as a git merge driver. It merges <em>rows</em>, not trees: during a merge the other side's artifact files may not be in the working tree yet, and a row already carries everything needed (date, feature, type, path).</p>
+<ul>
+  <li>Union of rows keyed by artifact path. A row present in base and removed on exactly one side is removed; removed on both, removed.</li>
+  <li>Sort by UTC-normalised instant, then feature, then folder sequence. Renumber <code>#</code> from 001. Recount the footer. Header prose taken from A. <code>## Undated</code> entries unioned the same way.</li>
+  <li>Same id with different text on both sides: take B's; the next frontmatter rebuild is authoritative.</li>
+  <li>Writes the result to A and exits 0. Exit 1 only when input is not a Drift index at all.</li>
+</ul>
+
+<h3>4.2 The attribute and the driver <span class="tag">tracked mode</span></h3>
+<ul>
+  <li><code>/drift-track-artifacts on</code> also writes <code>drift/INDEX.md merge=drift-index</code> to <code>.gitattributes</code> (the index is only committed in tracked mode). The line is left in place on <code>off</code>; it is inert without the driver.</li>
+  <li>At session start, when the repo is tracked and the attribute is present, the Pi extension installs the driver in that clone's <code>.git/config</code>: <code>merge.drift-index.name</code> and <code>merge.drift-index.driver = &lt;python&gt; -I &lt;checkout&gt;/scripts/build-index.py --merge %O %A %B</code>. Paths use forward slashes (git runs drivers through <code>sh -c</code>, which eats backslashes on Windows). <code>DRIFT_PYTHON</code> is respected. Already-correct config is left alone; a different existing value is reported, not overwritten.</li>
+  <li><code>hosts/claude.md</code> and the skill carry the same one-line <code>git config</code> for hosts without the extension.</li>
+</ul>
+
+<h3>4.3 Remote-aware numbering <span class="tag">tracked mode</span></h3>
+<p>In tracked mode the next <code>NNN</code> for a feature is the maximum over the working folder <em>and</em> <code>git ls-tree</code> of every remote-tracking ref for <code>drift/&lt;feature&gt;/</code> (no network; whatever the last fetch saw), plus one. Two threads can still mint the same number before either pushes; the result is two differently named files, untidy but not a collision. Identical feature, number and slug is an add/add conflict git reports loudly.</p>
+
+<h3>4.4 Session-start sync guard</h3>
+<p>The existing index rebuild at session start skips when <code>.git/rebase-merge</code>, <code>.git/rebase-apply</code> or <code>.git/MERGE_HEAD</code> exists, so it never writes over a merge in progress.</p>
+
+<h3>4.5 One private store per repo <span class="tag">private mode</span> <span class="tag">built</span></h3>
+<p>Today an ignored <code>drift/</code> is per worktree: a rebase onto <code>main</code> brings over no artifacts, because none were ever committed, and removing a finished worktree deletes its handoffs. In private mode the worktrees therefore share one store from the start, so there is nothing to consolidate later.</p>
+<ul>
+  <li>The <strong>main worktree's</strong> <code>drift/</code> is the store for the whole repo on that machine. Drift locates it from <code>git rev-parse --git-common-dir</code>, which every worktree shares.</li>
+  <li><strong>A linked worktree holds no <code>drift/</code> at all.</strong> Drift resolves the store in code (<code>artifactStore()</code>) for publication, the index, <code>/drift</code> pick-up, <code>drift-continue</code> and the session context, which states where the artifacts live. The artifact records the worktree's own branch and commit.</li>
+  <li>Consequences: one index per repo per machine, accurate across every thread; <code>/drift</code> sees every handoff; one publish lock and one <code>NNN</code> sequence across worktrees, so duplicate numbers cannot arise in private mode; removing a worktree removes nothing of Drift's.</li>
+  <li>Tracked mode is unchanged: artifacts stay in each worktree so they commit with the branch, and git is the consolidation point.</li>
+  <li>A private worktree that already holds its own artifacts keeps using them and is reported ("two stores"); Drift moves nothing.</li>
+  <li><strong>Locating the store:</strong> the <code>drift/</code> at the main worktree's root, found from the common dir. Drift never creates anything outside a project root: when there is no main worktree, as with a bare repository plus linked worktrees, each worktree keeps its own <code>drift/</code> as today and the session context says so. Decided 2026-10-09.</li>
+</ul>
+<div class="box warn">
+<p><strong>Why not a junction.</strong> The first build linked the worktree's <code>drift/</code> to the store. Measured 2026-10-09 with Git for Windows 2.52: git treats a junction as an ordinary directory, so a plain <code>git worktree remove</code> (no <code>--force</code> needed) descended through it and deleted the store's artifacts and index. True directory symlinks need Developer Mode on Windows (<code>EPERM</code> otherwise). Links were therefore dropped; the regression test now asserts the store survives worktree removal.</p>
+</div>
+
+<h2 id="changelog">5. Piece B: the derived changelog</h2>
+
+<h3>5.1 Opt-in</h3>
+<p><code>/drift-changelog on|off|status</code>, in the shape of <code>/drift-track-artifacts</code> but independent of it: it works the same in repos whose artifacts stay private. <strong>On</strong>: sets <code>"changelog": true</code> in <code>.drift.json</code>; creates <code>changelog.d/README.md</code> (the convention in one paragraph, for any agent that reads the repo); inserts the marker line at the top of <code>CHANGELOG.md</code>, creating the file if absent, so everything already there becomes the preserved history below it; adds <code>CHANGELOG.md merge=drift-changelog</code> to <code>.gitattributes</code>. <strong>Off</strong>: flips the flag; files are left in place. Nothing is staged or committed. When a repo has a root <code>CHANGELOG.md</code> and the flag is unset, session context carries a one-line hint once.</p>
+<p>If the repo already uses towncrier, changesets or a <code>newsfragments/</code> directory, <code>on</code> refuses and names it: follow the repo's own convention instead.</p>
+
+<h3>5.2 Fragments</h3>
+<pre><code>changelog.d/cards-pass-043-ledger-recut.md
+---
+date: "2026-10-09T16:29:21+01:00"
+section: "Changed"
+artifact: "drift/cards-pass/043-handoff-ledger-recut.md"
+---
+**The Marksman's Ledger's cards re-cut to impress.** Culling draws its line …</code></pre>
+<ul>
+  <li>Named <code>&lt;feature&gt;-&lt;NNN&gt;-&lt;slug&gt;.md</code> after the artifact, so names are unique by construction. Committed with the code; <strong>not</strong> under the ignored <code>drift/</code>.</li>
+  <li><code>section</code> is one of Keep a Changelog's types (Added, Changed, Deprecated, Removed, Fixed, Security). <code>date</code> is the artifact's measured date. The body is the bullet, Markdown allowed.</li>
+  <li>Written by <code>drift_publish</code> when the optional <code>changelog: { section, text }</code> input is supplied, alongside the artifact, under the publish lock. An agent without the tool writes the file by hand; the skill's rule is "write a fragment, never edit the changelog".</li>
+  <li>Fragments are never deleted by Drift. <em>Optional, later:</em> <code>/drift-changelog stamp X.Y.Z</code> moves the current fragments into <code>changelog.d/X.Y.Z/</code> for projects that version; it gives the generated file a version header and is the only thing "release" means here.</li>
+</ul>
+
+<h3>5.3 Generation</h3>
+<p><code>scripts/build-changelog.py &lt;repo&gt; [--stdout | --check | --merge O A B]</code>, stdlib only, the same shape as the index builder.</p>
+<ul>
+  <li>Owns only the region above the marker <code>&lt;!-- drift:changelog — generated from changelog.d/. Edit a bullet if you keep its id comment. --&gt;</code>. Below it, the repo's hand-written history is untouched.</li>
+  <li>Newest first, grouped by day (<code>## 2026-10-09</code>) then section (<code>### Changed</code>); by version when stamped. Within a group, newest first, id as tie-break.</li>
+  <li>Each bullet ends with its id as an HTML comment: <code>… &lt;!-- changelog.d/cards-pass-043-ledger-recut.md --&gt;</code>. Invisible when rendered; the key for merging and edit-back.</li>
+  <li>Written with compare-and-swap: hash on read, re-check immediately before the atomic replace, re-read and retry if another process wrote in between. The window shrinks to the rename itself.</li>
+</ul>
+
+<h3>5.4 When it regenerates</h3>
+<table>
+  <tr><th>Moment</th><th>Who</th><th>Failure mode</th></tr>
+  <tr><td>Publish</td><td>Pi extension, same lock as the index</td><td>Non-fatal: artifact, index and fragment still publish; the changelog step is reported and retried next time</td></tr>
+  <tr><td>Session start</td><td>Pi extension (the existing sync)</td><td>Warning only; skipped during an in-progress merge</td></tr>
+  <tr><td>Collision during merge/rebase</td><td>The driver</td><td>Exit 1 only for a real conflict below the marker</td></tr>
+  <tr><td>On demand</td><td><code>/drift-changelog</code>, or the script</td><td>Printed</td></tr>
+</table>
+
+<h3>5.5 Hand edits</h3>
+<ul>
+  <li><strong>Editing a bullet's text is supported if its id comment stays.</strong> On the next regeneration Drift sees text that differs from the fragment and writes the edit back into the fragment, so it persists. Keyed by id; no inference.</li>
+  <li><strong>A bullet without an id is unsupported.</strong> Drift never deletes it: the driver carries such lines through verbatim at the top of the generated region, and regeneration reports "unrecognised entries at lines N; move them into a fragment or delete them" and skips the changelog step for that run. Drift is an automation tool; it does not guess at a format it did not write.</li>
+</ul>
+
+<h3>5.6 The driver</h3>
+<p><code>--merge O A B</code>: parse both generated regions into entries keyed by id; union with the same base-deletion rule as the index; same id with different text, take B's (the fragment is authoritative on the next rebuild); carry un-id'd lines through; regenerate the region. Below the marker, run an ordinary three-way merge (<code>git merge-file</code> semantics); a genuine conflict there exits 1 and surfaces normally. Installed per clone at session start exactly like the index driver, under <code>merge.drift-changelog</code>, whenever <code>.drift.json</code> has <code>"changelog": true</code> and the attribute is present; tracking mode is not consulted.</p>
+
+<h2 id="lifecycle">6. Life of a change, twelve threads at once</h2>
+
+<ol class="steps">
+  <li><strong>Thread 7 records a change.</strong> Its handoff publication writes <code>changelog.d/cards-pass-043-ledger-recut.md</code>. Twelve threads, twelve files, twelve different names.</li>
+  <li><strong>The same publish regenerates <code>CHANGELOG.md</code> locally</strong> from every fragment in that worktree (main's as of the branch point, plus its own), and rebuilds the index. Thread 7's commit carries derived files correct for what it can see.</li>
+  <li><strong>Thread 7 lands: fetch, rebase, push.</strong> If nothing landed meanwhile, the rebase is clean and the push goes through. If thread 3 landed a fragment an hour ago, the rebase hits <code>CHANGELOG.md</code> and <code>INDEX.md</code>; the drivers union the entries, reorder by timestamp, regroup, and the rebase continues without stopping. The push carries both threads' entries in the right order, with neither thread having read the other's text.</li>
+  <li><strong><code>main</code> is always current.</strong> After every landing, <code>main</code>'s derived files equal "compile every fragment on main". Twelve landings in any order each fold in what arrived before them. There is no batch step.</li>
+  <li><strong>Correction passes catch what slips.</strong> A fragment written by hand in a thread that never regenerated is absent from <code>main</code>'s changelog only until the next regeneration anywhere: any publish, any session start. Staleness, not loss.</li>
+</ol>
+
+<p>In a <strong>shared checkout</strong> (several threads in one clone, as on 5 October) there is no merge at all: every publish regenerates from all fragments on disk under one lock, and threads commit their own files by path.</p>
+
+<h2 id="races">7. Race conditions</h2>
+
+<table>
+  <tr><th>Race</th><th>Handled by</th></tr>
+  <tr><td>Two threads push at once</td><td>Git: a push is an atomic ref update; the loser rebases and the driver merges</td></tr>
+  <tr><td>Two publishes in one checkout</td><td>The publish lock; fragment, index and changelog are written inside it</td></tr>
+  <tr><td>Driver result depends on which side you are</td><td>Impossible: union-by-id then sort by (instant, id) is a function of the set</td></tr>
+  <tr><td>Same <code>NNN</code> minted in two worktrees</td><td>Private mode: impossible, one store and one lock (§4.5). Tracked mode: ids are full paths with slugs, so two files and no collision; same feature, number <em>and</em> slug is a loud add/add conflict</td></tr>
+  <tr><td>Both threads edit one fragment's text</td><td>The fragment file conflicts textually, which is the correct outcome; the driver takes either side for the changelog line and the next rebuild follows the resolved fragment</td></tr>
+  <tr><td>An agent writes <code>CHANGELOG.md</code> while Drift regenerates it</td><td>Compare-and-swap on the hash before the atomic replace</td></tr>
+  <tr><td>Session-start sync fires mid-rebase</td><td>Skipped when a merge or rebase is in progress</td></tr>
+  <tr><td>Both sides edited the hand-written history</td><td>Three-way merge below the marker; a real conflict surfaces normally</td></tr>
+  <tr><td>Deleted fragment "resurrected" from a stale view</td><td>Cannot happen: nothing is harvested; an id'd bullet whose fragment is gone is dropped on rebuild</td></tr>
+</table>
+
+<h2 id="land">8. Piece C: <code>/drift-land</code></h2>
+
+<p>The landing rulebook as one command, so the sequence that caused <code>e6f4938b</code> cannot be typed.</p>
+<ol>
+  <li>Preconditions: on a branch, tree clean apart from Drift's own regenerated files, no merge in progress.</li>
+  <li>Take a cross-worktree lock under <code>git rev-parse --git-common-dir</code> (worktrees share it).</li>
+  <li><code>git fetch</code>; rebase onto <code>origin/&lt;default&gt;</code>. The drivers resolve the index and changelog; any other conflict stops the command with the file named.</li>
+  <li>Regenerate index and changelog; <code>--check</code> both.</li>
+  <li>Guard: <code>git diff origin/&lt;default&gt; --name-only</code> must equal the files touched by <code>git log origin/&lt;default&gt;..HEAD</code>. Anything else listed means a landing went wrong; stop and show it.</li>
+  <li>Run the repo's configured check if any: <code>.drift.json</code> → <code>"land": { "check": "npm run test:quick" }</code>.</li>
+  <li><code>git push origin HEAD:&lt;default&gt;</code>. On rejection (someone pushed between fetch and push), loop from step 3, bounded.</li>
+</ol>
+<p>It never squashes, never force-pushes, never resets against a moving ref. Squashing stays a deliberate, separate act.</p>
+
+<h2 id="sequence">9. Implementation sequence</h2>
+
+<table>
+  <tr><th>Step</th><th>Work</th><th>Verification</th></tr>
+  <tr><td>1 · Index</td><td><code>--merge</code> mode; attribute via <code>/drift-track-artifacts on</code>; driver install at session start; in-progress guard; remote-aware <code>NNN</code>; shared private store across worktrees (§4.5)</td><td>Unit: merge of appended rows, base deletions, undated union, Windows path; junction accepted only when it resolves to the store. Real-Pi: config appears at session start; two-worktree rebase completes clean in tracked mode; two private worktrees publish into one index with distinct numbers</td></tr>
+  <tr><td>2 · Changelog</td><td>Fragment format; <code>build-changelog.py</code> with <code>--stdout/--check/--merge</code>; CAS write; edit-back; un-id'd handling; <code>drift_publish</code> <code>changelog</code> input; <code>/drift-changelog</code>; existing-system detection</td><td>Unit for each rule in §5.5–5.6. Real-Pi: publish writes fragment and regenerates; two-worktree landing produces one changelog with both entries in order</td></tr>
+  <tr><td>3 · <code>/drift-land</code></td><td>Lock, fetch, rebase, regenerate, guard, check, push, retry</td><td>Fixture with a bare remote and two worktrees racing; guard trips on a planted stray file; retry on a planted rejection</td></tr>
+  <tr><td>4 · Docs</td><td>README, <code>SKILL.md</code> (fragment rule, "never hand-edit a derived file"), <code>hosts/pi.md</code>, <code>changelog.d/README.md</code> template, suggested <code>AGENTS.md</code> line, CHANGELOG, version bump</td><td><code>git diff --check</code>; the skill's own procedure followed by hand once on a non-Pi host</td></tr>
+</table>
+
+<h3>Rollout</h3>
+<ul>
+  <li><strong>perimeter:</strong> <code>/drift-track-artifacts status</code> (already tracked) then <code>/drift-changelog on</code>; the existing <code>CHANGELOG.md</code> becomes history below the marker; <code>npm run release</code> stays as it is and may later call <code>stamp</code>. Threads switch to fragments at their next landing.</li>
+  <li><strong>dotfiles:</strong> same; its date-headed changelog is already the default grouping.</li>
+  <li><strong>Rig:</strong> nothing until it has a changelog.</li>
+</ul>
+
+<h2 id="decisions">10. Decisions and open questions</h2>
+
+<dl>
+  <dt>Decided</dt>
+  <dd>Derived changelog, not compile-at-release: most projects do not release, and a running log is the common case. Row/entry merging in the driver rather than tree rebuild. Opt-in via command, as with tracking. Keep a Changelog section vocabulary. Day grouping by default. Fragments live at repo root in <code>changelog.d/</code>, committed. Drift-only support.</dd>
+  <dt>Open</dt>
+  <dd>Whether <code>stamp</code> ships in step 2 or waits for a project that wants it. Whether the <code>/drift-land</code> check command should default to something when unset (proposal: no default; run nothing). Whether the un-id'd-entry report should also appear in Pi's session context so a thread sees it before publishing.</dd>
+</dl>
+
+<div class="box warn">
+<p><strong>Not in this plan.</strong> Serialising landings across machines (a merge queue), changing tracked-mode defaults, and making <code>ROADMAP.md</code> derived. The roadmap is a living document with an owner, not an append-only log; it needs the coordinator, not a compiler.</p>
+</div>
+
+<footer>Drift · <code>docs/shared-files-plan.html</code> · prototype evidence: row-level driver resolved a two-thread rebase and merge of <code>drift/INDEX.md</code> with no markers; an undefined driver falls back to git's text merge.</footer>
+
+</body>
+</html>

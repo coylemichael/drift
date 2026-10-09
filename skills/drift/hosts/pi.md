@@ -30,7 +30,7 @@ To recover an existing profiled handoff manually in a fresh Pi thread, run `drif
 
 ## Session records
 
-Before establishing the record, the extension performs the session-start index check from `SKILL.md` ("At Session Start"): when `drift/` holds artifacts and `drift/INDEX.md` is missing or differs from the shared renderer's output, it rewrites the index, so the measured baseline already includes it. It never creates `drift/` or edits `.gitignore`; a Git-policy mismatch or renderer failure is shown as a warning and does not block recording. Do not repeat the check yourself on Pi.
+Before establishing the record, the extension performs the session-start index check from `SKILL.md` ("At Session Start"): when `drift/` holds artifacts and `drift/INDEX.md` is missing or differs from the shared renderer's output, it rewrites the index, so the measured baseline already includes it. It never creates `drift/` or edits `.gitignore`; a Git-policy mismatch or renderer failure is shown as a warning and does not block recording. Do not repeat the check yourself on Pi. In a tracked repository whose `.gitattributes` names the `drift-index` merge driver, the extension also installs that driver in the clone, so index conflicts resolve themselves on rebase; in a linked worktree of a private repository it resolves the main worktree's `drift/` as the store and says so in context. Trust that store path and do not look for a `drift/` in the worktree.
 
 The Pi extension establishes a durable record before work and supplies its path and measured baseline in model context. It uses Pi's actual session ID, not a model-generated manual ID. Records live under Pi's agent directory, separately from project artifacts and Pi's conversation logs.
 

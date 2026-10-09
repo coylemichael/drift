@@ -3,16 +3,29 @@
 
 Usage:
     build-index.py [<drift-dir>] [--check | --stdout]
+    build-index.py --merge <base> <ours> <theirs>
 
     <drift-dir>  Path to a project's drift/ directory. Defaults to ./drift.
     --check      Report whether the index is out of sync and exit non-zero
                  instead of writing. Nothing is modified.
     --stdout     Print the rendered index without writing (used by the Pi publisher).
+    --merge      Git merge driver (%O %A %B): union the rows of two index
+                 versions by artifact path, reorder by date, renumber, and
+                 write the result over <ours>. Two threads that each appended a
+                 row then rebase without a conflict. Rows removed on one side
+                 stay removed; a path with different text on both sides takes
+                 <theirs>, since the next rebuild from frontmatter is final.
 
 The index is a derived view: every row comes from an artifact's frontmatter, so
 this can be re-run at any time, including against a project that has Drift
 artifacts but no index yet. See the "Root Index" section of SKILL.md for the
 specification this implements.
+
+To install the merge driver in a clone (the Pi extension does this itself):
+    git config merge.drift-index.name "Drift index row merge"
+    git config merge.drift-index.driver "python3 -I /path/to/build-index.py --merge %O %A %B"
+with `drift/INDEX.md merge=drift-index` in .gitattributes. Use forward slashes
+in the path on Windows; git runs drivers through `sh -c`.
 
 Requires only the Python standard library (3.7+).
 """
@@ -25,6 +38,10 @@ FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.S)
 NAME_PREFIX = re.compile(r"(\d{3})-")
 NAME_KIND = re.compile(r"\d{3}-(research|plan|handoff)-")
 BODY_DATE = re.compile(r"^\*\*Date:\*\*\s*(\S+)", re.M)
+# The rows this script renders, read back for --merge. Everything a row needs is in the row.
+INDEX_HEADER = "| # | Date | Feature | Type | Artifact |"
+INDEX_ROW = re.compile(r"^\| \d+ \| (?P<date>.+?) \| (?P<feature>.+?) \| (?P<kind>.+?) \| \[(?P<title>.+?)\]\((?P<path>.+?)\) \|$")
+INDEX_UNDATED = re.compile(r"^- (?P<feature>.+?) / \[(?P<title>.+?)\]\((?P<path>.+?)\)$")
 
 
 def scalar(block, key):
@@ -100,6 +117,86 @@ def format_date(row):
     return f"{when:%Y-%m-%d %H:%M} {offset[:3]}:{offset[3:]}"
 
 
+def parse_index(text):
+    """Rows of a rendered index keyed by artifact path.
+
+    Returns None when the text is not a Drift index at all. An empty file is an
+    empty index: git hands the driver an empty base when the file is new on both
+    sides.
+    """
+    lines = text.replace("\r\n", "\n").split("\n")
+    if INDEX_HEADER not in lines:
+        return {} if not text.strip() else None
+    rows = {}
+    for line in lines:
+        match = INDEX_ROW.match(line)
+        if match:
+            raw = match.group("date")
+            approximate = raw.endswith(" (approx)")
+            try:
+                when = (parse_date(raw[: -len(" (approx)")]) if approximate
+                        else dt.datetime.strptime(raw, "%Y-%m-%d %H:%M %z"))
+            except ValueError:
+                when = None
+            rows[match.group("path")] = row_from_index(match, when, approximate or when is None)
+            continue
+        match = INDEX_UNDATED.match(line)
+        if match:
+            rows[match.group("path")] = row_from_index(match, None, True)
+    return rows
+
+
+def row_from_index(match, when, approximate):
+    title = match.group("title")
+    prefix = NAME_PREFIX.match(title)
+    kind = match.groupdict().get("kind") or (NAME_KIND.match(title).group(1) if NAME_KIND.match(title) else "-")
+    return {
+        "path": match.group("path"),
+        "title": title,
+        "feature": match.group("feature"),
+        "sequence": prefix.group(1) if prefix else "---",
+        "kind": kind,
+        "when": when,
+        "approximate": approximate,
+    }
+
+
+def merge_rows(base, ours, theirs):
+    """Union by path. A row one side removed and the other left alone stays removed."""
+    rows = {**ours, **theirs}
+    for path in base:
+        if path not in ours or path not in theirs:
+            rows.pop(path, None)
+    return rows
+
+
+def ordered(rows):
+    """Split and sort rows the way the index lists them."""
+    dated = [r for r in rows if r["when"]]
+    undated = [r for r in rows if not r["when"]]
+    # Feature then sequence keeps equal timestamps stable across rebuilds.
+    dated.sort(key=lambda r: (r["when"].astimezone(dt.timezone.utc), r["feature"], r["sequence"]))
+    undated.sort(key=lambda r: (r["feature"], r["path"]))
+    return dated, undated
+
+
+def write_index(path, content):
+    # Explicit newline: the Pi publisher and the merge driver must produce identical bytes.
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(content)
+
+
+def merge(paths):
+    texts = [Path(p).read_text(encoding="utf-8", errors="replace") for p in paths]
+    base, ours, theirs = (parse_index(t) for t in texts)
+    if ours is None or theirs is None:
+        print("error: --merge inputs are not Drift index files", file=sys.stderr)
+        return 1
+    dated, undated = ordered(merge_rows(base or {}, ours, theirs).values())
+    write_index(paths[1], render(dated, undated))
+    return 0
+
+
 def render(dated, undated):
     lines = [
         "# Drift Index",
@@ -151,9 +248,12 @@ def main(argv):
     if flags & {"-h", "--help"}:
         print(__doc__.strip())
         return 0
-    if flags - {"--check", "--stdout"} or {"--check", "--stdout"} <= flags:
+    modes = flags & {"--check", "--stdout", "--merge"}
+    if flags - modes or len(modes) > 1 or ("--merge" in flags) != (len(args) == 3):
         print(__doc__.strip(), file=sys.stderr)
         return 2
+    if "--merge" in flags:
+        return merge(args)
 
     root = Path(args[0] if args else "drift").resolve()
     if not root.is_dir():
@@ -166,10 +266,7 @@ def main(argv):
         print(f"error: no Drift artifacts found under {root}", file=sys.stderr)
         return 1
 
-    dated = [r for r in rows if r["when"]]
-    undated = [r for r in rows if not r["when"]]
-    # Feature then sequence keeps equal timestamps stable across rebuilds.
-    dated.sort(key=lambda r: (r["when"].astimezone(dt.timezone.utc), r["feature"], r["sequence"]))
+    dated, undated = ordered(rows)
     content = render(dated, undated)
 
     if "--stdout" in flags:
@@ -184,7 +281,7 @@ def main(argv):
         print(f"{index_path}: " + ("out of date" if current else "missing"), file=sys.stderr)
         return 1
 
-    index_path.write_text(content, encoding="utf-8")
+    write_index(index_path, content)
     print(f"wrote {index_path}: {len(dated)} dated, {len(undated)} undated")
     for row in rows:
         if row["approximate"] and row["when"]:
