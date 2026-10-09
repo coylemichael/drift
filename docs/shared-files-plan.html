@@ -141,14 +141,14 @@ artifact: "drift/cards-pass/043-handoff-ledger-recut.md"
   <li>Named <code>&lt;feature&gt;-&lt;NNN&gt;-&lt;slug&gt;.md</code> after the artifact, so names are unique by construction. Committed with the code; <strong>not</strong> under the ignored <code>drift/</code>.</li>
   <li><code>section</code> is one of Keep a Changelog's types (Added, Changed, Deprecated, Removed, Fixed, Security). <code>date</code> is the artifact's measured date. The body is the bullet, Markdown allowed.</li>
   <li>Written by <code>drift_publish</code> when the optional <code>changelog: { section, text }</code> input is supplied, alongside the artifact, under the publish lock. An agent without the tool writes the file by hand; the skill's rule is "write a fragment, never edit the changelog".</li>
-  <li>Fragments are never deleted by Drift. <em>Optional, later:</em> <code>/drift-changelog stamp X.Y.Z</code> moves the current fragments into <code>changelog.d/X.Y.Z/</code> for projects that version; it gives the generated file a version header and is the only thing "release" means here.</li>
+  <li>Fragments are never deleted or moved by Drift. <strong>Versions are derived, not stamped</strong> (decided 2026-10-09, replacing an earlier <code>stamp</code> command): a release is already recorded in the repository as a version tag (<code>vX.Y.Z</code> by default, pattern configurable), so a fragment belongs to the first version tag whose tree contains it (<code>git ls-tree &lt;tag&gt; -- changelog.d/</code>). Membership comes from git ancestry, never timestamps, so it is exact and identical in every worktree; a clone that has not fetched the new tag shows those entries as unreleased until it does. Projects without version tags keep day grouping. Nothing to type at release time.</li>
 </ul>
 
 <h3>5.3 Generation</h3>
 <p><code>scripts/build-changelog.py &lt;repo&gt; [--stdout | --check | --merge O A B]</code>, stdlib only, the same shape as the index builder.</p>
 <ul>
   <li>Owns only the region above the marker <code>&lt;!-- drift:changelog — generated from changelog.d/. Edit a bullet if you keep its id comment. --&gt;</code>. Below it, the repo's hand-written history is untouched.</li>
-  <li>Newest first, grouped by day (<code>## 2026-10-09</code>) then section (<code>### Changed</code>); by version when stamped. Within a group, newest first, id as tie-break.</li>
+  <li>Newest first, grouped by version tag (<code>## [0.7.3] — date of the tagged commit</code>) when the repository has version tags, with fragments in no tag under <code>## [Unreleased]</code>; otherwise by day (<code>## 2026-10-09</code>). Then by section (<code>### Changed</code>). Within a group, newest first, id as tie-break.</li>
   <li>Each bullet ends with its id as an HTML comment: <code>… &lt;!-- changelog.d/cards-pass-043-ledger-recut.md --&gt;</code>. Invisible when rendered; the key for merging and edit-back.</li>
   <li>Written with compare-and-swap: hash on read, re-check immediately before the atomic replace, re-read and retry if another process wrote in between. The window shrinks to the rename itself.</li>
 </ul>
@@ -198,19 +198,26 @@ artifact: "drift/cards-pass/043-handoff-ledger-recut.md"
   <tr><td>Deleted fragment "resurrected" from a stale view</td><td>Cannot happen: nothing is harvested; an id'd bullet whose fragment is gone is dropped on rebuild</td></tr>
 </table>
 
-<h2 id="land">8. Piece C: <code>/drift-land</code></h2>
+<h2 id="land">8. Piece C: landing, automatic at the interval boundary</h2>
 
-<p>The landing rulebook as one command, so the sequence that caused <code>e6f4938b</code> cannot be typed.</p>
+<p>Drift already knows when a unit of work ends: the handoff that completes the interval. With a one-time repo opt-in, that handoff lands itself, and the profiled continuation then starts from landed <code>main</code>. <code>/drift-land</code> is the same sequence as a manual command for an ad-hoc push. Either way, the sequence that caused <code>e6f4938b</code> cannot be typed. Decided 2026-10-09 (replacing a manual-only command).</p>
+
+<pre><code>{ "land": { "auto": true, "check": "pytest -q" } }
+{ "land": { "auto": true, "check": ["cargo fmt --check", "cargo test"] } }</code></pre>
+
+<p>Order in the automatic chain: publish handoff → land → compaction → <code>drift-continue</code>. A real conflict in a non-derived file, or the guard tripping, halts the chain there: the handoff stays published, the record is checkpointed, and the thread reports exactly what blocked. That is the same rule Drift applies to a pending user decision. Pushing is the one outward-facing act in this plan, so it follows the <code>trackArtifacts</code> pattern: one explicit line per repository, never inferred.</p>
+
 <ol>
-  <li>Preconditions: on a branch, tree clean apart from Drift's own regenerated files, no merge in progress.</li>
+  <li>Preconditions: on a branch, tree clean apart from Drift's own regenerated files, no merge in progress. A completed handoff with uncommitted changes is reported, not committed: what goes into a commit is the agent's judgement, landing is mechanical.</li>
   <li>Take a cross-worktree lock under <code>git rev-parse --git-common-dir</code> (worktrees share it).</li>
   <li><code>git fetch</code>; rebase onto <code>origin/&lt;default&gt;</code>. The drivers resolve the index and changelog; any other conflict stops the command with the file named.</li>
   <li>Regenerate index and changelog; <code>--check</code> both.</li>
   <li>Guard: <code>git diff origin/&lt;default&gt; --name-only</code> must equal the files touched by <code>git log origin/&lt;default&gt;..HEAD</code>. Anything else listed means a landing went wrong; stop and show it.</li>
-  <li>Run the repo's configured check if any: <code>.drift.json</code> → <code>"land": { "check": "npm run test:quick" }</code>.</li>
+  <li>Run the repo's configured check: any shell command or list of commands, run in the worktree through the platform shell, in order, stopping at the first non-zero exit, whose output is the failure report. Unset means nothing runs and the landing report says "no check configured"; Drift may <em>suggest</em> a line from what it sees (<code>package.json</code>, <code>pyproject.toml</code>, <code>Cargo.toml</code>, <code>Makefile</code>) but never runs one unasked. Nothing in this plan assumes a toolchain in the target repository; Node is only Drift's own runtime.</li>
   <li><code>git push origin HEAD:&lt;default&gt;</code>. On rejection (someone pushed between fetch and push), loop from step 3, bounded.</li>
+  <li>Checkpoint the record with reason <code>land</code>, so the interval shows when its commits were rebased and pushed.</li>
 </ol>
-<p>It never squashes, never force-pushes, never resets against a moving ref. Squashing stays a deliberate, separate act.</p>
+<p>It never squashes, never force-pushes, never resets against a moving ref. Squashing stays a deliberate, separate act done before landing, against a named commit.</p>
 
 <h2 id="sequence">9. Implementation sequence</h2>
 
@@ -218,7 +225,7 @@ artifact: "drift/cards-pass/043-handoff-ledger-recut.md"
   <tr><th>Step</th><th>Work</th><th>Verification</th></tr>
   <tr><td>1 · Index</td><td><code>--merge</code> mode; attribute via <code>/drift-track-artifacts on</code>; driver install at session start; in-progress guard; remote-aware <code>NNN</code>; shared private store across worktrees (§4.5)</td><td>Unit: merge of appended rows, base deletions, undated union, Windows path; junction accepted only when it resolves to the store. Real-Pi: config appears at session start; two-worktree rebase completes clean in tracked mode; two private worktrees publish into one index with distinct numbers</td></tr>
   <tr><td>2 · Changelog</td><td>Fragment format; <code>build-changelog.py</code> with <code>--stdout/--check/--merge</code>; CAS write; edit-back; un-id'd handling; <code>drift_publish</code> <code>changelog</code> input; <code>/drift-changelog</code>; existing-system detection</td><td>Unit for each rule in §5.5–5.6. Real-Pi: publish writes fragment and regenerates; two-worktree landing produces one changelog with both entries in order</td></tr>
-  <tr><td>3 · <code>/drift-land</code></td><td>Lock, fetch, rebase, regenerate, guard, check, push, retry</td><td>Fixture with a bare remote and two worktrees racing; guard trips on a planted stray file; retry on a planted rejection</td></tr>
+  <tr><td>3 · Landing</td><td>Lock, fetch, rebase, regenerate, guard, shell-neutral check, push, retry, <code>land</code> checkpoint; automatic after a completed handoff when <code>land.auto</code> is set, before compaction and continuation; <code>/drift-land</code> as the manual form</td><td>Fixture with a bare remote and two worktrees racing; guard trips on a planted stray file; retry on a planted rejection; real-Pi: a profiled handoff lands then continues, and a planted conflict halts the chain with the handoff intact</td></tr>
   <tr><td>4 · Docs</td><td>README, <code>SKILL.md</code> (fragment rule, "never hand-edit a derived file"), <code>hosts/pi.md</code>, <code>changelog.d/README.md</code> template, suggested <code>AGENTS.md</code> line, CHANGELOG, version bump</td><td><code>git diff --check</code>; the skill's own procedure followed by hand once on a non-Pi host</td></tr>
 </table>
 
@@ -234,8 +241,10 @@ artifact: "drift/cards-pass/043-handoff-ledger-recut.md"
 <dl>
   <dt>Decided</dt>
   <dd>Derived changelog, not compile-at-release: most projects do not release, and a running log is the common case. Row/entry merging in the driver rather than tree rebuild. Opt-in via command, as with tracking. Keep a Changelog section vocabulary. Day grouping by default. Fragments live at repo root in <code>changelog.d/</code>, committed. Drift-only support.</dd>
+  <dt>Decided later the same day</dt>
+  <dd>No <code>stamp</code>: versions derive from tags. Landing is automatic after a completed handoff when the repo opts in, with the manual command as its ad-hoc form. The check command is any shell command, unset runs nothing and says so.</dd>
   <dt>Open</dt>
-  <dd>Whether <code>stamp</code> ships in step 2 or waits for a project that wants it. Whether the <code>/drift-land</code> check command should default to something when unset (proposal: no default; run nothing). Whether the un-id'd-entry report should also appear in Pi's session context so a thread sees it before publishing.</dd>
+  <dd>Whether the un-id'd-entry report should also appear in Pi's session context so a thread sees it before publishing. The default tag pattern (<code>v*</code>) and whether the section date is the tagged commit's date or the tag's own date for annotated tags.</dd>
 </dl>
 
 <div class="box warn">
