@@ -117,7 +117,8 @@ def load_fragments(repo):
     folder = repo / FRAGMENT_DIR
     if not folder.is_dir():
         return []
-    return [read_fragment(p, repo) for p in sorted(folder.glob("*.md"))]
+    # README.md documents the folder for people and other agents; it is the one file here that is not a fragment.
+    return [read_fragment(p, repo) for p in sorted(folder.glob("*.md")) if p.name != "README.md"]
 
 
 def tag_pattern(repo):
@@ -226,6 +227,8 @@ def render_entry(entry):
 
 
 def render_region(groups, strays=()):
+    if not groups and not strays:
+        return [START, END]  # Exactly what adoption writes, so an empty region is stable.
     lines = [START]
     if strays:
         lines += [""] + list(strays)

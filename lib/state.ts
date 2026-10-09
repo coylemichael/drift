@@ -10,8 +10,8 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 export const hash = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
 export type Fingerprint = Record<string, string>;
-export type Receipt = { digest: string; path: string; kind: string; date: string; sha256: string };
-export type Pending = Receipt & { content: string };
+export type Receipt = { digest: string; path: string; kind: string; date: string; sha256: string; fragment?: string };
+export type Pending = Receipt & { content: string; fragment?: { path: string; content: string } };
 export const artifactPathPattern = /^drift\/[A-Za-z0-9][A-Za-z0-9_-]{0,79}\/\d{3}-(research|plan|handoff)-[a-z0-9-]+\.md$/;
 function validReceipt(value: any): value is Receipt {
   return value && typeof value.path === "string" && artifactPathPattern.test(value.path) &&
@@ -110,21 +110,62 @@ export function mainWorktree(repo: string): Promise<string | undefined> {
   return pending;
 }
 
-/** Host-neutral, repo-local opt-in. Never infer consent from tracked history. */
-export async function trackArtifacts(repo: string): Promise<boolean> {
+/** Repository-root `.drift.json`, validated. Every field is an explicit, host-neutral project choice; nothing is inferred. */
+export interface DriftConfig {
+  trackArtifacts: boolean;
+  changelog: false | { tags: string };
+  land: { auto: boolean; check: string[] } | undefined;
+}
+
+const configShape = "trackArtifacts (boolean), changelog (boolean, or {tags: glob}) and land ({auto: boolean, check: command or [commands]})";
+
+async function rawConfig(repo: string): Promise<{ path: string; raw: Record<string, unknown> | undefined }> {
   const path = await safePath(repo, join(repo, ".drift.json"));
-  if (!(await exists(path))) return false;
+  if (!(await exists(path))) return { path, raw: undefined };
   const stat = await fs.stat(path);
   if (!stat.isFile() || stat.size > 64 * 1024) throw new Error(`Drift configuration must be a regular file of at most 64 KiB: ${path}`);
   let input: unknown;
   try { input = JSON.parse(await fs.readFile(path, "utf8")); }
   catch { throw new Error(`Invalid JSON in Drift configuration: ${path}`); }
-  if (!input || typeof input !== "object" || Array.isArray(input) ||
-      Object.keys(input).some((key) => key !== "trackArtifacts") ||
-      (Object.hasOwn(input, "trackArtifacts") && typeof (input as any).trackArtifacts !== "boolean")) {
-    throw new Error(`Drift configuration must be an object with only an optional boolean trackArtifacts: ${path}`);
+  const invalid = () => new Error(`Drift configuration must be an object with only ${configShape}: ${path}`);
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw invalid();
+  const raw = input as Record<string, unknown>;
+  for (const [key, value] of Object.entries(raw)) {
+    if (key === "trackArtifacts" && typeof value === "boolean") continue;
+    if (key === "changelog" && (typeof value === "boolean" || (value && typeof value === "object" && !Array.isArray(value) &&
+        Object.keys(value).every((k) => k === "tags") && (!("tags" in value) || (typeof (value as any).tags === "string" && (value as any).tags.trim()))))) continue;
+    if (key === "land" && value && typeof value === "object" && !Array.isArray(value) &&
+        Object.keys(value).every((k) => k === "auto" || k === "check") &&
+        (!("auto" in value) || typeof (value as any).auto === "boolean") &&
+        (!("check" in value) || typeof (value as any).check === "string" || (Array.isArray((value as any).check) && (value as any).check.every((c: unknown) => typeof c === "string")))) continue;
+    throw invalid();
   }
-  return (input as { trackArtifacts?: boolean }).trackArtifacts ?? false;
+  return { path, raw };
+}
+
+export async function driftConfig(repo: string): Promise<DriftConfig> {
+  const { raw } = await rawConfig(repo);
+  const changelog = raw?.changelog as boolean | { tags?: string } | undefined;
+  const land = raw?.land as { auto?: boolean; check?: string | string[] } | undefined;
+  return {
+    trackArtifacts: (raw?.trackArtifacts as boolean | undefined) ?? false,
+    changelog: !changelog ? false : { tags: (typeof changelog === "object" && changelog.tags?.trim()) || "v*" },
+    land: land ? { auto: land.auto ?? false, check: land.check === undefined ? [] : Array.isArray(land.check) ? land.check : [land.check] } : undefined,
+  };
+}
+
+/** Write a partial update, keeping every other field. The existing file is validated before it is touched. */
+export async function updateConfig(repo: string, patch: Record<string, unknown>): Promise<void> {
+  const { path, raw } = await rawConfig(repo);
+  const next: Record<string, unknown> = { ...(raw ?? {}), ...patch };
+  for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key];
+  const mode = await exists(path) ? (await fs.stat(path)).mode & 0o777 : 0o644;
+  await atomicWrite(path, JSON.stringify(next, null, 2) + "\n", mode);
+}
+
+/** Host-neutral, repo-local opt-in. Never infer consent from tracked history. */
+export async function trackArtifacts(repo: string): Promise<boolean> {
+  return (await driftConfig(repo)).trackArtifacts;
 }
 
 export type StoreState = "own" | "shared" | "no-main" | "two-stores";

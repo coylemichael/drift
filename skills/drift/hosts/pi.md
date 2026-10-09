@@ -18,6 +18,8 @@ The tool owns the measured frontmatter, sequence allocation, artifact Git-policy
 
 The publisher writes the artifact's initial `status` (see "Artifact Status" in `SKILL.md`): research `complete`, plan `pending`, handoff `in-progress` unless you pass `status: "complete"` for finished work. Later transitions on older artifacts — `in-progress`, `complete`, `superseded` — are not publications; edit only that frontmatter line in place yourself. Do that after any retry of the artifact's own publication has succeeded, because a retry verifies the published file is unchanged.
 
+When the repository has run `/drift-changelog on` (session context and `/drift-changelog status` say so), pass `changelog: { section, text }` with any artifact that records a user-visible change: the publisher writes `changelog.d/<feature>-<NNN>-<slug>.md` in the same transaction and regenerates `CHANGELOG.md`; the tool result names the fragment and says whether the changelog was regenerated. Never edit the generated region of `CHANGELOG.md` yourself; if the result reports unrecognised lines, tell the user which lines and leave them. Without the opt-in, omit `changelog` and suggest the command when the user wants a changelog kept.
+
 For a handoff, also pass `next_session_profile` (see "Profile-directed handoffs" in `SKILL.md`). The profile names the kind of receiving work, not a provider/model. Successful handoff publication completes only this thread's current interval; do not delete its record.
 
 ## Profile-directed continuation

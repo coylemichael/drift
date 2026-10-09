@@ -2,8 +2,9 @@ import { CONFIG_DIR_NAME, getAgentDir, type ExtensionAPI, type ExtensionContext 
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { publish, setArtifactTracking, syncIndex, trackArtifacts, type TrackingRequest } from "../lib/artifacts.ts";
-import { attributeFor, indexDriver, indexDriverCommand, installDriver } from "../lib/git-drivers.ts";
-import { artifactStore, repoRoot, Records } from "../lib/state.ts";
+import { sections, setChangelog, syncChangelog, type ChangelogRequest, type ChangelogSync } from "../lib/changelog.ts";
+import { attributeFor, changelogDriver, changelogDriverCommand, indexDriver, indexDriverCommand, installDriver } from "../lib/git-drivers.ts";
+import { artifactStore, driftConfig, repoRoot, Records } from "../lib/state.ts";
 import { pickup } from "../lib/pickup.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
 import { registerSkillBinding } from "./skill-binding.ts";
@@ -59,6 +60,10 @@ export default function drift(pi: ExtensionAPI) {
       storesReported.add(repo);
       if (await syncIndex(repo)) ctx.ui.notify("Drift rebuilt drift/INDEX.md from the repository's artifacts", "info");
       await installIndexDriver(repo, ctx);
+      const changelog = await syncChangelog(repo);
+      if (changelog.status === "written") ctx.ui.notify("Drift regenerated CHANGELOG.md from changelog.d/", "info");
+      else if (changelog.status === "unrecognised") ctx.ui.notify(`Drift did not regenerate CHANGELOG.md: ${changelog.detail}`, "warning");
+      await installChangelogDriver(repo, ctx);
     } catch (error) {
       const content = `Drift could not refresh drift/INDEX.md: ${errorText(error)}\nRecording continues; the index is rebuilt on the next publication or session.`;
       pi.sendMessage({ customType: "drift-index", content, display: true });
@@ -76,6 +81,17 @@ export default function drift(pi: ExtensionAPI) {
     if (result.status === "installed") ctx.ui.notify("Drift installed its drift/INDEX.md merge driver in this clone; other threads' index rows now merge on rebase", "info");
     if (result.status === "conflict") ctx.ui.notify(`Drift left merge.${indexDriver.name}.driver as already configured (${result.existing}); the bundled driver was not installed`, "warning");
   }
+
+  async function installChangelogDriver(repo: string, ctx: ExtensionContext) {
+    if ((await driftConfig(repo)).changelog === false || await attributeFor(repo, changelogDriver.path) !== changelogDriver.name) return;
+    const result = await installDriver(repo, changelogDriver.name, changelogDriver.description, await changelogDriverCommand());
+    if (result.status === "installed") ctx.ui.notify("Drift installed its CHANGELOG.md merge driver in this clone; other threads' entries now merge on rebase", "info");
+    if (result.status === "conflict") ctx.ui.notify(`Drift left merge.${changelogDriver.name}.driver as already configured (${result.existing}); the bundled driver was not installed`, "warning");
+  }
+
+  const describeSync = (sync: ChangelogSync) =>
+    sync.status === "written" ? "CHANGELOG.md regenerated" : sync.status === "unchanged" ? "CHANGELOG.md already current" :
+    sync.status === "unrecognised" ? `CHANGELOG.md not regenerated: ${sync.detail}` : sync.status === "skipped" ? `CHANGELOG.md not regenerated: ${sync.detail}` : "changelog generation is off";
 
   function report(message: string, ctx?: ExtensionContext) {
     const content = `Drift could not establish/update its record: ${message}\nFix the cause and reload/start a fresh Pi thread. No successful recording is claimed.`;
@@ -152,6 +168,24 @@ export default function drift(pi: ExtensionAPI) {
         const repo = await repoRoot(ctx.cwd);
         if (!repo) throw new Error("/drift-track-artifacts requires Pi's working directory to be inside the target Git repository");
         ctx.ui.notify(await setArtifactTracking(repo, request as TrackingRequest), "info");
+      } catch (error) {
+        ctx.ui.notify(errorText(error), "error");
+      }
+    },
+  });
+
+  // The user's choice to generate CHANGELOG.md from fragments. A command, never a model turn.
+  const changelogRequests = ["on", "off", "status"] as const;
+  pi.registerCommand("drift-changelog", {
+    description: "Generate this repo's CHANGELOG.md from changelog.d/ fragments: on, off or status (no argument toggles)",
+    getArgumentCompletions: (prefix) => changelogRequests.filter((value) => value.startsWith(prefix.trim())).map((value) => ({ value, label: value })),
+    handler: async (args, ctx) => {
+      try {
+        const request = args.trim().toLowerCase() || "toggle";
+        if (!["toggle", ...changelogRequests].includes(request)) throw new Error("Usage: /drift-changelog [on|off|status]");
+        const repo = await repoRoot(ctx.cwd);
+        if (!repo) throw new Error("/drift-changelog requires Pi's working directory to be inside the target Git repository");
+        ctx.ui.notify(await setChangelog(repo, request as ChangelogRequest), "info");
       } catch (error) {
         ctx.ui.notify(errorText(error), "error");
       }
@@ -251,6 +285,10 @@ export default function drift(pi: ExtensionAPI) {
       previous_handoff: Type.Optional(Type.String({ description: "Existing repository-relative drift/...md path; omit or use an empty string when none" })),
       related_artifacts: Type.Optional(Type.Array(Type.String(), { description: "Existing drift/...md paths; use [] when none. Blank entries are ignored." })),
       next_session_profile: Type.Optional(Type.String({ description: "Portable lowercase-hyphenated model profile for the receiving session; handoffs only." })),
+      changelog: Type.Optional(Type.Object({
+        section: StringEnum(sections),
+        text: Type.String({ description: "One Markdown bullet describing the user-visible change; no blank lines", maxLength: 4096 }),
+      }, { additionalProperties: false, description: "The change's changelog entry, written as a changelog.d/ fragment beside the artifact. Only when the repo has run /drift-changelog on; omit otherwise." })),
     }, { additionalProperties: false }),
     async execute(_id, params, signal, _update, ctx) {
       if (signal?.aborted) throw new Error("Publication cancelled before starting");
@@ -259,10 +297,16 @@ export default function drift(pi: ExtensionAPI) {
       if (!records) throw new Error("drift_publish requires Pi's cwd to be inside the target Git repository");
       // Finish an entered publication even if inference is cancelled: leave a receipt or retryable intent.
       const receipt = await publish(records, params);
+      let changelog = "";
+      if (receipt.fragment) {
+        // Regeneration failing never undoes a publication; the next publication or session start retries it.
+        try { changelog = `\nFragment: ${receipt.fragment}\nChangelog: ${describeSync(await syncChangelog(records.repo))}`; }
+        catch (error) { changelog = `\nFragment: ${receipt.fragment}\nChangelog: not regenerated (${errorText(error)}); it is rebuilt on the next publication or session.`; }
+      }
       const autoContinue = params.kind === "handoff" && params.next_session_profile;
       if (autoContinue) pendingContinuationPath = receipt.path;
       return {
-        content: [{ type: "text" as const, text: `Published ${receipt.path}\nIndex: drift/INDEX.md\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${autoContinue ? "\nA fresh profiled context window is queued automatically." : ""}` }],
+        content: [{ type: "text" as const, text: `Published ${receipt.path}\nIndex: drift/INDEX.md${changelog}\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${autoContinue ? "\nA fresh profiled context window is queued automatically." : ""}` }],
         details: receipt,
       };
     },

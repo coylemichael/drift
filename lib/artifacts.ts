@@ -1,10 +1,11 @@
 import * as fs from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { artifactPathPattern, artifactStore, atomicWrite, exists, git, hash, mergeInProgress, now, python, Records, run, safePath, trackArtifacts, withLock } from "./state.ts";
+import { artifactPathPattern, artifactStore, atomicWrite, driftConfig, exists, git, hash, mergeInProgress, now, python, Records, run, safePath, trackArtifacts, updateConfig, withLock } from "./state.ts";
 import type { Pending, Receipt, RecordData } from "./state.ts";
 export { trackArtifacts } from "./state.ts";
 import { hasAttribute, indexAttributeLine, indexDriver } from "./git-drivers.ts";
+import { sections } from "./changelog.ts";
 
 export interface ArtifactInput {
   feature: string;
@@ -16,7 +17,11 @@ export interface ArtifactInput {
   previous_handoff?: string;
   related_artifacts?: string[];
   next_session_profile?: string;
+  /** One changelog bullet, written as a changelog.d/ fragment beside the artifact when the repo has opted in. */
+  changelog?: { section: string; text: string };
 }
+
+const fragmentPathPattern = /^changelog\.d\/[A-Za-z0-9][A-Za-z0-9_-]{0,159}\.md$/;
 
 const profilePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -41,7 +46,7 @@ function optionalReference(value: unknown, field: string): string | undefined {
   return value.trim() || undefined;
 }
 
-async function validate(repo: string, input: ArtifactInput): Promise<ArtifactInput> {
+async function validate(repo: string, input: ArtifactInput, changelogEnabled: boolean): Promise<ArtifactInput> {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(input.feature)) throw new Error("Feature must be a safe folder identifier (letters, digits, hyphens, underscores)");
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(input.slug) || input.slug.length > 80) throw new Error("Slug must be lowercase words separated by hyphens");
   if (!Object.hasOwn(headings, input.kind)) throw new Error("Unknown artifact kind");
@@ -63,6 +68,16 @@ async function validate(repo: string, input: ArtifactInput): Promise<ArtifactInp
   if (input.kind !== "handoff" && nextProfile !== undefined) {
     throw new Error("next_session_profile is only supported for handoff artifacts");
   }
+  let changelog: ArtifactInput["changelog"];
+  if (input.changelog !== undefined) {
+    if (!changelogEnabled) throw new Error("Changelog fragments are not enabled for this repository: run /drift-changelog on first, or omit changelog");
+    const { section, text } = (input.changelog ?? {}) as { section?: unknown; text?: unknown };
+    if (typeof section !== "string" || !(sections as readonly string[]).includes(section)) throw new Error(`changelog.section must be one of ${sections.join(", ")}`);
+    if (typeof text !== "string" || !text.trim() || Buffer.byteLength(text) > 4096 || /\n\s*\n/.test(text.trim()) || /<!--|-->/.test(text)) {
+      throw new Error("changelog.text must be one non-empty bullet of at most 4 KiB, without blank lines or HTML comments");
+    }
+    changelog = { section, text: text.trim() };
+  }
   const source = optionalReference(input.source_research, "source_research");
   const previous = optionalReference(input.previous_handoff, "previous_handoff");
   if (input.related_artifacts !== undefined && !Array.isArray(input.related_artifacts)) throw new Error("related_artifacts must be an array of artifact paths or omitted");
@@ -81,6 +96,7 @@ async function validate(repo: string, input: ArtifactInput): Promise<ArtifactInp
     ...(previous ? { previous_handoff: previous } : {}),
     ...(related ? { related_artifacts: [...new Set(related)] } : {}),
     ...(nextProfile ? { next_session_profile: nextProfile } : {}),
+    ...(changelog ? { changelog } : {}),
   };
 }
 
@@ -175,7 +191,7 @@ export async function setArtifactTracking(repo: string, request: TrackingRequest
   // Off writes false only over an explicit true: a missing file already means the default.
   const writeConfig = tracked !== current && (tracked || originalConfig !== undefined);
   if (writeConfig) {
-    await atomicWrite(config, `{ "trackArtifacts": ${tracked} }\n`, await modeOf(config));
+    await updateConfig(repo, { trackArtifacts: tracked }); // Keeps the repo's other Drift settings.
     changes.unshift(`set trackArtifacts to ${tracked} in .drift.json`);
   }
   if (nextIgnore !== originalIgnore) await atomicWrite(ignore, nextIgnore!, await modeOf(ignore));
@@ -276,11 +292,19 @@ async function prepare(repo: string, root: string, record: RecordData, input: Ar
   }
   const frontmatter = Object.entries(fields).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n");
   const content = `---\n${frontmatter}\n---\n\n${input.body}`;
-  return { digest, path, kind: input.kind, date, content, sha256: hash(content) };
+  // The fragment is named after the artifact, so two threads' fragments can never share a name.
+  const fragment = input.changelog ? {
+    path: `changelog.d/${input.feature}-${sequence}-${input.slug}.md`,
+    content: `---\ndate: ${JSON.stringify(date)}\nsection: ${JSON.stringify(input.changelog.section)}\nartifact: ${JSON.stringify(path)}\n---\n${input.changelog.text}\n`,
+  } : undefined;
+  return { digest, path, kind: input.kind, date, content, sha256: hash(content), ...(fragment ? { fragment } : {}) };
 }
 
 function validatePending(record: RecordData, pending: Pending): void {
   // Reject corrupt/edited state rather than following arbitrary paths in it.
+  if (pending.fragment !== undefined && (!fragmentPathPattern.test(pending.fragment.path) || typeof pending.fragment.content !== "string")) {
+    throw new Error("Invalid pending changelog fragment; record left untouched for recovery");
+  }
   if (!artifactPathPattern.test(pending.path) ||
       !/^[a-f0-9]{64}$/.test(pending.digest) || typeof pending.content !== "string" || hash(pending.content) !== pending.sha256 ||
       !pending.content.includes(`session_id: ${JSON.stringify(record.sessionId)}\n`) ||
@@ -291,9 +315,10 @@ function validatePending(record: RecordData, pending: Pending): void {
 
 /** Code, not the model, supplies identity/frontmatter and completes the interval. */
 export async function publish(store: Records, raw: ArtifactInput, interpreter?: string): Promise<Receipt> {
-  const tracked = await trackArtifacts(store.repo);
+  const config = await driftConfig(store.repo);
+  const tracked = config.trackArtifacts;
   const { root } = await artifactStore(store.repo, tracked);
-  const input = await validate(root, raw);
+  const input = await validate(root, raw, config.changelog !== false);
   const drift = await safePath(root, join(root, "drift"));
   await fs.mkdir(drift, { recursive: true });
   const index = await safePath(root, join(drift, "INDEX.md"));
@@ -309,6 +334,11 @@ export async function publish(store: Records, raw: ArtifactInput, interpreter?: 
     const path = await safePath(root, resolve(root, relativePath));
     if (!relativePath.startsWith(`drift/${input.feature}/`)) throw new Error("Mismatched publication receipt");
     await ensureArtifactPolicy(root, [path, index], tracked);
+    // Fragments live in the worktree and travel with the code, never in the (possibly shared) artifact store.
+    const fragmentPath = pending?.fragment ? await safePath(store.repo, resolve(store.repo, pending.fragment.path)) : undefined;
+    if (fragmentPath && (await git(store.repo, ["check-ignore", "--no-index", fragmentPath], 1)).trim()) {
+      throw new Error(`Git ignores ${pending!.fragment!.path}; changelog fragments must be committed with the code. Resolve the ignore rule, then retry the same input.`);
+    }
     if (pending) {
       validatePending(record, pending);
       record.pending = pending;
@@ -326,6 +356,18 @@ export async function publish(store: Records, raw: ArtifactInput, interpreter?: 
     } else if (!(await exists(path)) || hash(await fs.readFile(path)) !== receipt!.sha256) {
       throw new Error(`Published artifact was removed or changed: ${relativePath}; receipt retained`);
     }
+    if (pending?.fragment && fragmentPath) {
+      await fs.mkdir(dirname(fragmentPath), { recursive: true });
+      if (await exists(fragmentPath)) {
+        if (await fs.readFile(fragmentPath, "utf8") !== pending.fragment.content) throw new Error(`Changelog fragment conflicts with an existing file; nothing overwritten: ${pending.fragment.path}`);
+      } else {
+        const staged = join(dirname(fragmentPath), `.drift-${digest}.tmp`);
+        try {
+          await atomicWrite(staged, pending.fragment.content, 0o644);
+          await fs.link(staged, fragmentPath);
+        } finally { await fs.rm(staged, { force: true }); }
+      }
+    }
     // One shared renderer; no second TS index implementation. stdout permits atomic replacement.
     const content = await run(interpreter ?? await python(), ["-I", builder, drift, "--stdout"], root);
     if (!content.includes(`](${relativePath.slice("drift/".length)})`)) throw new Error("Index renderer did not include the artifact");
@@ -333,7 +375,7 @@ export async function publish(store: Records, raw: ArtifactInput, interpreter?: 
     const mode = await exists(index) ? (await fs.stat(index)).mode & 0o777 : 0o644;
     await atomicWrite(index, content, mode);
     if (await fs.readFile(index, "utf8") !== content) throw new Error("Index verification failed");
-    const result = receipt ?? { digest, path: pending!.path, kind: pending!.kind, date: pending!.date, sha256: pending!.sha256 };
+    const result: Receipt = receipt ?? { digest, path: pending!.path, kind: pending!.kind, date: pending!.date, sha256: pending!.sha256, ...(pending!.fragment ? { fragment: pending!.fragment.path } : {}) };
     if (!receipt) {
       await store.capture(record, "publish");
       record.receipts.push(result);

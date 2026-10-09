@@ -158,6 +158,42 @@ sees the whole history in `/drift`, so nothing is lost when the worktree is
 removed. Tracked worktrees keep a folder each, because those artifacts travel
 with the branch.
 
+### Changelog from fragments (per repository)
+
+Many agents editing one `[Unreleased]` section conflict on every rebase and lose
+entries to "keep mine" resolutions. `/drift-changelog on` makes `CHANGELOG.md`
+a generated file instead: one fragment per change in `changelog.d/`, named after
+the artifact so names never collide, and the file rebuilt between two marker
+comments at each publication and session start, with the project's own text
+outside the markers preserved byte for byte. Entries are grouped by the first
+version tag whose tree contains the fragment (`v*` by default; configurable as
+`changelog.tags` in `.drift.json`), so releases need no step of their own;
+untagged entries are `[Unreleased]`, and a repository without version tags is
+grouped by day. `on` also writes `CHANGELOG.md merge=drift-changelog` to
+`.gitattributes`; the matching driver, installed per clone at session start,
+unions entries by id on rebase and three-way merges the hand-written parts.
+
+`drift_publish` takes an optional `changelog: { section, text }` and writes the
+fragment beside the artifact in the same transaction:
+
+```
+changelog.d/cards-pass-043-ledger-recut.md
+---
+date: "2026-10-09T16:29:21+01:00"
+section: "Changed"
+artifact: "drift/cards-pass/043-handoff-ledger-recut.md"
+---
+One Markdown bullet; further lines continue it. No blank lines.
+```
+
+A bullet edited in `CHANGELOG.md` that keeps its trailing id comment is written
+back to its fragment. A line added to the generated region without an id is
+reported with its line number and left alone; regeneration skips until it is
+moved into a fragment or deleted. Drift does not guess at text it did not
+write. `on` refuses a repository that already uses changesets or towncrier.
+`changelog.d/README.md` states the convention for anything else that reads the
+repository. Nothing is staged or committed.
+
 In Zed, Pi extension commands only appear in the `/` menu with an adapter that
 advertises them; upstream `pi-acp` v0.0.33 does not, and also leaves a turn
 open until a model run settles, so a command that never starts one spins.

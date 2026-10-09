@@ -8,7 +8,10 @@ import { git, python } from "./state.ts";
  */
 export const indexDriver = { name: "drift-index", description: "Drift index row merge", path: "drift/INDEX.md" } as const;
 export const indexAttributeLine = `${indexDriver.path} merge=${indexDriver.name}`;
+export const changelogDriver = { name: "drift-changelog", description: "Drift changelog merge", path: "CHANGELOG.md" } as const;
+export const changelogAttributeLine = `${changelogDriver.path} merge=${changelogDriver.name}`;
 const builder = fileURLToPath(new URL("../scripts/build-index.py", import.meta.url));
+const changelogBuilder = fileURLToPath(new URL("../scripts/build-changelog.py", import.meta.url));
 
 /** Whether a .gitattributes text already gives `path` the merge driver `name`, whatever else the line sets. */
 export function hasAttribute(text: string, path: string, name: string): boolean {
@@ -20,6 +23,10 @@ export function hasAttribute(text: string, path: string, name: string): boolean 
 /** Git runs drivers through `sh -c`, which eats backslashes: forward slashes even on Windows. */
 export async function indexDriverCommand(interpreter?: string): Promise<string> {
   return `${interpreter ?? await python()} -I ${builder.replaceAll("\\", "/")} --merge %O %A %B`;
+}
+
+export async function changelogDriverCommand(interpreter?: string): Promise<string> {
+  return `${interpreter ?? await python()} -I ${changelogBuilder.replaceAll("\\", "/")} --merge %O %A %B`;
 }
 
 /** The merge driver name `.gitattributes` assigns to `path` in this checkout, if any. */

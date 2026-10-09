@@ -126,7 +126,7 @@ async function fixture(t: any, broken = false) {
     const publish = (/^PUBLISH_(RESEARCH|HANDOFF|AUTO_HANDOFF)/.test(marker) || (chainStep > 0 && chainStep <= 3)) && !messages.slice(user + 1).some((message: any) => message.role === "tool");
     const kind = marker.startsWith("PUBLISH_RESEARCH") ? "research" : "handoff";
     // Real models may fill optional string fields with "" rather than omit them.
-    const args = { feature: "runtime", kind, slug: chainStep ? "chain" : "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: chainArtifact ? `drift/runtime/${chainArtifact[1]}-handoff-chain.md` : "", related_artifacts: [], ...(marker.startsWith("PUBLISH_AUTO_HANDOFF") || (chainStep > 0 && chainStep < 3) ? { next_session_profile: "architecture" } : {}) };
+    const args = { feature: "runtime", kind, slug: chainStep ? "chain" : "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: chainArtifact ? `drift/runtime/${chainArtifact[1]}-handoff-chain.md` : "", related_artifacts: [], ...(marker.startsWith("PUBLISH_AUTO_HANDOFF") || (chainStep > 0 && chainStep < 3) ? { next_session_profile: "architecture" } : {}), ...(marker.startsWith("PUBLISH_HANDOFF_CHANGELOG") ? { changelog: { section: "Changed", text: "Fixture change." } } : {}) };
     const delta = publish ? { role: "assistant", tool_calls: [{ index: 0, id: `publish-${kind}`, type: "function", function: { name: "drift_publish", arguments: JSON.stringify(args) } }] } : { role: "assistant", content: "Synthetic fixture response; preserve the bounded task and continue." };
     const common = { id: "drift-fixture", object: "chat.completion.chunk", created: 0, model: "fixture" };
     response.writeHead(200, { "content-type": "text/event-stream", connection: "close" });
@@ -301,6 +301,28 @@ test("actual Pi installs the index merge driver at session start in a tracked cl
   const other = g.rpc();
   await other.prompt("hello");
   assert.equal((await git(g.repo, ["config", "--get", "merge.drift-index.driver"], 1)).trim(), "");
+});
+
+test("actual Pi: /drift-changelog on, a publication carrying a changelog entry, regeneration, and the driver at the next session start", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+  const f = await fixture(t); const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
+  await client.request({ type: "prompt", message: "/drift-changelog on" });
+  await until(() => fs.stat(join(f.repo, "changelog.d", "README.md")).catch(() => undefined), "command did not adopt the changelog");
+  await client.prompt("PUBLISH_HANDOFF_CHANGELOG");
+  const record = await f.readRecord(state.sessionId);
+  assert.ok(record.completed, client.stderr);
+  assert.equal(record.completed.fragment, "changelog.d/runtime-001-fixture.md");
+  assert.match(await fs.readFile(join(f.repo, "changelog.d", "runtime-001-fixture.md"), "utf8"), /section: "Changed"\nartifact: "drift\/runtime\/001-handoff-fixture\.md"\n---\nFixture change\.\n$/);
+  const changelog = await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8");
+  // No version tags in the fixture, so entries group by day.
+  assert.match(changelog, /^# Changelog\n\n<!-- drift:changelog[^\n]*\n\n## \d{4}-\d{2}-\d{2}\n\n### Changed\n\n- Fixture change\. <!-- changelog\.d\/runtime-001-fixture\.md [^ ]+ -->\n\n<!-- \/drift:changelog -->\n\n## \[0\.0\.1\] - 2026-01-01\n\n- old\n$/);
+  assert.ok(client.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && JSON.stringify(event).includes("Fragment: changelog.d/runtime-001-fixture.md")));
+
+  const second = f.rpc();
+  await second.request({ type: "get_state" });
+  const driver = await until(async () => (await git(f.repo, ["config", "--get", "merge.drift-changelog.driver"], 1)).trim(), "changelog driver was not installed at session start");
+  assert.match(driver, /^\S+ -I \S+\/scripts\/build-changelog\.py --merge %O %A %B$/);
 });
 
 test("actual Pi automatically continues a profiled handoff after a fresh context compaction", { skip: !piPresent, timeout: 60_000 }, async (t) => {
