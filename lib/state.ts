@@ -44,7 +44,8 @@ export function now(): string {
 
 export async function run(binary: string, args: string[], cwd: string, optional: boolean | number = false): Promise<string> {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
-  Object.assign(env, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: devNull, LC_ALL: "C" });
+  // Git for Windows rejects os.devNull (\\.\nul) as a config path but accepts NUL.
+  Object.assign(env, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : devNull, LC_ALL: "C" });
   try {
     return (await exec(binary, args, { cwd, env, timeout: 30_000, maxBuffer: 8 * 1024 * 1024 })).stdout;
   } catch (error: any) {
@@ -59,6 +60,21 @@ export async function run(binary: string, args: string[], cwd: string, optional:
 
 export const git = (repo: string, args: string[], optional: boolean | number = false) =>
   run("git", ["--no-optional-locks", "-c", "core.fsmonitor=false", ...args], repo, optional);
+
+let interpreter: Promise<string> | undefined;
+/** DRIFT_PYTHON, else the first working Python 3. Windows' python3 is often a Store stub that exits non-zero. */
+export function python(): Promise<string> {
+  return interpreter ??= (async () => {
+    if (process.env.DRIFT_PYTHON) return process.env.DRIFT_PYTHON;
+    for (const candidate of process.platform === "win32" ? ["python3", "python", "py"] : ["python3"]) {
+      try {
+        await run(candidate, ["-c", "import sys; sys.exit(sys.version_info < (3,))"], process.cwd());
+        return candidate;
+      } catch { /* try the next candidate */ }
+    }
+    throw new Error("Python 3 was not found; install it or set DRIFT_PYTHON");
+  })();
+}
 
 export async function repoRoot(cwd: string): Promise<string | undefined> {
   try {

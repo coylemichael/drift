@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { artifactPathPattern, atomicWrite, exists, git, hash, now, Records, run, safePath, withLock } from "./state.ts";
+import { artifactPathPattern, atomicWrite, exists, git, hash, now, python, Records, run, safePath, withLock } from "./state.ts";
 import type { Pending, Receipt, RecordData } from "./state.ts";
 
 export interface ArtifactInput {
@@ -151,7 +151,7 @@ function validatePending(record: RecordData, pending: Pending): void {
 }
 
 /** Code, not the model, supplies identity/frontmatter and completes the interval. */
-export async function publish(store: Records, raw: ArtifactInput, python = process.env.DRIFT_PYTHON || "python3"): Promise<Receipt> {
+export async function publish(store: Records, raw: ArtifactInput, interpreter?: string): Promise<Receipt> {
   const input = await validate(store.repo, raw);
   const tracked = await trackArtifacts(store.repo);
   const drift = await safePath(store.repo, join(store.repo, "drift"));
@@ -187,7 +187,7 @@ export async function publish(store: Records, raw: ArtifactInput, python = proce
       throw new Error(`Published artifact was removed or changed: ${relativePath}; receipt retained`);
     }
     // One shared renderer; no second TS index implementation. stdout permits atomic replacement.
-    const content = await run(python, ["-I", builder, drift, "--stdout"], store.repo);
+    const content = await run(interpreter ?? await python(), ["-I", builder, drift, "--stdout"], store.repo);
     if (!content.includes(`](${relativePath.slice("drift/".length)})`)) throw new Error("Index renderer did not include the artifact");
     await safePath(store.repo, index);
     const mode = await exists(index) ? (await fs.stat(index)).mode & 0o777 : 0o644;

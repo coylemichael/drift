@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { delta, fingerprint, git, Records, run, safePath, withLock } from "../lib/state.ts";
+import { delta, fingerprint, git, python, Records, run, safePath, withLock } from "../lib/state.ts";
 import { publish } from "../lib/artifacts.ts";
 import type { ArtifactInput } from "../lib/artifacts.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
@@ -46,7 +46,7 @@ test("durable open is idempotent; completed intervals only rotate on a new worki
   const initial = await a.read();
   assert.deepEqual(Object.keys(initial.baseline), ["inherited.txt"]);
   assert.match(initial.started, /[+-]\d\d:\d\d$/);
-  assert.equal((await fs.stat(a.file)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal((await fs.stat(a.file)).mode & 0o777, 0o600);
   assert.deepEqual(await (await Records.open(repo, "session-a", agent))!.read(), initial);
   await a.beginTurn();
   assert.deepEqual(await a.read(), initial);
@@ -134,7 +134,7 @@ test("publication supplies original metadata, stable numbering, references and a
   assert.ok(text.includes(`start_commit: ${JSON.stringify(baseline.startCommit)}`));
   assert.ok(text.includes(`source_research: ${JSON.stringify(first.path)}`));
   assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), "/drift/\n");
-  await run("python3", [join(root, "scripts/build-index.py"), join(repo, "drift"), "--check"], repo);
+  await run(await python(), [join(root, "scripts/build-index.py"), join(repo, "drift"), "--check"], repo);
 });
 
 test("repo-local tracked artifacts publish without creating ignores or staging files", async (t) => {
@@ -148,7 +148,7 @@ test("repo-local tracked artifacts publish without creating ignores or staging f
   assert.ok(visible.includes(receipt.path));
   assert.ok(visible.includes("drift/INDEX.md"));
   assert.equal(await git(repo, ["diff", "--cached", "--name-only"]), "");
-  await run("python3", [join(root, "scripts/build-index.py"), join(repo, "drift"), "--check"], repo);
+  await run(await python(), [join(root, "scripts/build-index.py"), join(repo, "drift"), "--check"], repo);
 
   // Explicitly committing is the user's job; the choice and handoff travel together.
   await git(repo, ["add", ".drift.json", "drift"]);
@@ -442,7 +442,7 @@ test("multiple processes allocate different artifact numbers and preserve every 
   assert.deepEqual(paths.map((path) => path.slice(0, 3)).sort(), ["001", "002", "003"]);
   const index = await fs.readFile(join(repo, "drift/INDEX.md"), "utf8");
   assert.equal(index.split("\n").filter((line) => /^\| \d+ \|/.test(line)).length, 3);
-  await run("python3", [join(root, "scripts/build-index.py"), join(repo, "drift"), "--check"], repo);
+  await run(await python(), [join(root, "scripts/build-index.py"), join(repo, "drift"), "--check"], repo);
 });
 
 test("busy locks fail visibly and are never silently reaped", async (t) => {
@@ -498,7 +498,7 @@ test("one index renderer orders offsets/legacy/undated data; stdout never writes
   await fs.writeFile(join(feature, "002-handoff-earlier.md"), "---\ndate: 2026-09-01T00:00:00+01:00\ntype: handoff\n---\n");
   await fs.writeFile(join(feature, "handoffs/old.md"), "**Date:** 2026-08-01\n");
   await fs.writeFile(join(feature, "no-date.md"), "Undated context\n");
-  const result = await run("python3", [join(root, "scripts/build-index.py"), drift, "--stdout"], repo);
+  const result = await run(await python(), [join(root, "scripts/build-index.py"), drift, "--stdout"], repo);
   assert.ok(result.indexOf("002-handoff-earlier") < result.indexOf("001-handoff-later"));
   assert.ok(result.includes("feature/handoffs/old.md"));
   assert.ok(result.includes("(approx)")); assert.ok(result.includes("## Undated"));
