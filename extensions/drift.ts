@@ -332,7 +332,7 @@ export default function drift(pi: ExtensionAPI) {
       let landed = "";
       let held = false;
       if (params.kind === "handoff" && (await driftConfig(records.repo)).land?.auto) {
-        try { landed = `\n${describeLanding(await land(records.repo, { records }))}`; }
+        try { landed = `\n${describeLanding(await land(records.repo, { records, message: `drift: publish ${receipt.path}` }))}`; }
         catch (error) {
           held = true;
           landed = `\nNot landed: ${errorText(error)}\nThe handoff is published. Automatic continuation is held; fix the cause, then /drift-land.`;

@@ -391,6 +391,24 @@ test("actual Pi adopts a shared repository's changelog at session start and publ
   assert.ok(f.requests.some((request) => JSON.stringify(request).includes("CHANGELOG.md is generated from changelog.d/ here")));
 });
 
+test("actual Pi lands a shared, tracked repository's handoff with its artifact, index, fragment and changelog committed", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+  const f = await fixture(t);
+  const { branch } = await withOrigin(f);
+  await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
+  await fs.writeFile(join(f.repo, ".drift.json"), '{ "trackArtifacts": true, "land": { "auto": true } }\n');
+  await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
+  await git(f.repo, ["add", "-A"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "shared"]); await git(f.repo, ["push", "-q", "origin", `HEAD:${branch}`]);
+  const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  await client.prompt("PUBLISH_HANDOFF_CHANGELOG");
+  const record = await f.readRecord(state.sessionId);
+  assert.ok(record.completed, client.stderr);
+  const remote = (await git(f.repo, ["ls-tree", "-r", "--name-only", `origin/${branch}`])).trim().split("\n");
+  for (const file of ["drift/runtime/001-handoff-fixture.md", "drift/INDEX.md", "changelog.d/runtime-001-fixture.md", "CHANGELOG.md", ".gitattributes"]) assert.ok(remote.includes(file), `${file} not on origin`);
+  assert.ok(client.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && /Landed \S+ on origin\/[\s\S]*committed \d Drift files first/.test(JSON.stringify(event))));
+  assert.equal((await git(f.repo, ["status", "--porcelain", "--untracked-files=no"])).trim(), "");
+});
+
 test("actual Pi automatically continues a profiled handoff after a fresh context compaction", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
   const state = await client.request({ type: "get_state" });

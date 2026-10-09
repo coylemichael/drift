@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
+import * as fs from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { changelogState } from "./changelog.ts";
+import { changelogAttributeLine, indexAttributeLine } from "./git-drivers.ts";
 import { artifactStore, driftConfig, exists, git, mergeInProgress, python, run, withLock, type DriftConfig, type Records } from "./state.ts";
 
 const indexBuilder = fileURLToPath(new URL("../scripts/build-index.py", import.meta.url));
@@ -17,12 +19,45 @@ export class LandHalt extends Error {
   }
 }
 
-export interface LandOutcome { branch: string; target: string; pushed: string; attempts: number; checks: number; note?: string }
+export interface LandOutcome { branch: string; target: string; pushed: string; attempts: number; checks: number; committed: string[]; note?: string }
+
+// Lines Drift itself puts in the two Git policy files; a diff made of nothing else is Drift's to commit.
+const knownLines = new Set(["/drift/", indexAttributeLine, changelogAttributeLine]);
+
+async function onlyKnownLines(repo: string, file: string, untracked: boolean): Promise<boolean> {
+  const lines = untracked
+    ? (await fs.readFile(join(repo, file), "utf8")).split(/\r?\n/).filter(Boolean).map((line) => line.trim())
+    : (await git(repo, ["diff", "-U0", "--", file])).split(/\r?\n/)
+        .filter((line) => /^[+-]/.test(line) && !/^(\+\+\+|---)/.test(line))
+        .map((line) => line.startsWith("-") ? "\0removed" : line.slice(1).trim()); // A removal is never Drift's.
+  return lines.length > 0 && lines.every((line) => knownLines.has(line));
+}
+
+/**
+ * A publication leaves its outputs in the tree: the artifact and index when tracked, the fragment, the regenerated
+ * changelog, Drift's own policy lines. They come from the same action and hold nothing the agent decided, so the
+ * landing commits them; anything else dirty is the agent's and stops the landing. Returns what was committed.
+ */
+async function commitDriftOutputs(repo: string, message: string): Promise<string[]> {
+  const entries = (await git(repo, ["status", "--porcelain", "--untracked-files=all"])).split("\n").filter(Boolean)
+    .map((line) => ({ code: line.slice(0, 2), file: line.slice(3).replace(/^"(.*)"$/, "$1") }));
+  const owned: string[] = [];
+  for (const { code, file } of entries) {
+    if (file.startsWith("drift/") || file.startsWith("changelog.d/") || file === "CHANGELOG.md") owned.push(file);
+    else if ((file === ".gitignore" || file === ".gitattributes") && await onlyKnownLines(repo, file, code === "??")) owned.push(file);
+  }
+  if (!owned.length) return [];
+  await git(repo, ["add", "--", ...owned]);
+  await git(repo, ["commit", "--quiet", "-m", message]);
+  return owned;
+}
 export interface LandOptions {
   /** This thread's record, checkpointed with reason `land` once the push succeeds. */
   records?: Records;
   /** Test seam: runs between the checks and the push, where another thread's landing can intervene. */
   beforePush?: () => Promise<void>;
+  /** Commit message for Drift's own publication outputs, when any are uncommitted. */
+  message?: string;
 }
 
 async function defaultBranch(repo: string): Promise<string> {
@@ -87,8 +122,12 @@ export async function land(repo: string, options: LandOptions = {}): Promise<Lan
   const branch = (await git(repo, ["symbolic-ref", "--short", "-q", "HEAD"], true)).trim();
   if (!branch) throw new LandHalt("branch", "Not on a branch (detached HEAD); check out the branch to land first.");
   if (await mergeInProgress(repo)) throw new LandHalt("branch", "A merge or rebase is already in progress; finish or abort it first.");
-  const dirty = (await git(repo, ["status", "--porcelain", "--untracked-files=no"])).split("\n").filter(Boolean);
+  const dirty = (await git(repo, ["status", "--porcelain", "--untracked-files=no"])).split("\n").filter(Boolean)
+    .filter((line) => { const file = line.slice(3); return !(file.startsWith("drift/") || file.startsWith("changelog.d/") || file === "CHANGELOG.md" || file === ".gitignore" || file === ".gitattributes"); });
   if (dirty.length) throw new LandHalt("tree", `Uncommitted changes to tracked files; commit or stash them first (landing never decides what to commit):\n${dirty.join("\n")}`);
+  const committed = await commitDriftOutputs(repo, options.message ?? "drift: record publication outputs");
+  const remaining = (await git(repo, ["status", "--porcelain", "--untracked-files=no"])).split("\n").filter(Boolean);
+  if (remaining.length) throw new LandHalt("tree", `Uncommitted changes to tracked files; commit or stash them first (landing never decides what to commit):\n${remaining.join("\n")}`);
   if (!(await git(repo, ["remote", "get-url", "origin"], true)).trim()) throw new LandHalt("remote", "No origin remote to land on.");
   const common = resolve(repo, (await git(repo, ["rev-parse", "--git-common-dir"])).trim());
   return withLock(join(common, "drift-land.lock"), async () => {
@@ -123,12 +162,13 @@ export async function land(repo: string, options: LandOptions = {}): Promise<Lan
       }
       const pushed = (await git(repo, ["rev-parse", "--short", "HEAD"])).trim();
       await options.records?.checkpoint("land");
-      return { branch, target, pushed, attempts: attempt, checks, ...(config.land?.check?.length ? {} : { note: "no check configured" }) };
+      return { branch, target, pushed, attempts: attempt, checks, committed, ...(config.land?.check?.length ? {} : { note: "no check configured" }) };
     }
     throw new LandHalt("push", `${upstream} kept moving under three attempts; nothing was pushed. Land again.`);
   }, 15 * 60_000);
 }
 
 export function describeLanding(outcome: LandOutcome): string {
-  return `Landed ${outcome.branch} on origin/${outcome.target} at ${outcome.pushed}${outcome.attempts > 1 ? ` (attempt ${outcome.attempts}: the tip moved and the rebase was redone)` : ""}; ${outcome.checks ? `${outcome.checks} check${outcome.checks === 1 ? "" : "s"} passed` : outcome.note ?? "no checks"}.`;
+  const committed = outcome.committed.length ? `; committed ${outcome.committed.length} Drift file${outcome.committed.length === 1 ? "" : "s"} first (${outcome.committed.join(", ")})` : "";
+  return `Landed ${outcome.branch} on origin/${outcome.target} at ${outcome.pushed}${outcome.attempts > 1 ? ` (attempt ${outcome.attempts}: the tip moved and the rebase was redone)` : ""}; ${outcome.checks ? `${outcome.checks} check${outcome.checks === 1 ? "" : "s"} passed` : outcome.note ?? "no checks"}${committed}.`;
 }

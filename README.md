@@ -220,8 +220,12 @@ command run in order, stopping at the first failure, nothing assumed about the
 toolchain and nothing run when unset; `git push origin HEAD:<default>`; redo
 from the fetch when the tip moved, at most three times; a `land` checkpoint on
 the record. Then the profiled continuation starts from landed `main`. It never
-squashes, force-pushes or resets against a moving ref, and never commits:
-uncommitted tracked changes stop it before anything happens.
+squashes, force-pushes or resets against a moving ref. The one thing it commits
+is Drift's own publication output, which the handoff has just produced and which
+holds nothing the agent decided: the artifact and index in a tracked repo, the
+fragment and regenerated changelog, and Drift's own ignore and attribute lines,
+in one `drift: publish <artifact>` commit. Any other uncommitted tracked change
+is the agent's and stops the landing before anything happens.
 
 A real conflict in a non-derived file, or the guard tripping, halts the chain:
 the rebase is aborted, the branch is left as it was, the handoff stays

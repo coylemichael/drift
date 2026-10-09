@@ -929,3 +929,29 @@ test("with an origin remote and a CHANGELOG.md the changelog is generated withou
   assert.equal(await ensureIndexAttribute(repo), false);
   assert.equal(await fs.readFile(join(repo, ".gitattributes"), "utf8"), "CHANGELOG.md merge=drift-changelog\ndrift/INDEX.md merge=drift-index\n");
 });
+
+test("landing commits Drift's own publication outputs first and still halts on anything else", async (t) => {
+  const { repo, agent, branch } = await landing(t);
+  await fs.writeFile(join(repo, ".gitignore"), "logs/*\n");
+  await fs.writeFile(join(repo, ".drift.json"), '{ "trackArtifacts": true }\n');
+  await fs.writeFile(join(repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
+  await git(repo, ["add", "-A"]); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "shared repo"]); await git(repo, ["push", "-q", "origin", `HEAD:${branch}`]);
+  const store = (await Records.open(repo, "session-a", agent))!;
+  const receipt = await publish(store, { ...input, changelog: { section: "Added", text: "Landed with its handoff." } });
+  await syncChangelog(repo);
+  const outcome = await land(repo, { records: store, message: `drift: publish ${receipt.path}` });
+  assert.deepEqual([...outcome.committed].sort(), [".gitattributes", "CHANGELOG.md", "changelog.d/README.md", "changelog.d/TEST-1-001-fixture.md", "drift/INDEX.md", "drift/TEST-1/001-handoff-fixture.md"]);
+  assert.match(describeLanding(outcome), /committed 6 Drift files first/);
+  const remote = (await git(repo, ["ls-tree", "-r", "--name-only", `origin/${branch}`])).trim().split("\n");
+  for (const file of outcome.committed) assert.ok(remote.includes(file), file);
+  assert.equal((await git(repo, ["log", "-1", "--format=%s"])).trim(), `drift: publish ${receipt.path}`);
+  assert.equal((await git(repo, ["status", "--porcelain", "--untracked-files=no"])).trim(), "");
+
+  // The agent's own uncommitted work is not Drift's to commit.
+  await fs.writeFile(join(repo, "file.txt"), "edited by the agent\n");
+  await assert.rejects(land(repo), (error: any) => error instanceof LandHalt && error.stage === "tree" && /file\.txt/.test(error.message));
+  await git(repo, ["checkout", "--", "file.txt"]);
+  // Nor is a .gitignore change that is not one of Drift's own lines.
+  await fs.appendFile(join(repo, ".gitignore"), "secret.env\n");
+  await assert.rejects(land(repo), (error: any) => error instanceof LandHalt && error.stage === "tree" && /\.gitignore/.test(error.message));
+});
