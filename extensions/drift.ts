@@ -181,7 +181,7 @@ export default function drift(pi: ExtensionAPI) {
       kind: StringEnum(["research", "plan", "handoff"] as const),
       slug: Type.String({ description: "Lowercase hyphenated filename description" }),
       body: Type.String({ description: "Markdown with the workflow's required sections; no YAML frontmatter", maxLength: 262144 }),
-      status: Type.Optional(Type.String({ maxLength: 200 })),
+      status: Type.Optional(StringEnum(["pending", "in-progress", "complete"] as const, { description: "Omit for the default: research complete, plan pending, handoff in-progress. Pass complete for a handoff whose work is finished." })),
       source_research: Type.Optional(Type.String({ description: "Existing repository-relative drift/...md path; omit or use an empty string when none" })),
       previous_handoff: Type.Optional(Type.String({ description: "Existing repository-relative drift/...md path; omit or use an empty string when none" })),
       related_artifacts: Type.Optional(Type.Array(Type.String(), { description: "Existing drift/...md paths; use [] when none. Blank entries are ignored." })),

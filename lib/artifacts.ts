@@ -18,6 +18,14 @@ export interface ArtifactInput {
 
 const profilePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+// The states a new artifact may be published in; the first is the default. Later
+// transitions (in-progress, superseded) are in-place frontmatter edits, not publications.
+const statuses: Record<ArtifactInput["kind"], string[]> = {
+  research: ["complete"],
+  plan: ["pending"],
+  handoff: ["in-progress", "complete"],
+};
+
 const headings = {
   research: ["Research Question", "Summary", "Detailed Findings", "Code References", "Open Questions"],
   plan: ["Objective", "Source Research", "Starting Point", "Key Files", "Implementation Sequence", "Decisions & Constraints", "Open Questions"],
@@ -40,7 +48,9 @@ async function validate(repo: string, input: ArtifactInput): Promise<ArtifactInp
   }
   const missing = headings[input.kind].filter((heading) => !new RegExp(`^## ${heading}\\s*$`, "m").test(input.body));
   if (missing.length) throw new Error(`Missing sections: ${missing.join(", ")}`);
-  if (input.status !== undefined && (typeof input.status !== "string" || input.status.length > 200 || /[\r\n]/.test(input.status))) throw new Error("Status must be a single line, at most 200 characters");
+  if (input.status !== undefined && !statuses[input.kind].includes(input.status)) {
+    throw new Error(`A new ${input.kind} must have status ${statuses[input.kind].join(" or ")}`);
+  }
   if (input.next_session_profile !== undefined && typeof input.next_session_profile !== "string") {
     throw new Error("next_session_profile must be a lowercase hyphenated profile name or omitted");
   }
@@ -118,7 +128,7 @@ async function prepare(repo: string, record: RecordData, input: ArtifactInput, d
   const fields: Record<string, unknown> = {
     date, branch: (await git(repo, ["symbolic-ref", "--short", "HEAD"], true)).trim() || "HEAD",
     git_commit: (await git(repo, ["rev-parse", "--verify", "HEAD"], true)).trim() || null,
-    feature: input.feature, sequence, type: input.kind,
+    feature: input.feature, sequence, type: input.kind, status: statuses[input.kind][0],
     session_started: record.started, session_id: record.sessionId, interval_id: record.intervalId,
     start_branch: record.startBranch, start_commit: record.startCommit,
   };

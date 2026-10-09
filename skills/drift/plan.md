@@ -19,6 +19,7 @@ You are tasked with turning a research document into an actionable handoff for a
 - Read the research document provided.
 - Read any critical files it references (schemas, existing extraction code, prompts, etc.) to confirm they still match what the research describes. If a referenced file has changed significantly, note the discrepancy in Open Questions — do not re-research, but flag it so the implementation session can assess.
 - Check `drift/<feature>/` for any existing plan or handoff files on this feature.
+- If this plan replaces an earlier plan for the same work (re-planning after a failed or abandoned run), flip that older plan's frontmatter `status` to `superseded` after writing the new one. Change nothing else in the old file.
 - The current source research document convention is `drift/<feature>/NNN-research-<topic>.md`.
 
 ## Output Format
@@ -82,8 +83,11 @@ sequence: [Three-digit artifact sequence]
 source_research: [Path to the research document]
 related_artifacts: [List of related Drift artifact paths, if any]
 type: plan
+status: pending
 ---
 ```
+
+New plans always start at `status: pending`. The executing session (see `execute.md`) flips it to `in-progress` when execution starts and `complete` when every step is verified; it becomes `superseded` only if a newer plan replaces it. See "Artifact Status" in `SKILL.md`.
 
 Take `date` from the system clock, never from an estimate or from a previous artifact's value — `date -Iseconds`, or `python3 -c 'import datetime; print(datetime.datetime.now().astimezone().isoformat(timespec="seconds"))'` where portability matters. Both print the required form with the machine's real offset. A guessed timestamp reads as measured and silently corrupts the index ordering; see "Timestamps" in `SKILL.md`.
 

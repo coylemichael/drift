@@ -318,6 +318,22 @@ test("handoff next-session profiles are persisted and restricted to handoffs", a
   await assert.rejects(publish(other, { ...input, next_session_profile: "Architecture Review" }), /lowercase/);
 });
 
+test("artifact status defaults per kind and only accepts the states a new artifact can start in", async (t) => {
+  const { repo, agent } = await fixture(t);
+  const store = (await Records.open(repo, "session-a", agent))!;
+  const research: ArtifactInput = { feature: "TEST-1", kind: "research", slug: "facts", body: ["Research Question", "Summary", "Detailed Findings", "Code References", "Open Questions"].map((heading) => `## ${heading}\nObserved fact.\n`).join("\n") };
+  const plan: ArtifactInput = { feature: "TEST-1", kind: "plan", slug: "steps", body: ["Objective", "Source Research", "Starting Point", "Key Files", "Implementation Sequence", "Decisions & Constraints", "Open Questions"].map((heading) => `## ${heading}\nPlanned step.\n`).join("\n") };
+  const status = async (path: string) => /^status: (.*)$/m.exec((await fs.readFile(join(repo, path), "utf8")).split("---\n")[1])![1];
+  await assert.rejects(publish(store, { ...research, status: "pending" }), /research must have status complete/);
+  await assert.rejects(publish(store, { ...plan, status: "superseded" }), /plan must have status pending/);
+  await assert.rejects(publish(store, { ...input, status: "Done for now" }), /in-progress or complete/);
+  assert.equal(await status((await publish(store, research)).path), '"complete"');
+  assert.equal(await status((await publish(store, plan)).path), '"pending"');
+  assert.equal(await status((await publish(store, { ...input, status: "complete" })).path), '"complete"');
+  const other = (await Records.open(repo, "session-b", agent))!;
+  assert.equal(await status((await publish(other, input)).path), '"in-progress"');
+});
+
 test("model profile configuration and handoff route parsing stay local and path-safe", async (t) => {
   const { repo, agent } = await fixture(t);
   await fs.mkdir(agent, { recursive: true });

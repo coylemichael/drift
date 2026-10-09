@@ -12,6 +12,8 @@ Use `drift_publish` to save research, plan and handoff artifacts. First read the
 
 The tool owns the measured frontmatter, sequence allocation, artifact Git-policy enforcement, artifact/index writes and handoff completion. It reads repository-root `.drift.json` on every publication: `trackArtifacts: true` leaves ignores untouched and requires trackable artifact/index paths; missing/false retains the ignored default. It never stages or commits. Do not duplicate those writes or delete session records yourself. It rebuilds the index using the shared renderer, which may normalize index boilerplate without rewriting historical artifacts. Optional source/previous references may be omitted or blank; use `[]` when there are no related artifacts. Correct argument validation errors before retrying. Once a pending publication exists, keep the record and retry the **same input**; report conflicts instead of deleting partial work.
 
+The publisher writes the artifact's initial `status` (see "Artifact Status" in `SKILL.md`): research `complete`, plan `pending`, handoff `in-progress` unless you pass `status: "complete"` for finished work. Later transitions on older artifacts — `in-progress`, `complete`, `superseded` — are not publications; edit only that frontmatter line in place yourself. Do that after any retry of the artifact's own publication has succeeded, because a retry verifies the published file is unchanged.
+
 For a handoff, also pass `next_session_profile` (see "Profile-directed handoffs" in `SKILL.md`). The profile names the kind of receiving work, not a provider/model. Successful handoff publication completes only this thread's current interval; do not delete its record.
 
 ## Profile-directed continuation

@@ -91,6 +91,20 @@ drift/
 
 `INDEX.md` is the repository-wide chronological timeline.
 
+Each artifact's frontmatter also carries a `status` — `pending`, `in-progress`,
+`complete` or `superseded` — so you can see which plans have run and which
+handoffs are still live without opening files:
+
+```sh
+grep -r "^status:" drift/
+```
+
+Plans start `pending` and execution flips them to `in-progress`, then
+`complete`; handoffs are written `in-progress` or `complete` and become
+`superseded` when a later handoff resumes them; research is `complete` on write.
+Flipping `status` is the one in-place edit Drift makes to an existing artifact.
+It is not an index column, because index rows never change.
+
 ### Artifact Git policy (per repository)
 
 Artifacts are ignored by default. To let handoffs travel between machines,

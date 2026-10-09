@@ -118,11 +118,29 @@ When creating a new artifact file:
 4. Do not split new artifacts into `research/`, `plans/`, or `handoffs/` subfolders.
 5. If the user points to an existing Drift artifact or legacy subfolder path, infer the feature from that path and continue in the same feature folder. Preserve the existing path only when explicitly writing a follow-up for a legacy chain; otherwise write the next flat numbered file in `drift/<feature>/`.
 
-Do not maintain per-feature navigation files such as `drift/<feature>/CURRENT.md`, and do not move feature folders between status directories such as `active/` and `done/`. Within a feature, navigation comes from the numbered artifact filenames. Across features, it comes from `drift/INDEX.md` — see below.
+Do not maintain per-feature navigation files such as `drift/<feature>/CURRENT.md`, and do not move feature folders between status directories such as `active/` and `done/`. Within a feature, navigation comes from the numbered artifact filenames. Across features, it comes from `drift/INDEX.md` — see below. Work state comes from each artifact's `status` frontmatter field — see Artifact Status below — never from filenames or directory moves. Do not encode status words such as `complete` into artifact filename slugs.
 
 If later work is related to the same feature, create another numbered artifact in that feature folder rather than modifying an older artifact. If the work is a distinct feature, create a new feature folder.
 
 If the target project root is unclear, ask the user before writing any Drift artifact.
+
+## Artifact Status
+
+Every Drift artifact carries a `status` field in its frontmatter so in-flight work can be tracked without opening files:
+
+- `pending` — written but not yet started (a plan awaiting execution)
+- `in-progress` — actively being worked, or a handoff whose Next Steps have not been picked up yet
+- `complete` — the work the artifact describes is finished
+- `superseded` — replaced by a newer artifact in the same feature folder
+
+Updating `status` is the **one exception** to artifact immutability: flip the `status` line of an older artifact in place as work progresses, and never edit any other part of it — not its body, not its other frontmatter. Keep the line's existing quoting style (a host publisher writes `status: "pending"`). The transitions are owned by the workflow files:
+
+- `research.md` — writes research as `complete`; flips older research to `superseded` when new research replaces it.
+- `plan.md` — writes plans as `pending`; flips any plan it replaces to `superseded`.
+- `execute.md` — flips the source plan to `in-progress` when execution starts, and to `complete` once every step is verified.
+- `handoff.md` — writes handoffs as `in-progress` (work remains) or `complete` (work finished); flips the resumed handoff to `superseded` when a successor is written.
+
+Status is deliberately **not** an index column. `drift/INDEX.md` is an append-only timeline whose existing rows never change, while status changes over an artifact's life. To see current state, read the frontmatter: `grep -r "^status:" drift/`.
 
 ## The Root Index
 

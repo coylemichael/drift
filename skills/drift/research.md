@@ -18,6 +18,7 @@ description: Use when researching or documenting how the codebase works - answer
   - All artifacts for the feature live directly under `drift/<feature>/`; do not create `research/`, `plans/`, or `handoffs/` subfolders for new artifacts.
 - Treat each artifact file as a new step in the feature narrative. If the user starts related research later, create a new numbered `research` file rather than modifying an older artifact.
 - Check `drift/<feature>/` for existing research files on the topic.
+- If the new research replaces an older research artifact (same question, fresher answer), flip that older file's frontmatter `status` to `superseded` after writing the new one. Change nothing else in the old file.
 
 ## Output Format
 
@@ -78,7 +79,10 @@ feature: [Feature folder name]
 sequence: [Three-digit artifact sequence]
 related_artifacts: [List of related Drift artifact paths, if any]
 type: research
+status: complete
 ---
 ```
+
+Research is finished the moment it is written, so it always starts at `status: complete`. The only later transition is to `superseded`, applied when newer research replaces it. See "Artifact Status" in `SKILL.md`.
 
 Take `date` from the system clock, never from an estimate or from a previous artifact's value — `date -Iseconds`, or `python3 -c 'import datetime; print(datetime.datetime.now().astimezone().isoformat(timespec="seconds"))'` where portability matters. Both print the required form with the machine's real offset. A guessed timestamp reads as measured and silently corrupts the index ordering; see "Timestamps" in `SKILL.md`.

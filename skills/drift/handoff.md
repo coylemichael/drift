@@ -93,12 +93,21 @@ previous_handoff: [Path to previous handoff, if any]
 related_artifacts: [List of related Drift artifact paths, if any]
 next_session_profile: [Portable lower-case-hyphenated receiving profile]
 type: handoff
+status: [in-progress if work remains for a next session, complete if the work is finished]
 ---
 ```
 
 Take `date` from the system clock, never from an estimate or from a previous artifact's value — `date -Iseconds`, or `python3 -c 'import datetime; print(datetime.datetime.now().astimezone().isoformat(timespec="seconds"))'` where portability matters. Both print the required form with the machine's real offset. A guessed timestamp reads as measured and silently corrupts the index ordering; see "Timestamps" in `SKILL.md`.
 
 If a session record exists, add `session_started: [the record's started value]` beneath `date`. `date` is when the handoff was written; `session_started` is when the work began. Copy it from the record rather than working it out.
+
+### Status updates
+
+After writing the handoff, update frontmatter `status` lines (and nothing else) on earlier artifacts in the chain — see "Artifact Status" in `SKILL.md`:
+
+- If this handoff continues from a `previous_handoff`, flip that older handoff to `superseded` — this handoff now represents current state.
+- If this session finished the work described in a plan, flip that plan to `complete`. If work remains, leave the plan at `in-progress` (flip it from `pending` if execution actually started this session).
+- Do not rename files or encode status words such as `complete` into the filename slug — status lives in frontmatter only.
 
 ## Session Records
 
@@ -137,4 +146,4 @@ A host overlay may continue a profiled handoff automatically; see "Host overlays
 6. Pick up at the **Next Steps** section of the handoff
 7. Do not re-investigate the codebase or re-research. Trust the handoff's description of current state
 8. If a file reference in the handoff no longer matches what's on disk, note the discrepancy and adapt — don't halt
-9. When you finish or need to stop, write a new handoff using the format above, referencing the one you resumed from as `previous_handoff` and using the next flat numbered artifact file in the same feature folder
+9. When you finish or need to stop, write a new handoff using the format above, referencing the one you resumed from as `previous_handoff` and using the next flat numbered artifact file in the same feature folder. Then flip the resumed handoff's frontmatter `status` to `superseded` per Status updates above

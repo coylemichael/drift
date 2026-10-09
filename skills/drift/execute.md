@@ -24,6 +24,7 @@ You are the **orchestrator** of an implementation session driven by an existing 
 - Build a **step queue** from the input:
   - From a plan artifact (`NNN-plan-...`) → the Implementation Sequence
   - From a handoff artifact (`NNN-handoff-...` or legacy) → the Next Steps
+- Before starting the first step, flip the source plan's frontmatter `status` to `in-progress` (if the input is a plan and it isn't already). Update only the `status` line — never any other part of the artifact.
 
 ## Delegation Heuristics
 
@@ -128,6 +129,14 @@ Follow `handoff.md` for format, path allocation (`NNN-handoff-<description>.md`)
 - Where the next session should resume → **Next Steps**
 
 Reference the plan or prior handoff you executed against as `previous_handoff` in the frontmatter. Include any related artifacts (source research, prior plans) under `related_artifacts`. If the input was a legacy subfolder path, still write the new handoff as the next flat numbered file in `drift/<feature>/` unless the user explicitly asks to preserve the legacy chain.
+
+### Status updates on stop
+
+After writing the handoff, update frontmatter `status` lines (and nothing else) on earlier artifacts — see "Artifact Status" in `SKILL.md`:
+
+- **Sequence complete, all steps verified** → flip the source plan to `complete`. The new handoff carries `status: complete`.
+- **Stopping mid-sequence** (context, blocker, or bad plan) → leave the plan at `in-progress`. The new handoff carries `status: in-progress`.
+- **Input was a prior handoff** → flip that resumed handoff to `superseded`; the new handoff now represents the current state.
 
 ## Guidelines
 
