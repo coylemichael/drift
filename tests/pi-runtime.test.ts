@@ -246,22 +246,26 @@ test("actual Pi publishes repo-opted-in tracked artifacts without changing ignor
   assert.ok(client.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && !event.isError));
 });
 
-test("actual Pi drift-track-artifacts opts the repo in without inference, then publishes trackable artifacts", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+test("actual Pi /drift-track-artifacts is an extension command that toggles tracking without inference", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
   const state = await client.request({ type: "get_state" });
+  const listed = (await client.request({ type: "get_commands" })).commands.find((command: any) => command.name === "drift-track-artifacts");
+  assert.equal(listed?.source, "extension"); // What pi-acp advertises to Zed's slash menu.
   const before = f.requests.length;
-  await client.request({ type: "prompt", message: "drift-track-artifacts" });
-  await until(async () => (await fs.readFile(join(f.repo, ".gitignore"), "utf8")) === "", "command did not drop the drift/ ignore rule");
-  await delay(100);
-  assert.equal(f.requests.length, before); // A user command, never a model turn.
+  await client.request({ type: "prompt", message: "/drift-track-artifacts" }); // Acknowledged once the handler has finished.
+  assert.equal(await fs.readFile(join(f.repo, ".gitignore"), "utf8"), "");
   assert.deepEqual(JSON.parse(await fs.readFile(join(f.repo, ".drift.json"), "utf8")), { trackArtifacts: true });
+  await until(() => client.events.some((event: any) => event.type === "extension_ui_request" && event.method === "notify" && /now tracked/.test(event.message)), "command did not report its result");
+  assert.equal(f.requests.length, before); // A user command, never a model turn.
   await client.prompt("PUBLISH_HANDOFF");
   const record = await f.readRecord(state.sessionId);
   assert.ok(record.completed, client.stderr);
   const visible = await git(f.repo, ["ls-files", "--others", "--exclude-standard"]);
   assert.ok(visible.includes(record.completed.path));
-  assert.ok(visible.includes(".drift.json"));
   assert.equal(await git(f.repo, ["diff", "--cached", "--name-only"]), "");
+  await client.request({ type: "prompt", message: "/drift-track-artifacts off" });
+  assert.equal(await fs.readFile(join(f.repo, ".gitignore"), "utf8"), "/drift/\n");
+  assert.deepEqual(JSON.parse(await fs.readFile(join(f.repo, ".drift.json"), "utf8")), { trackArtifacts: false });
 });
 
 test("actual Pi automatically continues a profiled handoff after a fresh context compaction", { skip: !piPresent, timeout: 60_000 }, async (t) => {

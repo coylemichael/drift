@@ -126,14 +126,20 @@ automatic commit. Already-tracked artifacts or an `!/drift/` exception alone do
 not select this mode. Invalid JSON, unknown fields, non-boolean values and unsafe
 config paths fail rather than silently selecting a policy.
 
-**On Pi, type `drift-track-artifacts`** in the target repo's thread to opt in.
-It is handled by the extension, never sent to a model. It writes the flag,
-removes the `/drift/` rule (and `/drift`, `drift/`, `drift` variants) from
-`.gitignore`, keeping everything else, then asks Git whether an index and an
-artifact path are trackable. If another rule still ignores them, both files are
-restored and the rule is named. Nothing is staged or committed; it prints the
-`git add`/`git commit` line to run after you review `drift/`. In other hosts,
-make the same two edits and commit them.
+**On Pi, use `/drift-track-artifacts`** in the target repo's thread: `on`, `off`,
+`status`, or no argument to flip the current setting. It is a Pi command, never
+sent to a model. **On** writes the flag and removes the `/drift/` rule (and
+`/drift`, `drift/`, `drift` variants) from `.gitignore`, keeping everything
+else. **Off** writes `false` and adds `/drift/` back; files already committed
+stay tracked until you run the `git rm -r --cached drift` it suggests. Either
+way it then asks Git whether an index and an artifact path landed on the chosen
+side; if another rule defeats the choice, both files are restored and the rule
+is named. Nothing is staged or committed. In other hosts, make the same edits
+and commit them.
+
+In Zed, Pi extension commands only appear in the `/` menu with an adapter that
+advertises them; upstream `pi-acp` v0.0.33 does not, and also leaves a turn
+open until a model run settles, so a command that never starts one spins.
 
 After changing the extension code, reload Pi or open a new Pi adapter connection;
 already-running extensions keep their loaded publisher. Config edits alone need

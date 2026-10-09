@@ -120,44 +120,96 @@ async function checkArtifactPolicy(repo: string, path: string, tracked: boolean)
 
 // The ignore rules that mean "the root drift/ folder": the publisher's own line and its hand-written variants.
 const driftIgnoreRules = new Set(["/drift/", "/drift", "drift/", "drift"]);
+// The index and a real artifact-shaped path: both must land on the chosen side of the policy.
+const policyProbes = ["drift/INDEX.md", "drift/feature/001-handoff-check.md"];
+
+export type TrackingRequest = "on" | "off" | "toggle" | "status";
+
+/** The rule deciding a path, as `"pattern" in source`; verbose output is "source:line:pattern<TAB>path". */
+async function decidingRule(repo: string, path: string): Promise<string | undefined> {
+  const line = (await git(repo, ["check-ignore", "--no-index", "--verbose", "--non-matching", path], 1)).trim();
+  const match = /^(.*):\d+:(.+)\t/.exec(line);
+  return match ? `rule "${match[2]}" in ${match[1]}` : undefined;
+}
+
+/** The first probe on the wrong side of the policy, explained; undefined when Git agrees with it. */
+async function policyProblem(repo: string, tracked: boolean): Promise<string | undefined> {
+  for (const path of policyProbes) {
+    const ignored = Boolean((await git(repo, ["check-ignore", "--no-index", path], 1)).trim());
+    if (ignored !== tracked) continue;
+    const rule = await decidingRule(repo, path);
+    // Git names no rule for a file under a re-included directory, so describe the usual cause instead.
+    return tracked ? `Git still ignores ${path} because of ${rule ?? "an ignore rule"}` : `Git does not ignore ${path}${rule ? ` because of ${rule}` : "; an exception such as !/drift/ re-includes it"}`;
+  }
+  return undefined;
+}
 
 /**
- * The user's explicit opt-in, as a command. Sets the repo flag and drops Drift's ignore rule, then proves with Git
- * that artifacts are trackable; if another rule still ignores them, both files are restored and that rule is named.
- * Never stages or commits. Returns a human-readable report.
+ * The user's explicit tracking choice, as a command: turn committed artifacts on or off, flip them, or report.
+ * Edits only `.drift.json` and Drift's own `drift/` ignore rule, then proves the result with Git; if another rule
+ * defeats the choice, both files are restored and that rule is named. Never stages, commits or untracks.
  */
-export async function enableArtifactTracking(repo: string): Promise<string> {
+export async function setArtifactTracking(repo: string, request: TrackingRequest): Promise<string> {
+  const current = await trackArtifacts(repo); // Validates any existing config before touching it.
+  if (request === "status") {
+    const problem = await policyProblem(repo, current);
+    const state = current ? "tracked: trackArtifacts is true in .drift.json" : "ignored (the default)";
+    return `Drift artifacts in this repo are ${state}.${problem ? `\nBut ${problem}; run /drift-track-artifacts ${current ? "on" : "off"} to repair it.` : ""}`;
+  }
+  const tracked = request === "toggle" ? !current : request === "on";
   const config = await safePath(repo, join(repo, ".drift.json"));
   const ignore = await safePath(repo, join(repo, ".gitignore"));
-  const wasTracked = await trackArtifacts(repo); // Validates any existing config before touching it.
   const originalConfig = await exists(config) ? await fs.readFile(config, "utf8") : undefined;
   const originalIgnore = await exists(ignore) ? await fs.readFile(ignore, "utf8") : undefined;
-  const lines = originalIgnore?.split(/(?<=\n)/) ?? [];
-  const kept = lines.filter((line) => !driftIgnoreRules.has(line.trim()));
+  const modeOf = async (path: string) => await exists(path) ? (await fs.stat(path)).mode & 0o777 : 0o644;
   const changes: string[] = [];
-  if (!wasTracked) {
-    await atomicWrite(config, '{ "trackArtifacts": true }\n', originalConfig === undefined ? 0o644 : (await fs.stat(config)).mode & 0o777);
-    changes.push("set trackArtifacts in .drift.json");
+  let nextIgnore = originalIgnore;
+  if (tracked) {
+    const lines = originalIgnore?.split(/(?<=\n)/) ?? [];
+    const kept = lines.filter((line) => !driftIgnoreRules.has(line.trim()));
+    if (kept.length !== lines.length) {
+      nextIgnore = kept.join("");
+      changes.push(`removed ${lines.length - kept.length} drift/ rule(s) from .gitignore`);
+    }
+  } else if (!(originalIgnore ?? "").split(/\r?\n/).some((line) => driftIgnoreRules.has(line.trim()))) {
+    const text = originalIgnore ?? "";
+    nextIgnore = text + (text && !text.endsWith("\n") ? "\n" : "") + "/drift/\n";
+    changes.push("added /drift/ to .gitignore");
   }
-  if (kept.length !== lines.length) {
-    await atomicWrite(ignore, kept.join(""), (await fs.stat(ignore)).mode & 0o777);
-    changes.push(`removed ${lines.length - kept.length} drift/ rule(s) from .gitignore`);
+  // Off writes false only over an explicit true: a missing file already means the default.
+  const writeConfig = tracked !== current && (tracked || originalConfig !== undefined);
+  if (writeConfig) {
+    await atomicWrite(config, `{ "trackArtifacts": ${tracked} }\n`, await modeOf(config));
+    changes.unshift(`set trackArtifacts to ${tracked} in .drift.json`);
   }
-  // A real artifact-shaped path and the index: both must be visible to Git.
-  for (const path of ["drift/INDEX.md", "drift/feature/001-handoff-check.md"]) {
-    const rule = (await git(repo, ["check-ignore", "--no-index", "--verbose", path], 1)).trim();
-    if (!rule) continue;
-    if (originalConfig === undefined) await fs.rm(config, { force: true });
-    else if (!wasTracked) await atomicWrite(config, originalConfig, (await fs.stat(config)).mode & 0o777);
-    if (originalIgnore !== undefined && kept.length !== lines.length) await atomicWrite(ignore, originalIgnore, (await fs.stat(ignore)).mode & 0o777);
-    // Verbose output is "source:line:pattern<TAB>path"; the line refers to the edited file, so name only the pattern.
-    const [, source, pattern] = /^(.*):\d+:(.*)$/.exec(rule.split("\t")[0]) ?? [, "an ignore file", rule];
-    throw new Error(`Git still ignores ${path} because of rule "${pattern}" in ${source}. Nothing was changed; resolve that rule, then run drift-track-artifacts again.`);
+  if (nextIgnore !== originalIgnore) await atomicWrite(ignore, nextIgnore!, await modeOf(ignore));
+  const problem = await policyProblem(repo, tracked);
+  if (problem) {
+    if (writeConfig) {
+      if (originalConfig === undefined) await fs.rm(config, { force: true });
+      else await atomicWrite(config, originalConfig, await modeOf(config));
+    }
+    if (nextIgnore !== originalIgnore) {
+      if (originalIgnore === undefined) await fs.rm(ignore, { force: true });
+      else await atomicWrite(ignore, originalIgnore, await modeOf(ignore));
+    }
+    throw new Error(`${problem}. Nothing was changed; resolve that rule, then run /drift-track-artifacts ${tracked ? "on" : "off"} again.`);
   }
+  const summary = changes.length ? `: ${changes.join("; ")}` : "; nothing needed changing";
+  if (tracked) {
+    return [
+      `Drift artifacts are now tracked${summary}.`,
+      "Nothing was staged or committed. Review drift/ for anything that should not be shared, then commit:",
+      "  git add .drift.json .gitignore drift && git commit -m \"chore: track Drift artifacts\"",
+    ].join("\n");
+  }
+  const committed = (await git(repo, ["ls-files", "--", "drift"])).split("\n").filter(Boolean).length;
   return [
-    changes.length ? `Drift artifacts are now trackable: ${changes.join("; ")}.` : "Drift artifacts were already trackable; nothing changed.",
-    "Nothing was staged or committed. Review drift/ for anything that should not be shared, then commit:",
-    "  git add .drift.json .gitignore drift && git commit -m \"chore: track Drift artifacts\"",
+    `Drift artifacts are now ignored${summary}.`,
+    ...(committed ? [
+      `${committed} file(s) under drift/ are already committed; ignoring does not untrack them. To stop tracking them and keep the files:`,
+      "  git rm -r --cached drift && git commit -m \"chore: stop tracking Drift artifacts\"",
+    ] : []),
   ].join("\n");
 }
 
