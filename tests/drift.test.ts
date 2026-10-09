@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { atomicWrite, delta, fingerprint, git, python, Records, run, safePath, withLock } from "../lib/state.ts";
-import { publish, syncIndex } from "../lib/artifacts.ts";
+import { enableArtifactTracking, publish, syncIndex } from "../lib/artifacts.ts";
 import type { ArtifactInput } from "../lib/artifacts.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
 
@@ -587,4 +587,31 @@ test("session-start index sync reports a Git-policy mismatch without editing ign
   await fs.writeFile(join(repo, ".drift.json"), '{"trackArtifacts":true}');
   assert.equal(await syncIndex(repo), true); // Tracked mode: a visible index is the expected state.
   assert.ok((await git(repo, ["ls-files", "--others", "--exclude-standard"])).includes("drift/INDEX.md"));
+});
+
+test("drift-track-artifacts opts in, drops only drift/ ignore rules and never stages", async (t) => {
+  const { repo, agent } = await fixture(t);
+  await fs.writeFile(join(repo, ".gitignore"), "logs/*\n# Local research, plans and session handoffs.\n/drift/\nbuild/\n");
+  assert.match(await enableArtifactTracking(repo), /now trackable: set trackArtifacts in \.drift\.json; removed 1 drift\/ rule/);
+  assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { trackArtifacts: true });
+  assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), "logs/*\n# Local research, plans and session handoffs.\nbuild/\n");
+  assert.equal(await git(repo, ["diff", "--cached", "--name-only"]), "");
+  assert.match(await enableArtifactTracking(repo), /already trackable; nothing changed/);
+
+  const store = (await Records.open(repo, "session-a", agent))!;
+  const receipt = await publish(store, input);
+  assert.ok((await git(repo, ["ls-files", "--others", "--exclude-standard"])).includes(receipt.path));
+});
+
+test("drift-track-artifacts restores both files and names the rule when another rule still ignores artifacts", async (t) => {
+  const { repo } = await fixture(t);
+  const ignore = "/drift/\n*.md\n!README.md\n";
+  await fs.writeFile(join(repo, ".gitignore"), ignore);
+  await assert.rejects(enableArtifactTracking(repo), /Git still ignores drift\/INDEX\.md because of rule "\*\.md" in \.gitignore\. Nothing was changed/);
+  assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), ignore);
+  await assert.rejects(fs.stat(join(repo, ".drift.json")), { code: "ENOENT" });
+
+  await fs.writeFile(join(repo, ".drift.json"), '{"trackArtifacts":"yes"}');
+  await assert.rejects(enableArtifactTracking(repo), /Drift configuration/); // Invalid config is reported, not overwritten.
+  assert.equal(await fs.readFile(join(repo, ".drift.json"), "utf8"), '{"trackArtifacts":"yes"}');
 });

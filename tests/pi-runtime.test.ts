@@ -246,6 +246,24 @@ test("actual Pi publishes repo-opted-in tracked artifacts without changing ignor
   assert.ok(client.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && !event.isError));
 });
 
+test("actual Pi drift-track-artifacts opts the repo in without inference, then publishes trackable artifacts", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+  const f = await fixture(t); const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  const before = f.requests.length;
+  await client.request({ type: "prompt", message: "drift-track-artifacts" });
+  await until(async () => (await fs.readFile(join(f.repo, ".gitignore"), "utf8")) === "", "command did not drop the drift/ ignore rule");
+  await delay(100);
+  assert.equal(f.requests.length, before); // A user command, never a model turn.
+  assert.deepEqual(JSON.parse(await fs.readFile(join(f.repo, ".drift.json"), "utf8")), { trackArtifacts: true });
+  await client.prompt("PUBLISH_HANDOFF");
+  const record = await f.readRecord(state.sessionId);
+  assert.ok(record.completed, client.stderr);
+  const visible = await git(f.repo, ["ls-files", "--others", "--exclude-standard"]);
+  assert.ok(visible.includes(record.completed.path));
+  assert.ok(visible.includes(".drift.json"));
+  assert.equal(await git(f.repo, ["diff", "--cached", "--name-only"]), "");
+});
+
 test("actual Pi automatically continues a profiled handoff after a fresh context compaction", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
   const state = await client.request({ type: "get_state" });

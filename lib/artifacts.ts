@@ -118,6 +118,49 @@ async function checkArtifactPolicy(repo: string, path: string, tracked: boolean)
   if (!tracked && !ignored) throw new Error(`Drift artifacts must be ignored by default, but Git does not ignore ${path}. To commit artifacts, explicitly set {"trackArtifacts":true} in the repository-root .drift.json; otherwise resolve the ignore exception.`);
 }
 
+// The ignore rules that mean "the root drift/ folder": the publisher's own line and its hand-written variants.
+const driftIgnoreRules = new Set(["/drift/", "/drift", "drift/", "drift"]);
+
+/**
+ * The user's explicit opt-in, as a command. Sets the repo flag and drops Drift's ignore rule, then proves with Git
+ * that artifacts are trackable; if another rule still ignores them, both files are restored and that rule is named.
+ * Never stages or commits. Returns a human-readable report.
+ */
+export async function enableArtifactTracking(repo: string): Promise<string> {
+  const config = await safePath(repo, join(repo, ".drift.json"));
+  const ignore = await safePath(repo, join(repo, ".gitignore"));
+  const wasTracked = await trackArtifacts(repo); // Validates any existing config before touching it.
+  const originalConfig = await exists(config) ? await fs.readFile(config, "utf8") : undefined;
+  const originalIgnore = await exists(ignore) ? await fs.readFile(ignore, "utf8") : undefined;
+  const lines = originalIgnore?.split(/(?<=\n)/) ?? [];
+  const kept = lines.filter((line) => !driftIgnoreRules.has(line.trim()));
+  const changes: string[] = [];
+  if (!wasTracked) {
+    await atomicWrite(config, '{ "trackArtifacts": true }\n', originalConfig === undefined ? 0o644 : (await fs.stat(config)).mode & 0o777);
+    changes.push("set trackArtifacts in .drift.json");
+  }
+  if (kept.length !== lines.length) {
+    await atomicWrite(ignore, kept.join(""), (await fs.stat(ignore)).mode & 0o777);
+    changes.push(`removed ${lines.length - kept.length} drift/ rule(s) from .gitignore`);
+  }
+  // A real artifact-shaped path and the index: both must be visible to Git.
+  for (const path of ["drift/INDEX.md", "drift/feature/001-handoff-check.md"]) {
+    const rule = (await git(repo, ["check-ignore", "--no-index", "--verbose", path], 1)).trim();
+    if (!rule) continue;
+    if (originalConfig === undefined) await fs.rm(config, { force: true });
+    else if (!wasTracked) await atomicWrite(config, originalConfig, (await fs.stat(config)).mode & 0o777);
+    if (originalIgnore !== undefined && kept.length !== lines.length) await atomicWrite(ignore, originalIgnore, (await fs.stat(ignore)).mode & 0o777);
+    // Verbose output is "source:line:pattern<TAB>path"; the line refers to the edited file, so name only the pattern.
+    const [, source, pattern] = /^(.*):\d+:(.*)$/.exec(rule.split("\t")[0]) ?? [, "an ignore file", rule];
+    throw new Error(`Git still ignores ${path} because of rule "${pattern}" in ${source}. Nothing was changed; resolve that rule, then run drift-track-artifacts again.`);
+  }
+  return [
+    changes.length ? `Drift artifacts are now trackable: ${changes.join("; ")}.` : "Drift artifacts were already trackable; nothing changed.",
+    "Nothing was staged or committed. Review drift/ for anything that should not be shared, then commit:",
+    "  git add .drift.json .gitignore drift && git commit -m \"chore: track Drift artifacts\"",
+  ].join("\n");
+}
+
 /**
  * Session-start refresh. Artifacts written by hand or by another host may never have reached the index, so
  * render it from frontmatter and write it when missing or different. Never creates drift/ or an empty index,

@@ -1,7 +1,7 @@
 import { CONFIG_DIR_NAME, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { publish, syncIndex } from "../lib/artifacts.ts";
+import { enableArtifactTracking, publish, syncIndex } from "../lib/artifacts.ts";
 import { repoRoot, Records } from "../lib/state.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
 import { registerSkillBinding } from "./skill-binding.ts";
@@ -107,6 +107,19 @@ export default function drift(pi: ExtensionAPI) {
   });
 
   // Bare syntax keeps the copy/paste continuation prompt from being interpreted as a slash command by hosts that reserve those.
+  // The user's explicit tracking opt-in. Handled here, never by a model, so the choice cannot be inferred.
+  pi.on("input", async (event, ctx) => {
+    if (event.text.trim() !== "drift-track-artifacts") return { action: "continue" };
+    try {
+      const repo = await repoRoot(ctx.cwd);
+      if (!repo) throw new Error("drift-track-artifacts requires Pi's working directory to be inside the target Git repository");
+      ctx.ui.notify(await enableArtifactTracking(repo), "info");
+    } catch (error) {
+      ctx.ui.notify(errorText(error), "error");
+    }
+    return { action: "handled" };
+  });
+
   pi.on("input", async (event, ctx) => {
     const match = /^drift-continue(?:\s+([\s\S]*))?$/.exec(event.text.trim());
     if (!match) return { action: "continue" };

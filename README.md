@@ -126,6 +126,15 @@ automatic commit. Already-tracked artifacts or an `!/drift/` exception alone do
 not select this mode. Invalid JSON, unknown fields, non-boolean values and unsafe
 config paths fail rather than silently selecting a policy.
 
+**On Pi, type `drift-track-artifacts`** in the target repo's thread to opt in.
+It is handled by the extension, never sent to a model. It writes the flag,
+removes the `/drift/` rule (and `/drift`, `drift/`, `drift` variants) from
+`.gitignore`, keeping everything else, then asks Git whether an index and an
+artifact path are trackable. If another rule still ignores them, both files are
+restored and the rule is named. Nothing is staged or committed; it prints the
+`git add`/`git commit` line to run after you review `drift/`. In other hosts,
+make the same two edits and commit them.
+
 After changing the extension code, reload Pi or open a new Pi adapter connection;
 already-running extensions keep their loaded publisher. Config edits alone need
 no reload. Review artifacts before committing: handoffs can contain private
