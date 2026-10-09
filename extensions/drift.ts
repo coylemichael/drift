@@ -164,12 +164,12 @@ export default function drift(pi: ExtensionAPI) {
   // The user's explicit tracking choice. A command, never a model turn, so the choice cannot be inferred.
   const trackingRequests = ["on", "off", "status"] as const;
   pi.registerCommand("drift-track-artifacts", {
-    description: "Commit this repo's Drift artifacts to Git: on, off or status (no argument toggles)",
+    description: "Commit this repo's Drift artifacts to Git: on, off or status (no argument shows status)",
     getArgumentCompletions: (prefix) => trackingRequests.filter((value) => value.startsWith(prefix.trim())).map((value) => ({ value, label: value })),
     handler: async (args, ctx) => {
       try {
-        const request = args.trim().toLowerCase() || "toggle";
-        if (!["toggle", ...trackingRequests].includes(request)) throw new Error("Usage: /drift-track-artifacts [on|off|status]");
+        const request = args.trim().toLowerCase() || "status"; // A bare command is safe: it only reports.
+        if (!trackingRequests.includes(request as any)) throw new Error("Usage: /drift-track-artifacts on|off|status (no argument shows status)");
         const repo = await repoRoot(ctx.cwd);
         if (!repo) throw new Error("/drift-track-artifacts requires Pi's working directory to be inside the target Git repository");
         ctx.ui.notify(await setArtifactTracking(repo, request as TrackingRequest), "info");
@@ -186,8 +186,8 @@ export default function drift(pi: ExtensionAPI) {
     getArgumentCompletions: (prefix) => changelogRequests.filter((value) => value.startsWith(prefix.trim())).map((value) => ({ value, label: value })),
     handler: async (args, ctx) => {
       try {
-        const request = args.trim().toLowerCase() || "toggle";
-        if (!["toggle", ...changelogRequests].includes(request)) throw new Error("Usage: /drift-changelog [on|off|status]");
+        const request = args.trim().toLowerCase() || "status"; // A bare command is safe: it only reports.
+        if (!changelogRequests.includes(request as any)) throw new Error("Usage: /drift-changelog on|off|status (no argument shows status)");
         const repo = await repoRoot(ctx.cwd);
         if (!repo) throw new Error("/drift-changelog requires Pi's working directory to be inside the target Git repository");
         ctx.ui.notify(await setChangelog(repo, request as ChangelogRequest), "info");

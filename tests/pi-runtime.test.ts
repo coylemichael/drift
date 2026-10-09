@@ -252,7 +252,7 @@ test("actual Pi /drift-track-artifacts is an extension command that toggles trac
   const listed = (await client.request({ type: "get_commands" })).commands.find((command: any) => command.name === "drift-track-artifacts");
   assert.equal(listed?.source, "extension"); // What pi-acp advertises to Zed's slash menu.
   const before = f.requests.length;
-  await client.request({ type: "prompt", message: "/drift-track-artifacts" }); // Acknowledged once the handler has finished.
+  await client.request({ type: "prompt", message: "/drift-track-artifacts on" }); // Acknowledged once the handler has finished.
   assert.equal(await fs.readFile(join(f.repo, ".gitignore"), "utf8"), "");
   assert.deepEqual(JSON.parse(await fs.readFile(join(f.repo, ".drift.json"), "utf8")), { trackArtifacts: true });
   await until(() => client.events.some((event: any) => event.type === "extension_ui_request" && event.method === "notify" && /now tracked/.test(event.message)), "command did not report its result");

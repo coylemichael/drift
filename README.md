@@ -61,6 +61,11 @@ ln -s ~/projects/drift ~/.claude/skills/drift
 ```
 
 The skill is advertised as `drift:drift`. Remove the symlink to uninstall.
+Claude namespaces everything a plugin provides, so `/drift` itself comes from a
+personal command file. Copy `claude/commands/drift.md` from this checkout to
+`~/.claude/commands/drift.md`; then `/drift`, `/drift <artifact>` and
+`/drift <request>` behave as on Pi (pick up the newest artifact, a named one,
+or run a Drift request), expanding to the `drift:drift` skill with your words.
 On this host Drift is currently the skill alone: artifacts are written by the
 portable manual procedure, and the profiled continuation chain described
 below is Pi-only until the Claude worker agents and hooks land.
@@ -127,7 +132,7 @@ not select this mode. Invalid JSON, unknown fields, non-boolean values and unsaf
 config paths fail rather than silently selecting a policy.
 
 **On Pi, use `/drift-track-artifacts`** in the target repo's thread: `on`, `off`,
-`status`, or no argument to flip the current setting. It is a Pi command, never
+or `status` (no argument shows status). It is a Pi command, never
 sent to a model. **On** writes the flag and removes the `/drift/` rule (and
 `/drift`, `drift/`, `drift` variants) from `.gitignore`, keeping everything
 else. **Off** writes `false` and adds `/drift/` back; files already committed
