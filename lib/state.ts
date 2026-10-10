@@ -18,8 +18,28 @@ function validReceipt(value: any): value is Receipt {
     ["research", "plan", "handoff"].includes(value.kind) && /^[a-f0-9]{64}$/.test(value.digest) &&
     /^[a-f0-9]{64}$/.test(value.sha256) && typeof value.date === "string" && !Number.isNaN(Date.parse(value.date));
 }
+/** A preserved exited interval: its original measured fields and receipts, never re-measured or nested. */
+export interface IntervalSnapshot {
+  intervalId: string;
+  started: string;
+  startBranch: string;
+  startCommit: string | null;
+  baseline: Fingerprint;
+  checkpoint?: { at: string; reason: string; files: string[]; commits: string[] };
+  receipts: Receipt[];
+  completed?: Receipt;
+  previousHandoff?: string;
+  /** Absolute canonical worktree root this interval measured. */
+  worktree: string;
+  worktreeIdentity?: string;
+  exited: string;
+  reason: string;
+  /** Final capture was impossible (worktree removed or replaced); the previous checkpoint is kept as-is. */
+  checkpointError?: string;
+}
 export interface RecordData {
-  version: 1;
+  /** Version 2 scopes intervals to adopted worktrees; old publishers must reject, not misread them as launch-root measurements. */
+  version: 1 | 2;
   repo: string;
   sessionId: string;
   intervalId: string;
@@ -32,6 +52,43 @@ export interface RecordData {
   receipts: Receipt[];
   completed?: Receipt;
   previousHandoff?: string;
+  /** Absolute canonical root of the explicitly adopted worktree; absent means the launch repository (`repo`). */
+  worktree?: string;
+  /** Identity of the worktree's Git directory, so recycling a path requires a new measured adoption. */
+  worktreeIdentity?: string;
+  /** Exited intervals preserved across explicit worktree adoption. Flat; snapshots hold no history. */
+  history?: IntervalSnapshot[];
+}
+
+/** A recoverable scope failure: the adopted (or requested) worktree is unavailable or not this repository's. */
+export class WorktreeScopeError extends Error {
+  constructor(message: string) { super(message); this.name = "WorktreeScopeError"; }
+}
+
+function validCheckpoint(value: any): boolean {
+  return Boolean(value) && typeof value === "object" && typeof value.at === "string" && typeof value.reason === "string" &&
+    Array.isArray(value.files) && value.files.every((f: unknown) => typeof f === "string") &&
+    Array.isArray(value.commits) && value.commits.every((c: unknown) => typeof c === "string");
+}
+/** The measured interval fields shared by active records and snapshots. */
+function validInterval(r: any): boolean {
+  return typeof r.intervalId === "string" && typeof r.started === "string" && !Number.isNaN(Date.parse(r.started)) &&
+    typeof r.startBranch === "string" && (r.startCommit === null || /^[a-f0-9]{40,64}$/.test(r.startCommit)) &&
+    Boolean(r.baseline) && typeof r.baseline === "object" && !Array.isArray(r.baseline) &&
+    Object.values(r.baseline).every((value) => typeof value === "string") && Array.isArray(r.receipts) &&
+    r.receipts.every(validReceipt) &&
+    (r.checkpoint === undefined || validCheckpoint(r.checkpoint)) &&
+    (r.previousHandoff === undefined || typeof r.previousHandoff === "string") &&
+    (r.completed === undefined || (validReceipt(r.completed) && r.completed.kind === "handoff" && r.receipts.some((item: Receipt) => item.digest === r.completed.digest)));
+}
+const validRoot = (value: unknown) => typeof value === "string" && isAbsolute(value) && resolve(value) === value;
+const validIdentity = (value: unknown) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+const snapshotKeys = new Set(["intervalId", "started", "startBranch", "startCommit", "baseline", "checkpoint", "receipts", "completed", "previousHandoff", "worktree", "worktreeIdentity", "exited", "reason", "checkpointError"]);
+function validSnapshot(s: any): s is IntervalSnapshot {
+  return Boolean(s) && typeof s === "object" && !Array.isArray(s) && Object.keys(s).every((key) => snapshotKeys.has(key)) &&
+    validInterval(s) && validRoot(s.worktree) && typeof s.exited === "string" && !Number.isNaN(Date.parse(s.exited)) &&
+    typeof s.reason === "string" && (s.checkpointError === undefined || typeof s.checkpointError === "string") &&
+    (s.worktreeIdentity === undefined || validIdentity(s.worktreeIdentity));
 }
 
 /** Use the actual local offset, not a fabricated UTC/session timestamp. */
@@ -318,13 +375,25 @@ export function delta(before: Fingerprint, after: Fingerprint): string[] {
     .filter((name) => before[name] !== after[name]).sort();
 }
 
-async function fresh(repo: string, sessionId: string, previousHandoff?: string): Promise<RecordData> {
+async function commonDir(repo: string): Promise<string> {
+  return fs.realpath(resolve(repo, (await git(repo, ["rev-parse", "--git-common-dir"])).trim()));
+}
+
+/** Git may reuse the same worktrees/<name> path after remove/add. Its filesystem identity must still match. */
+async function worktreeIdentity(repo: string): Promise<string> {
+  const gitDir = await fs.realpath(resolve(repo, (await git(repo, ["rev-parse", "--git-dir"])).trim()));
+  const stat = await fs.stat(gitDir, { bigint: true });
+  return hash(JSON.stringify([gitDir, String(stat.dev), String(stat.ino), String(stat.birthtimeNs)]));
+}
+
+/** `repo` is the record anchor; `measured` (default: the anchor) is the worktree whose state is measured. */
+async function fresh(repo: string, sessionId: string, previousHandoff?: string, measured = repo): Promise<RecordData> {
   return {
     version: 1, repo, sessionId, intervalId: randomUUID(), started: now(),
-    startBranch: (await git(repo, ["rev-parse", "--abbrev-ref", "HEAD"], true)).trim() ||
-      (await git(repo, ["symbolic-ref", "--short", "HEAD"], true)).trim(),
-    startCommit: (await git(repo, ["rev-parse", "--verify", "HEAD"], true)).trim() || null,
-    baseline: await fingerprint(repo), receipts: [], ...(previousHandoff ? { previousHandoff } : {}),
+    startBranch: (await git(measured, ["rev-parse", "--abbrev-ref", "HEAD"], true)).trim() ||
+      (await git(measured, ["symbolic-ref", "--short", "HEAD"], true)).trim(),
+    startCommit: (await git(measured, ["rev-parse", "--verify", "HEAD"], true)).trim() || null,
+    baseline: await fingerprint(measured), receipts: [], ...(previousHandoff ? { previousHandoff } : {}),
   };
 }
 
@@ -341,7 +410,7 @@ export class Records {
     this.file = join(root, `${sessionId}.json`);
   }
 
-  static async open(cwd: string, sessionId: string, agentDir: string): Promise<Records | undefined> {
+  static async open(cwd: string, sessionId: string, agentDir: string, beforeMeasure?: (repo: string) => Promise<void>): Promise<Records | undefined> {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) throw new Error("Invalid Pi session identity");
     const repo = await repoRoot(cwd);
     if (!repo) return undefined;
@@ -353,7 +422,10 @@ export class Records {
     await safePath(root, store.file);
     await withLock(`${store.file}.lock`, async () => {
       if (await exists(store.file)) await store.read();
-      else await store.save(await fresh(repo, sessionId));
+      else {
+        await beforeMeasure?.(repo);
+        await store.save(await fresh(repo, sessionId));
+      }
     });
     return store;
   }
@@ -361,14 +433,12 @@ export class Records {
   async read(): Promise<RecordData> {
     await safePath(this.root, this.file);
     const r = JSON.parse(await fs.readFile(this.file, "utf8"));
-    if (r.version !== 1 || r.repo !== this.repo || r.sessionId !== this.sessionId ||
-        typeof r.intervalId !== "string" || typeof r.started !== "string" || Number.isNaN(Date.parse(r.started)) ||
-        typeof r.startBranch !== "string" || !(r.startCommit === null || /^[a-f0-9]{40,64}$/.test(r.startCommit)) ||
-        !r.baseline || typeof r.baseline !== "object" || Array.isArray(r.baseline) ||
-        !Object.values(r.baseline).every((value) => typeof value === "string") || !Array.isArray(r.receipts) ||
-        !r.receipts.every(validReceipt) ||
-        (r.completed !== undefined && (!validReceipt(r.completed) || r.completed.kind !== "handoff" || !r.receipts.some((item: Receipt) => item.digest === r.completed.digest))) ||
-        (r.pending !== undefined && (!validReceipt(r.pending) || typeof r.pending.content !== "string" || hash(r.pending.content) !== r.pending.sha256))) {
+    if (!r || typeof r !== "object" || ![1, 2].includes(r.version) || r.repo !== this.repo || r.sessionId !== this.sessionId || !validInterval(r) ||
+        (r.version === 1 && (r.worktree !== undefined || r.worktreeIdentity !== undefined || r.history !== undefined)) ||
+        (r.pending !== undefined && (!validReceipt(r.pending) || typeof r.pending.content !== "string" || hash(r.pending.content) !== r.pending.sha256)) ||
+        (r.worktree !== undefined && !validRoot(r.worktree)) ||
+        (r.worktree === undefined ? r.worktreeIdentity !== undefined : !validIdentity(r.worktreeIdentity)) ||
+        (r.history !== undefined && (!Array.isArray(r.history) || !r.history.every(validSnapshot)))) {
       throw new Error(`Invalid or mismatched Drift record; left untouched: ${this.file}`);
     }
     return r;
@@ -383,20 +453,108 @@ export class Records {
     return withLock(`${this.file}.lock`, async () => work(await this.read()));
   }
 
+  /**
+   * The worktree this record currently measures: the adopted worktree, revalidated on every use, else the launch
+   * repository. A removed or replaced adopted worktree raises WorktreeScopeError; it never falls back silently.
+   */
+  async effectiveRepo(record?: RecordData): Promise<string> {
+    const current = record ?? await this.read();
+    const target = current.worktree;
+    if (target === undefined) return this.repo;
+    const root = await this.validateWorktree(target, true);
+    try {
+      if (await worktreeIdentity(root) === current.worktreeIdentity) return root;
+    } catch (error) {
+      throw new WorktreeScopeError(`Adopted worktree ${target}: cannot verify its Git directory identity (${String(error)})`);
+    }
+    throw new WorktreeScopeError(`Adopted worktree ${target} was removed or recreated; explicitly adopt it again to measure a fresh interval`);
+  }
+
+  /** An absolute, existing, exact worktree root sharing this repository's real Git common directory; returned canonical. */
+  private async validateWorktree(target: string, recorded = false): Promise<string> {
+    if (typeof target !== "string" || !isAbsolute(target)) throw new WorktreeScopeError(`Worktree path must be absolute: ${target}`);
+    const label = recorded ? `Adopted worktree ${target}` : `Worktree ${target}`;
+    let canonical: string, top: string | undefined;
+    try {
+      if (!(await fs.stat(target)).isDirectory()) throw new WorktreeScopeError(`${label} is not a directory`);
+      canonical = await fs.realpath(target);
+      top = await repoRoot(canonical);
+    } catch (error: any) {
+      if (error instanceof WorktreeScopeError) throw error;
+      if (error?.code === "ENOENT") throw new WorktreeScopeError(`${label} does not exist (removed?)`);
+      throw new WorktreeScopeError(`${label} is unavailable: ${error?.message ?? error}`);
+    }
+    if (!top) throw new WorktreeScopeError(`${label} is not inside a Git worktree`);
+    if (top !== canonical) throw new WorktreeScopeError(`${label} is not a worktree root (its root is ${top})`);
+    if (recorded && canonical !== target) throw new WorktreeScopeError(`${label} now resolves elsewhere (${canonical}); it was replaced`);
+    let same: boolean;
+    try { same = await commonDir(canonical) === await commonDir(this.repo); }
+    catch (error: any) { throw new WorktreeScopeError(`${label}: cannot read its Git common directory: ${error?.message ?? error}`); }
+    if (!same) throw new WorktreeScopeError(`${label} does not share this repository's Git common directory (another clone, nested repository or submodule?)`);
+    return canonical;
+  }
+
   async beginTurn(): Promise<void> {
     await this.update(async (record) => {
-      if (record.completed) await this.save(await fresh(this.repo, this.sessionId, record.completed.path));
+      if (!record.completed) return;
+      const next = await fresh(this.repo, this.sessionId, record.completed.path, await this.effectiveRepo(record));
+      next.version = record.version;
+      if (record.worktree !== undefined) {
+        next.worktree = record.worktree;
+        next.worktreeIdentity = record.worktreeIdentity;
+      }
+      if (record.history !== undefined) next.history = record.history;
+      await this.save(next);
     });
   }
 
-  /** Caller holds this record's lock; publication captures its final observed delta too. */
-  async capture(record: RecordData, reason: string): Promise<void> {
-    const files = new Set(delta(record.baseline, await fingerprint(this.repo)));
-    const head = (await git(this.repo, ["rev-parse", "--verify", "HEAD"], true)).trim();
+  /**
+   * Explicitly move this session's active interval to another worktree of the same repository. `target` must be an
+   * absolute, existing worktree root. The old interval is captured and archived (a completed one unchanged), then a
+   * fresh interval is measured in the target. Returns false when the target already is the active root.
+   * `beforeMeasure` runs after validation and archiving, before the target baseline is measured.
+   */
+  async adopt(target: string, beforeMeasure?: (repo: string) => Promise<void>): Promise<boolean> {
+    return this.update(async (record) => {
+      const root = await this.validateWorktree(target);
+      let previous: string | undefined, checkpointError: string | undefined;
+      try { previous = await this.effectiveRepo(record); }
+      catch (error) {
+        if (!(error instanceof WorktreeScopeError)) throw error;
+        checkpointError = error.message;
+      }
+      if (previous === root) return false;
+      if (record.pending) throw new Error(`Incomplete publication ${record.pending.path}; retry the SAME drift_publish input before switching worktrees`);
+      await driftConfig(root); // A target with invalid configuration is refused before anything changes.
+      if (previous && !record.completed) await this.capture(record, "adopt", previous);
+      const { version, repo, sessionId, worktree, history, pending, ...interval } = record;
+      const snapshot: IntervalSnapshot = {
+        ...interval, worktree: worktree ?? this.repo, exited: now(), reason: "adopt",
+        ...(checkpointError && !record.completed ? { checkpointError: `Final capture impossible; previous checkpoint kept. ${checkpointError}` } : {}),
+      };
+      await beforeMeasure?.(root);
+      // previousHandoff is not carried: its path may not exist in the target's store. History keeps it.
+      const next = await fresh(this.repo, this.sessionId, undefined, root);
+      next.version = 2;
+      if (root !== this.repo) {
+        next.worktree = root;
+        next.worktreeIdentity = await worktreeIdentity(root);
+      }
+      next.history = [...(history ?? []), snapshot];
+      await this.save(next);
+      return true;
+    });
+  }
+
+  /** Caller holds this record's lock; publication captures its final observed delta too. `repo` is the measured worktree. */
+  async capture(record: RecordData, reason: string, repo?: string): Promise<void> {
+    repo ??= await this.effectiveRepo(record);
+    const files = new Set(delta(record.baseline, await fingerprint(repo)));
+    const head = (await git(repo, ["rev-parse", "--verify", "HEAD"], true)).trim();
     let commits: string[] = [];
     if (record.startCommit && head && head !== record.startCommit) {
-      commits = (await git(this.repo, ["log", "--format=%h %s", `${record.startCommit}..HEAD`])).trim().split("\n").filter(Boolean);
-      for (const name of (await git(this.repo, ["diff", "--no-ext-diff", "--name-only", "-z", record.startCommit, "HEAD"])).split("\0").filter(Boolean)) files.add(name);
+      commits = (await git(repo, ["log", "--format=%h %s", `${record.startCommit}..HEAD`])).trim().split("\n").filter(Boolean);
+      for (const name of (await git(repo, ["diff", "--no-ext-diff", "--name-only", "-z", record.startCommit, "HEAD"])).split("\0").filter(Boolean)) files.add(name);
     }
     record.checkpoint = { at: now(), reason, files: [...files].sort(), commits };
   }
@@ -411,6 +569,12 @@ export class Records {
 
   async context(): Promise<string> {
     const record = await this.read();
+    let active: string | undefined, scopeError: string | undefined;
+    try { active = await this.effectiveRepo(record); }
+    catch (error) {
+      if (!(error instanceof WorktreeScopeError)) throw error;
+      scopeError = error.message;
+    }
     const lines = [
       "Drift lifecycle is managed by the Pi extension. Do not run legacy hooks or delete records/session logs.",
       `Drift record: ${this.file}`,
@@ -429,7 +593,22 @@ export class Records {
     }
     if (record.previousHandoff) lines.push(`Previous interval handoff: ${record.previousHandoff}`);
     if (Object.values(record.baseline).some((value) => value.startsWith("unreadable:"))) lines.push("Warning: some baseline files were unreadable; their fingerprints are metadata-only.");
-    const { root, state } = await artifactStore(this.repo);
+    lines.push(`Record anchor (launch repository): ${this.repo}`);
+    if (record.history?.length) {
+      const last = record.history.at(-1)!;
+      lines.push(`Earlier intervals of this session: ${record.history.length}; latest ${last.intervalId} in ${last.worktree}${last.completed ? ` (handoff ${last.completed.path})` : ""}${last.checkpointError ? " (final capture impossible)" : ""}. They record overlapping Git state, not exclusive authorship.`);
+    }
+    if (!active) {
+      lines.push(`Measured worktree: UNAVAILABLE. ${scopeError} Drift will not fall back to another worktree; adopt an existing worktree of this repository explicitly to continue.`);
+      return lines.join("\n");
+    }
+    lines.push(`Measured worktree: ${active}`);
+    if (record.worktree !== undefined && record.worktree !== this.repo) {
+      lines.push(`Adopted worktree differs from the launch repository: Pi's working directory and file-tool defaults are unchanged; use absolute paths or cd into ${active} for work measured here. Adoption does not grant project trust to this checkout.`);
+    }
+    const tracked = await trackArtifacts(active);
+    const { root, state } = await artifactStore(active, tracked);
+    lines.push(`Artifact store: ${join(root, "drift")} (${tracked ? "tracked: committed per worktree" : "private: ignored by Git"}).`);
     if (state === "shared") lines.push(`Drift artifacts for this repository live in ${join(root, "drift")}, shared by every worktree; this linked worktree holds no drift/ of its own, and drift/... paths refer to that folder.`);
     else if (state === "two-stores") lines.push(`This linked worktree holds its own drift/ as well as the repository's shared store in its main worktree; Drift keeps using this worktree's own. Move its contents into the main worktree's drift/ to share them.`);
     else if (state === "no-main") lines.push("This is a linked worktree of a bare repository, so Drift artifacts stay per worktree.");

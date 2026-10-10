@@ -23,7 +23,9 @@ git clone https://github.com/coylemichael/drift ~/projects/drift
 pi install ~/projects/drift
 ```
 
-Restart Pi or open a fresh Pi ACP thread after installation. Remove the package
+Restart Pi or open a fresh Pi ACP thread after installation (and after updating
+the checkout: a running extension keeps the tools it loaded, so a new tool such
+as `drift_worktree` appears only after `/reload` or a new connection). Remove the package
 with `pi remove ~/projects/drift`; this does not remove the checkout, artifacts,
 or session records.
 
@@ -131,7 +133,8 @@ automatic commit. Already-tracked artifacts or an `!/drift/` exception alone do
 not select this mode. Invalid JSON, unknown fields, non-boolean values and unsafe
 config paths fail rather than silently selecting a policy.
 
-**On Pi, use `/drift-track-artifacts`** in the target repo's thread: `on`, `off`,
+**On Pi, use `/drift-track-artifacts`** in a thread bound to the target checkout
+(the session's Drift root; see "Worktrees for parallel workers"): `on`, `off`,
 or `status` (no argument shows status). It is a Pi command, never
 sent to a model. **On** writes the flag and removes the `/drift/` rule (and
 `/drift`, `drift/`, `drift` variants) from `.gitignore`, keeping everything
@@ -161,8 +164,9 @@ git config merge.drift-index.driver "python3 -I /path/to/drift/scripts/build-ind
 **Worktrees in private mode** share the main worktree's `drift/`: a linked
 worktree holds no `drift/` of its own, publishes into the shared store, and
 sees the whole history in `/drift`, so nothing is lost when the worktree is
-removed. Tracked worktrees keep a folder each, because those artifacts travel
-with the branch.
+removed. `.drift.json`, changelog fragments and record metadata still come from
+the linked worktree itself. Tracked worktrees keep a folder each, because those
+artifacts travel with the branch.
 
 ### Changelog from fragments (per repository)
 
@@ -224,7 +228,8 @@ index reverts other threads' work); the repo's check commands, any shell
 command run in order, stopping at the first failure, nothing assumed about the
 toolchain and nothing run when unset; `git push origin HEAD:<default>`; redo
 from the fetch when the tip moved, at most three times; a `land` checkpoint on
-the record. Then the profiled continuation starts from landed `main`. It never
+the record. Then the profiled continuation resumes in the same active worktree
+at the landed commit; landing does not switch to the main checkout. It never
 squashes, force-pushes or resets against a moving ref. The one thing it commits
 is Drift's own publication output, which the handoff has just produced and which
 holds nothing the agent decided: the artifact and index in a tracked repo, the
@@ -247,6 +252,67 @@ already-running extensions keep their loaded publisher. Config edits alone need
 no reload. Review artifacts before committing: handoffs can contain private
 project context even though they must not contain credentials.
 
+## Worktrees for parallel workers (Pi)
+
+A common layout: start several Pi ACP sessions in the main checkout, then have
+an orchestrator assign each worker an existing linked worktree. A Pi session's
+`cwd` is fixed when it starts, so Drift binds a worktree explicitly:
+
+| Form | Effect |
+|---|---|
+| `/drift-worktree` or `/drift-worktree status` | Shows the launch repo, the active Drift root and the record. Read-only. |
+| `/drift-worktree <path>` | Adopts that worktree. A relative path resolves from the session's original `cwd`. |
+| `drift_worktree { action: "status" }` / `{ action: "adopt", path }` | The same, as a model tool. |
+
+What adoption accepts and does:
+
+- **Target:** the exact root of an existing worktree of the **same repository**
+  (same Git common directory). Other clones, submodules, subdirectories and
+  missing paths are rejected. Drift never creates, rebases or repairs a
+  worktree, and never edits its policy; the target's own (branch-local)
+  `.drift.json` applies. As at session start, derived files may be refreshed and
+  merge drivers installed before the new baseline; tracking opt-in and ignore
+  rules are not changed.
+- **When:** as the sole call in its tool-call batch, with no publication pending and
+  no continuation queued; otherwise it fails and changes nothing. Adopting the
+  current root is a no-op.
+- **Record:** the session keeps one record under Pi's agent directory, keyed to
+  the launch repository, with the active worktree on it. Each adoption snapshots the previous interval's
+  baseline and receipts into the record's history and takes a fresh measured
+  baseline in the target. Switching back is another adoption with another fresh
+  baseline. No handoff is written and no interval is marked complete; work done
+  before adoption is not measured against the new root. Worktree-aware records
+  use version 2 so an older publisher refuses them rather than measuring main.
+- **Scope:** every Drift repository operation then uses the adopted root:
+  metadata, numbering, index, publication, refs, changelog fragments,
+  `/drift-track-artifacts`, `/drift-changelog`, `/drift-land` and continuation
+  artifacts. Tracked artifacts follow the worktree's branch; private artifacts
+  go to the shared main-worktree store, with metadata and fragments from the
+  worker.
+- **Durability:** the binding survives reload, resume, compaction and automatic
+  continuation of the same session. A new, forked or cloned session is not
+  adopted automatically.
+
+What it does not change: Pi's `cwd`, the default directory of built-in
+`read`/`edit`/`bash`, where Pi stores session files, and project trust. Use
+explicit worker paths with those tools. `cd` in a shell has no effect on Drift.
+A trusted launch project does not make the adopted checkout's
+`.pi/drift-model-profiles.json` trusted; the global profile file is used
+instead. Worktree selection is not a sandbox: the adopted branch's `.drift.json`
+still controls `land.auto` and the shell commands in `land.check`, just as when
+launching in that checkout directly. Review that branch and its landing config
+before adopting it; adoption does not itself run a landing.
+
+If the adopted worktree is removed or its Git directory is recreated, Drift
+operations fail and name it; there is no silent fallback to the launch repo.
+`status` and `adopt` still work: explicitly adopt another root, or the recreated
+worktree, to take a fresh baseline. If a queued continuation stalls, status names
+the artifact to recover with `drift-continue`; reload clears the in-memory queue
+without removing the artifact.
+
+Workers should adopt their assigned worktree before any substantive work; the
+orchestrator can stay in the main checkout.
+
 ## Profile-directed continuation
 
 A handoff may declare the next task's portable profile: `research`, `planning`,
@@ -265,7 +331,8 @@ Pi thread with `drift-continue drift/<feature>/<NNN>-handoff-<description>.md`.
 
 Configure defaults at `~/.pi/agent/drift-model-profiles.json` (or Pi's configured
 agent directory). A trusted project may override profiles at
-`.pi/drift-model-profiles.json`. Use Pi's **model IDs** from `pi --list-models`,
+`.pi/drift-model-profiles.json` (the launch project; see adopted worktrees
+above). Use Pi's **model IDs** from `pi --list-models`,
 not picker labels such as `Claude Opus 5`.
 
 The current GitHub Copilot starting policy is:
@@ -312,7 +379,8 @@ pick-up rule from `SKILL.md` when you ask to "pick up" without naming an artifac
 
 ## What Pi automates
 
-- A durable record keyed to Pi's real session ID and Git repository.
+- A durable record keyed to Pi's real session ID and launch repository, with an
+  explicitly adopted worktree as the active Drift root (`/drift-worktree`).
 - `/drift`, which picks up the newest artifact (or the one you name) and
   routes it to the right workflow.
 - A current `drift/INDEX.md` at session start: when the repo already holds

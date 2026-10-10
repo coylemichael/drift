@@ -126,6 +126,8 @@ If later work is related to the same feature, create another numbered artifact i
 
 If the target project root is unclear, ask the user before writing any Drift artifact.
 
+"Repository root" in this skill means the checkout this session's Drift work belongs to (its **Drift root**), not necessarily the directory the agent was launched in. A worker assigned a linked worktree uses that worktree's root. A host overlay may bind it explicitly (on Pi, `drift_worktree`); changing a shell's directory does not. Verify the intended root once before publishing. If it is wrong or its policy check fails, report once that publication is blocked, do not hand-write managed artifacts, index, policy or host records to bypass the host, continue independent work, and recheck only after a relevant change or when the user asks.
+
 ## Artifact Status
 
 Every Drift artifact carries a `status` field in its frontmatter so in-flight work can be tracked without opening files:
@@ -280,4 +282,4 @@ Read this before creating `drift/` or writing an artifact. Missing config, `{}` 
 - **Ignored (default):** ensure repository-root `.gitignore` exists and contains `/drift/`, preserving all other contents. Verify artifact and index paths are ignored. If a negation prevents that, report the conflict; do not silently override an accepted project choice.
 - **Tracked (`true`):** leave `.gitignore` untouched. Verify artifact and index paths are not ignored, and report conflicting rules for explicit resolution. Do not force-add, stage, commit or push automatically. Review handoff contents before committing; trackable does not mean public or credential-safe.
 
-With a host publisher, it enforces this policy; do not duplicate its writes. Under the manual baseline, perform the checks yourself (`git check-ignore --no-index` returns 0 for ignored, 1 for not ignored; other failures are errors). The setting changes Git visibility only; it never permits secrets in artifacts or deleting records/session logs.
+With a host publisher, it enforces this policy; do not duplicate its writes. In a linked worktree, `.drift.json` is the worktree's own branch-local copy. Under the manual baseline, perform the checks yourself (`git check-ignore --no-index` returns 0 for ignored, 1 for not ignored; other failures are errors). The setting changes Git visibility only; it never permits secrets in artifacts or deleting records/session logs.

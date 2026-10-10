@@ -328,74 +328,79 @@ function validatePending(record: RecordData, pending: Pending): void {
 
 /** Code, not the model, supplies identity/frontmatter and completes the interval. */
 export async function publish(store: Records, raw: ArtifactInput, interpreter?: string): Promise<Receipt> {
-  const config = await driftConfig(store.repo);
-  const tracked = config.trackArtifacts;
-  const { root } = await artifactStore(store.repo, tracked);
-  const input = await validate(root, raw, (await changelogState(store.repo)).enabled);
-  const drift = await safePath(root, join(root, "drift"));
-  await fs.mkdir(drift, { recursive: true });
-  const index = await safePath(root, join(drift, "INDEX.md"));
-  const lock = await safePath(root, join(drift, ".publish.lock"));
-  return store.update(async (record) => withLock(lock, async () => {
-    const digest = hash(JSON.stringify({ interval: record.intervalId, input }));
-    const receipt = record.receipts.find((item) => item.digest === digest);
-    if (record.pending && record.pending.digest !== digest) throw new Error(`Incomplete publication ${record.pending.path}; retry the SAME input before publishing another artifact`);
-    if (record.completed && !receipt) throw new Error("This work interval already has a handoff; start a new working prompt before publishing more");
-    const pending = record.pending ?? (receipt ? undefined : await prepare(store.repo, root, record, input, digest, tracked));
-    const relativePath = pending?.path ?? receipt!.path;
-    if (!artifactPathPattern.test(relativePath)) throw new Error("Invalid publication path in record");
-    const path = await safePath(root, resolve(root, relativePath));
-    if (!relativePath.startsWith(`drift/${input.feature}/`)) throw new Error("Mismatched publication receipt");
-    await ensureArtifactPolicy(root, [path, index], tracked);
-    // Fragments live in the worktree and travel with the code, never in the (possibly shared) artifact store.
-    const fragmentPath = pending?.fragment ? await safePath(store.repo, resolve(store.repo, pending.fragment.path)) : undefined;
-    if (fragmentPath && (await git(store.repo, ["check-ignore", "--no-index", fragmentPath], 1)).trim()) {
-      throw new Error(`Git ignores ${pending!.fragment!.path}; changelog fragments must be committed with the code. Resolve the ignore rule, then retry the same input.`);
-    }
-    if (pending) {
-      validatePending(record, pending);
-      record.pending = pending;
-      await store.save(record); // Persist the recovery intent BEFORE artifact/index writes.
-      if (await exists(path)) {
-        if (await fs.readFile(path, "utf8") !== pending.content) throw new Error(`Publication conflicts with existing file; nothing overwritten: ${relativePath}`);
-      } else {
-        // A complete staging file is linked into place exclusively: never overwrite another writer.
-        const staged = join(dirname(path), `.drift-${digest}.tmp`);
-        try {
-          await atomicWrite(staged, pending.content, 0o644);
-          await fs.link(staged, path);
-        } finally { await fs.rm(staged, { force: true }); }
+  // Everything is resolved under the record lock, so an explicit adoption cannot interleave with publication.
+  // `active` is the measured worktree (metadata, fragments, config); `root` is where drift/ lives. store.repo is only the record anchor.
+  return store.update(async (record) => {
+    const active = await store.effectiveRepo(record);
+    const config = await driftConfig(active);
+    const tracked = config.trackArtifacts;
+    const { root } = await artifactStore(active, tracked);
+    const input = await validate(root, raw, (await changelogState(active)).enabled);
+    const drift = await safePath(root, join(root, "drift"));
+    await fs.mkdir(drift, { recursive: true });
+    const index = await safePath(root, join(drift, "INDEX.md"));
+    const lock = await safePath(root, join(drift, ".publish.lock"));
+    return withLock(lock, async () => {
+      const digest = hash(JSON.stringify({ interval: record.intervalId, input }));
+      const receipt = record.receipts.find((item) => item.digest === digest);
+      if (record.pending && record.pending.digest !== digest) throw new Error(`Incomplete publication ${record.pending.path}; retry the SAME input before publishing another artifact`);
+      if (record.completed && !receipt) throw new Error("This work interval already has a handoff; start a new working prompt before publishing more");
+      const pending = record.pending ?? (receipt ? undefined : await prepare(active, root, record, input, digest, tracked));
+      const relativePath = pending?.path ?? receipt!.path;
+      if (!artifactPathPattern.test(relativePath)) throw new Error("Invalid publication path in record");
+      const path = await safePath(root, resolve(root, relativePath));
+      if (!relativePath.startsWith(`drift/${input.feature}/`)) throw new Error("Mismatched publication receipt");
+      await ensureArtifactPolicy(root, [path, index], tracked);
+      // Fragments live in the worktree and travel with the code, never in the (possibly shared) artifact store.
+      const fragmentPath = pending?.fragment ? await safePath(active, resolve(active, pending.fragment.path)) : undefined;
+      if (fragmentPath && (await git(active, ["check-ignore", "--no-index", fragmentPath], 1)).trim()) {
+        throw new Error(`Git ignores ${pending!.fragment!.path}; changelog fragments must be committed with the code. Resolve the ignore rule, then retry the same input.`);
       }
-    } else if (!(await exists(path)) || hash(await fs.readFile(path)) !== receipt!.sha256) {
-      throw new Error(`Published artifact was removed or changed: ${relativePath}; receipt retained`);
-    }
-    if (pending?.fragment && fragmentPath) {
-      await fs.mkdir(dirname(fragmentPath), { recursive: true });
-      if (await exists(fragmentPath)) {
-        if (await fs.readFile(fragmentPath, "utf8") !== pending.fragment.content) throw new Error(`Changelog fragment conflicts with an existing file; nothing overwritten: ${pending.fragment.path}`);
-      } else {
-        const staged = join(dirname(fragmentPath), `.drift-${digest}.tmp`);
-        try {
-          await atomicWrite(staged, pending.fragment.content, 0o644);
-          await fs.link(staged, fragmentPath);
-        } finally { await fs.rm(staged, { force: true }); }
+      if (pending) {
+        validatePending(record, pending);
+        record.pending = pending;
+        await store.save(record); // Persist the recovery intent BEFORE artifact/index writes.
+        if (await exists(path)) {
+          if (await fs.readFile(path, "utf8") !== pending.content) throw new Error(`Publication conflicts with existing file; nothing overwritten: ${relativePath}`);
+        } else {
+          // A complete staging file is linked into place exclusively: never overwrite another writer.
+          const staged = join(dirname(path), `.drift-${digest}.tmp`);
+          try {
+            await atomicWrite(staged, pending.content, 0o644);
+            await fs.link(staged, path);
+          } finally { await fs.rm(staged, { force: true }); }
+        }
+      } else if (!(await exists(path)) || hash(await fs.readFile(path)) !== receipt!.sha256) {
+        throw new Error(`Published artifact was removed or changed: ${relativePath}; receipt retained`);
       }
-    }
-    // One shared renderer; no second TS index implementation. stdout permits atomic replacement.
-    const content = await run(interpreter ?? await python(), ["-I", builder, drift, "--stdout"], root);
-    if (!content.includes(`](${relativePath.slice("drift/".length)})`)) throw new Error("Index renderer did not include the artifact");
-    await safePath(root, index);
-    const mode = await exists(index) ? (await fs.stat(index)).mode & 0o777 : 0o644;
-    await atomicWrite(index, content, mode);
-    if (await fs.readFile(index, "utf8") !== content) throw new Error("Index verification failed");
-    const result: Receipt = receipt ?? { digest, path: pending!.path, kind: pending!.kind, date: pending!.date, sha256: pending!.sha256, ...(pending!.fragment ? { fragment: pending!.fragment.path } : {}) };
-    if (!receipt) {
-      await store.capture(record, "publish");
-      record.receipts.push(result);
-    }
-    delete record.pending;
-    if (input.kind === "handoff") record.completed = result;
-    await store.save(record); // Failure here is retryable from the persisted pending intent.
-    return result;
-  }));
+      if (pending?.fragment && fragmentPath) {
+        await fs.mkdir(dirname(fragmentPath), { recursive: true });
+        if (await exists(fragmentPath)) {
+          if (await fs.readFile(fragmentPath, "utf8") !== pending.fragment.content) throw new Error(`Changelog fragment conflicts with an existing file; nothing overwritten: ${pending.fragment.path}`);
+        } else {
+          const staged = join(dirname(fragmentPath), `.drift-${digest}.tmp`);
+          try {
+            await atomicWrite(staged, pending.fragment.content, 0o644);
+            await fs.link(staged, fragmentPath);
+          } finally { await fs.rm(staged, { force: true }); }
+        }
+      }
+      // One shared renderer; no second TS index implementation. stdout permits atomic replacement.
+      const content = await run(interpreter ?? await python(), ["-I", builder, drift, "--stdout"], root);
+      if (!content.includes(`](${relativePath.slice("drift/".length)})`)) throw new Error("Index renderer did not include the artifact");
+      await safePath(root, index);
+      const mode = await exists(index) ? (await fs.stat(index)).mode & 0o777 : 0o644;
+      await atomicWrite(index, content, mode);
+      if (await fs.readFile(index, "utf8") !== content) throw new Error("Index verification failed");
+      const result: Receipt = receipt ?? { digest, path: pending!.path, kind: pending!.kind, date: pending!.date, sha256: pending!.sha256, ...(pending!.fragment ? { fragment: pending!.fragment.path } : {}) };
+      if (!receipt) {
+        await store.capture(record, "publish", active);
+        record.receipts.push(result);
+      }
+      delete record.pending;
+      if (input.kind === "handoff") record.completed = result;
+      await store.save(record); // Failure here is retryable from the persisted pending intent.
+      return result;
+    });
+  });
 }

@@ -8,7 +8,8 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { git, hash, mergeInProgress } from "../lib/state.ts";
+import { publish } from "../lib/artifacts.ts";
+import { exists, git, hash, mergeInProgress, Records } from "../lib/state.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const piBinary = process.env.PI_TEST_BINARY || "pi";
@@ -126,13 +127,27 @@ async function fixture(t: any, broken = false) {
     const publish = (/^PUBLISH_(RESEARCH|HANDOFF|AUTO_HANDOFF)/.test(marker) || (chainStep > 0 && chainStep <= 3)) && !messages.slice(user + 1).some((message: any) => message.role === "tool");
     const kind = marker.startsWith("PUBLISH_RESEARCH") ? "research" : "handoff";
     // Real models may fill optional string fields with "" rather than omit them.
-    const args = { feature: "runtime", kind, slug: chainStep ? "chain" : "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: chainArtifact ? `drift/runtime/${chainArtifact[1]}-handoff-chain.md` : "", related_artifacts: [], ...(marker.startsWith("PUBLISH_AUTO_HANDOFF") || (chainStep > 0 && chainStep < 3) ? { next_session_profile: "architecture" } : {}), ...(marker.startsWith("PUBLISH_HANDOFF_CHANGELOG") ? { changelog: { section: "Changed", text: "Fixture change." } } : {}) };
-    const delta = publish ? { role: "assistant", tool_calls: [{ index: 0, id: `publish-${kind}`, type: "function", function: { name: "drift_publish", arguments: JSON.stringify(args) } }] } : { role: "assistant", content: "Synthetic fixture response; preserve the bounded task and continue." };
+    const args = { feature: "runtime", kind, slug: chainStep ? "chain" : "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: chainArtifact ? `drift/runtime/${chainArtifact[1]}-handoff-chain.md` : "", related_artifacts: [], ...(/^PUBLISH_AUTO_(HANDOFF|THEN_ADOPT)/.test(marker) || (chainStep > 0 && chainStep < 3) ? { next_session_profile: "architecture" } : {}), ...(/^PUBLISH_(AUTO_)?HANDOFF_CHANGELOG/.test(marker) ? { changelog: { section: "Changed", text: "Fixture change." } } : {}) };
+    // Tool rounds already answered since the marker; each marker scripts a bounded number of rounds, never a loop.
+    const rounds = messages.slice(user + 1).filter((message: any) => message.role === "assistant" && message.tool_calls?.length).length;
+    // WORKTREE_ADOPT <path>, WORKTREE_STATUS, WORKTREE_ADOPT_PUBLISH <path> (one batch: adopt beside a publication),
+    // WORKTREE_ADOPT_THEN_PUBLISH <path> (adopt alone, then publish a handoff in the next round),
+    // PUBLISH_AUTO_THEN_ADOPT <path> (publish a profiled handoff, then adopt alone in the next round, before settling).
+    const worktree = /^WORKTREE_(ADOPT_PUBLISH|ADOPT_THEN_PUBLISH|ADOPT|STATUS)(?:[ \t]+([^\n]+))?$/.exec(marker.trim());
+    const autoThenAdopt = /^PUBLISH_AUTO_THEN_ADOPT[ \t]+([^\n]+)$/.exec(marker.trim());
+    const adoptCall = { name: "drift_worktree", arguments: { action: "adopt", path: (worktree?.[2] ?? autoThenAdopt?.[1])?.trim() } };
+    const publishCall = { name: "drift_publish", arguments: args };
+    const calls = autoThenAdopt ? (rounds === 0 ? [publishCall] : rounds === 1 ? [adoptCall] : []) : !worktree ? (publish ? [publishCall] : []) :
+      worktree[1] === "STATUS" ? (rounds === 0 ? [{ name: "drift_worktree", arguments: { action: "status" } }] : []) :
+      worktree[1] === "ADOPT" ? (rounds === 0 ? [adoptCall] : []) :
+      worktree[1] === "ADOPT_PUBLISH" ? (rounds === 0 ? [adoptCall, publishCall] : []) :
+      rounds === 0 ? [adoptCall] : rounds === 1 ? [publishCall] : [];
+    const delta = calls.length ? { role: "assistant", tool_calls: calls.map((call, index) => ({ index, id: `${call.name}-${rounds}-${index}`, type: "function", function: { name: call.name, arguments: JSON.stringify(call.arguments) } })) } : { role: "assistant", content: "Synthetic fixture response; preserve the bounded task and continue." };
     const common = { id: "drift-fixture", object: "chat.completion.chunk", created: 0, model: "fixture" };
     response.writeHead(200, { "content-type": "text/event-stream", connection: "close" });
     response.end([
       { ...common, choices: [{ index: 0, delta, finish_reason: null }] },
-      { ...common, choices: [{ index: 0, delta: {}, finish_reason: publish ? "tool_calls" : "stop" }], usage: { prompt_tokens: 200, completion_tokens: 20, total_tokens: 220 } },
+      { ...common, choices: [{ index: 0, delta: {}, finish_reason: calls.length ? "tool_calls" : "stop" }], usage: { prompt_tokens: 200, completion_tokens: 20, total_tokens: 220 } },
     ].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n");
   });
   await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
@@ -160,7 +175,11 @@ async function fixture(t: any, broken = false) {
   };
   const recordPath = (id: string) => join(agent, "drift", hash(repo).slice(0, 24), `${id}.json`);
   const readRecord = async (id: string) => JSON.parse(await fs.readFile(recordPath(id), "utf8"));
-  return { dir, home, agent, repo, requests, env, clients, rpc, recordPath, readRecord };
+  // The installed Windows adapter can launch the same resolved Node script as the RPC fixture,
+  // avoiding a shell-less spawn of npm's pi.cmd shim. No real-user session/config environment is inherited.
+  const acpEnv = { ...env, PI_ACP_PI_COMMAND: piBinary,
+    ...(process.platform === "win32" && piPrefix.length === 1 ? { PI_ACP_PI_SCRIPT: piPrefix[0] } : {}) };
+  return { dir, home, agent, repo, requests, env, acpEnv, clients, rpc, recordPath, readRecord };
 }
 
 test("actual Pi RPC: discovery, pre-inference record, context, resume/reload, compaction, publication and new interval", { skip: !piPresent, timeout: 120_000 }, async (t) => {
@@ -429,6 +448,447 @@ test("actual Pi automatically continues a profiled handoff after a fresh context
   assert.equal(f.requests.length, requestsBeforeFailure);
 });
 
+/** A linked worktree of the fixture repo on its own branch; same common dir, its own canonical root. */
+async function linkedWorktree(f: Awaited<ReturnType<typeof fixture>>, name = "worker", branch = "feature") {
+  const path = join(f.dir, name);
+  await git(f.repo, ["worktree", "add", "-q", "-b", branch, path]);
+  return { path: await fs.realpath(path), branch, head: (await git(path, ["rev-parse", "HEAD"])).trim() };
+}
+const samePath = (a: string, b: string) => process.platform === "win32" ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
+const toolEnds = (client: Client, name: string, from = 0) => client.events.slice(from).filter((event: any) => event.type === "tool_execution_end" && event.toolName === name);
+const notices = (client: Client, from = 0) => client.events.slice(from).filter((event: any) => event.type === "extension_ui_request" && event.method === "notify");
+const toolNames = (request: any) => (request.tools ?? []).map((tool: any) => tool.function?.name ?? tool.name).sort();
+async function commit(repo: string, message: string) {
+  await git(repo, ["add", "-A"]); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", message]);
+}
+
+// Expected extension rule: drift_worktree adopt must be the only tool call in its assistant batch, because Pi
+// preflights every sibling call before executing them concurrently, so a sibling would run against an unknown root.
+test("actual Pi adopts a linked worktree as the active Drift root: measured interval, status, checkpoint, publication, reload/resume/compaction and the next interval", { skip: !piPresent, timeout: 150_000 }, async (t) => {
+  const f = await fixture(t);
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"trackArtifacts":true,"changelog":true}\n');
+  await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
+  await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
+  await git(f.repo, ["add", ".drift.json", ".gitignore", "CHANGELOG.md"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "config"]);
+  const mainBranch = (await git(f.repo, ["symbolic-ref", "--short", "HEAD"])).trim();
+  const worker = await linkedWorktree(f);
+  await fs.writeFile(join(worker.path, "worker-dirty.txt"), "dirty before adoption\n");
+
+  let client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  const initial = await f.readRecord(state.sessionId);
+  assert.equal(initial.worktree, undefined);
+  assert.equal(initial.startBranch, mainBranch);
+  assert.ok(Object.keys(initial.baseline).includes("inherited.txt"));
+  await client.prompt("hello");
+  const toolsBefore = toolNames(f.requests.at(-1));
+  assert.ok(toolsBefore.includes("drift_worktree"), JSON.stringify(toolsBefore));
+
+  // Adopt by a path relative to Pi's launch cwd; the launch cwd itself never moves.
+  let mark = client.events.length;
+  await client.prompt("WORKTREE_ADOPT ../worker");
+  const adoptions = toolEnds(client, "drift_worktree", mark);
+  assert.equal(adoptions.length, 1);
+  assert.ok(!adoptions[0].isError, JSON.stringify(adoptions[0]));
+  const adopted = await f.readRecord(state.sessionId); // Still the stable launch record path.
+  assert.ok(samePath(adopted.worktree, worker.path), adopted.worktree);
+  assert.equal(adopted.sessionId, state.sessionId);
+  assert.equal(adopted.startBranch, worker.branch);
+  assert.equal(adopted.startCommit, worker.head);
+  assert.ok(Object.keys(adopted.baseline).includes("worker-dirty.txt"), JSON.stringify(adopted.baseline));
+  assert.ok(!Object.keys(adopted.baseline).includes("inherited.txt"), "main's dirty files leaked into the adopted baseline");
+  assert.ok(Array.isArray(adopted.history) && adopted.history.length === 1, JSON.stringify(adopted.history));
+  assert.equal(adopted.history[0].startBranch, mainBranch);
+  assert.deepEqual(adopted.history[0].baseline, initial.baseline);
+  assert.deepEqual(adopted.receipts, []);
+  assert.equal(adopted.completed, undefined);
+  // The follow-up request after the tool result carries the active interval; Pi's core tools are unchanged.
+  assert.ok(JSON.stringify(f.requests.at(-1)).includes(adopted.intervalId));
+  assert.deepEqual(toolNames(f.requests.at(-1)), toolsBefore);
+  assert.equal((await client.request({ type: "get_state" })).sessionId, state.sessionId);
+
+  // Same target: idempotent, no new interval or history entry.
+  mark = client.events.length;
+  await client.prompt("WORKTREE_ADOPT " + worker.path);
+  assert.ok(!toolEnds(client, "drift_worktree", mark)[0]?.isError, JSON.stringify(toolEnds(client, "drift_worktree", mark)));
+  let record = await f.readRecord(state.sessionId);
+  assert.equal(record.intervalId, adopted.intervalId);
+  assert.equal(record.history.length, 1);
+  assert.deepEqual(record.baseline, adopted.baseline);
+
+  // Status is read-only: the model tool, the bare user command and the explicit status command.
+  mark = client.events.length;
+  await client.prompt("WORKTREE_STATUS");
+  const status = toolEnds(client, "drift_worktree", mark);
+  assert.equal(status.length, 1);
+  assert.ok(!status[0].isError && JSON.stringify(status[0]).includes(worker.branch), JSON.stringify(status[0]));
+  record = await f.readRecord(state.sessionId);
+  assert.equal(record.intervalId, adopted.intervalId);
+  assert.equal(record.history.length, 1);
+  const commandsAt = f.requests.length;
+  const bytes = await fs.readFile(f.recordPath(state.sessionId), "utf8");
+  for (const command of ["/drift-worktree", "/drift-worktree status"]) {
+    mark = client.events.length;
+    await client.request({ type: "prompt", message: command });
+    await until(() => notices(client, mark).length, `${command} did not report`);
+    assert.ok(notices(client, mark).some((event: any) => event.message.includes(worker.branch)), JSON.stringify(notices(client, mark)));
+  }
+  assert.equal(f.requests.length, commandsAt, "a user command must not start inference");
+  assert.equal(await fs.readFile(f.recordPath(state.sessionId), "utf8"), bytes);
+
+  // Checkpoints measure the active root only.
+  await fs.writeFile(join(f.repo, "main-only.txt"), "concurrent main work\n");
+  await fs.writeFile(join(worker.path, "worker-change.txt"), "adopted work\n");
+  await client.prompt("worker turn " + "padding ".repeat(1500));
+  await until(async () => (await f.readRecord(state.sessionId)).checkpoint?.files.includes("worker-change.txt"), "checkpoint missed the adopted worktree");
+  assert.ok(!(await f.readRecord(state.sessionId)).checkpoint.files.includes("main-only.txt"), "checkpoint measured main");
+
+  // Resume, reload and compaction keep the adoption and its interval.
+  await client.stop();
+  client = f.rpc(state.sessionFile);
+  assert.equal((await client.request({ type: "get_state" })).sessionId, state.sessionId);
+  for (const step of ["resume", "reload", "compaction"]) {
+    if (step === "reload") await client.request({ type: "prompt", message: "/fixture-reload" });
+    if (step === "compaction") await client.request({ type: "compact", customInstructions: "Summarize this synthetic fixture." });
+    record = await f.readRecord(state.sessionId);
+    assert.ok(samePath(record.worktree, worker.path), `${step} lost the adoption`);
+    assert.equal(record.intervalId, adopted.intervalId, `${step} changed the interval`);
+    assert.deepEqual(record.baseline, adopted.baseline, `${step} re-measured the baseline`);
+  }
+  await client.prompt("after compaction");
+  assert.ok(JSON.stringify(f.requests.at(-1)).includes(adopted.intervalId));
+
+  // Tracked publication and its changelog fragment land in the worker only.
+  const mainChangelog = await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8");
+  await client.prompt("PUBLISH_HANDOFF_CHANGELOG");
+  const completed = await f.readRecord(state.sessionId);
+  assert.ok(completed.completed, client.stderr);
+  assert.equal(completed.completed.fragment, "changelog.d/runtime-001-fixture.md");
+  const artifact = await fs.readFile(join(worker.path, completed.completed.path), "utf8");
+  assert.ok(artifact.includes(`session_started: ${JSON.stringify(adopted.started)}`), artifact);
+  assert.ok(await exists(join(worker.path, "drift/INDEX.md")));
+  assert.ok(await exists(join(worker.path, "changelog.d/runtime-001-fixture.md")));
+  assert.match(await fs.readFile(join(worker.path, "CHANGELOG.md"), "utf8"), /- Fixture change\. <!-- changelog\.d\/runtime-001-fixture\.md/);
+  assert.ok(!(await exists(join(f.repo, completed.completed.path))), "artifact silently written to main");
+  assert.ok(!(await exists(join(f.repo, "drift/runtime"))));
+  assert.ok(!(await exists(join(f.repo, "changelog.d/runtime-001-fixture.md"))));
+  assert.equal(await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8"), mainChangelog);
+  assert.ok((await git(worker.path, ["ls-files", "--others", "--exclude-standard"])).includes(completed.completed.path));
+  assert.equal(await git(worker.path, ["diff", "--cached", "--name-only"]), "");
+
+  // The next interval keeps the adoption and measures the worker afresh.
+  await client.stop();
+  client = f.rpc(state.sessionFile);
+  await client.prompt("new work interval");
+  const later = await f.readRecord(state.sessionId);
+  assert.notEqual(later.intervalId, adopted.intervalId);
+  assert.ok(samePath(later.worktree, worker.path));
+  assert.equal(later.startBranch, worker.branch);
+  assert.equal(later.previousHandoff, completed.completed.path);
+  assert.ok(Object.keys(later.baseline).includes("worker-change.txt"));
+
+  // A clone is a new identity: no inherited measurement or adoption.
+  await client.request({ type: "clone" });
+  const fork = await client.request({ type: "get_state" });
+  assert.notEqual(fork.sessionId, state.sessionId);
+  const forked = await f.readRecord(fork.sessionId);
+  assert.equal(forked.worktree, undefined);
+  assert.equal(forked.startBranch, mainBranch);
+  assert.ok(!forked.history?.length);
+  assert.ok(Object.keys(forked.baseline).includes("main-only.txt"));
+  // So is a brand-new session in the same launch directory.
+  const fresh = f.rpc();
+  const freshState = await fresh.request({ type: "get_state" });
+  const freshRecord = await f.readRecord(freshState.sessionId);
+  assert.equal(freshRecord.worktree, undefined);
+  assert.equal(freshRecord.startBranch, mainBranch);
+});
+
+test("actual Pi keeps private artifacts in main while an adopted worktree owns its branch, fragments, commands, /drift and profiled continuation", { skip: !piPresent, timeout: 120_000 }, async (t) => {
+  const f = await fixture(t);
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"changelog":true}\n');
+  await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
+  await commit(f.repo, "private config");
+  const worker = await linkedWorktree(f);
+  let client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  await client.request({ type: "get_commands" }).then((result: any) => assert.equal(result.commands.find((command: any) => command.name === "drift-worktree")?.source, "extension"));
+  const mainConfig = await fs.readFile(join(f.repo, ".drift.json"), "utf8");
+  const mainIgnore = await fs.readFile(join(f.repo, ".gitignore"), "utf8");
+
+  // The user command adopts (relative to the launch cwd) without inference.
+  const before = f.requests.length;
+  let mark = client.events.length;
+  await client.request({ type: "prompt", message: "/drift-worktree ../worker" });
+  await until(async () => (await f.readRecord(state.sessionId)).worktree, "/drift-worktree did not adopt");
+  assert.ok(samePath((await f.readRecord(state.sessionId)).worktree, worker.path));
+  assert.equal((await f.readRecord(state.sessionId)).startBranch, worker.branch);
+  assert.ok(!notices(client, mark).some((event: any) => event.notifyType === "error"), JSON.stringify(notices(client, mark)));
+
+  // Configuration commands target the active root.
+  await client.request({ type: "prompt", message: "/drift-changelog off" });
+  assert.deepEqual(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")), { changelog: false });
+  await client.request({ type: "prompt", message: "/drift-changelog on" });
+  assert.deepEqual(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")), { changelog: true });
+  await client.request({ type: "prompt", message: "/drift-track-artifacts on" });
+  assert.equal(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")).trackArtifacts, true);
+  await client.request({ type: "prompt", message: "/drift-track-artifacts off" });
+  assert.equal(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")).trackArtifacts, false);
+  assert.match(await fs.readFile(join(worker.path, ".gitignore"), "utf8"), /^\/drift\/$/m);
+  assert.equal(await fs.readFile(join(f.repo, ".drift.json"), "utf8"), mainConfig, "a command wrote main's configuration");
+  assert.equal(await fs.readFile(join(f.repo, ".gitignore"), "utf8"), mainIgnore);
+  assert.equal(f.requests.length, before, "user commands must not start inference");
+
+  // A profiled, private publication: the artifact in main's shared store, the fragment in the worker's branch.
+  const mainChangelog = await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8");
+  const requestsBefore = f.requests.length;
+  await client.prompt("PUBLISH_AUTO_HANDOFF_CHANGELOG");
+  const completed = await f.readRecord(state.sessionId);
+  assert.ok(completed.completed, client.stderr);
+  assert.ok(await exists(join(f.repo, completed.completed.path)), "private artifact not in main's shared store");
+  assert.ok(!(await exists(join(worker.path, "drift"))), "a private linked worktree must hold no drift/ of its own");
+  assert.ok(await exists(join(worker.path, "changelog.d/runtime-001-fixture.md")));
+  assert.ok(!(await exists(join(f.repo, "changelog.d/runtime-001-fixture.md"))));
+  assert.match(await fs.readFile(join(worker.path, "CHANGELOG.md"), "utf8"), /- Fixture change\./);
+  assert.equal(await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8"), mainChangelog);
+  assert.ok((await fs.readFile(join(f.repo, completed.completed.path), "utf8")).includes('next_session_profile: "architecture"'));
+  // Continuation resolves the handoff through the active root and keeps the adoption.
+  await until(() => f.requests.slice(requestsBefore + 1).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + completed.completed.path + "`")), "profiled continuation did not run from the adopted root");
+  await until(async () => !(await client.request({ type: "get_state" })).isStreaming, "continuation did not settle");
+  const continued = await f.readRecord(state.sessionId);
+  assert.ok(samePath(continued.worktree, worker.path));
+  assert.equal(continued.startBranch, worker.branch);
+  assert.ok(!notices(client).some((event: any) => /No local Drift model profile|could not|requires Pi's working directory/.test(event.message)), JSON.stringify(notices(client)));
+
+  // /drift picks up through the active root.
+  mark = client.events.length;
+  const pickupFrom = f.requests.length;
+  await client.prompt("/drift");
+  await until(() => f.requests.slice(pickupFrom).find((request) => JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + completed.completed.path + "`")), "/drift did not pick up through the adopted root");
+  assert.ok(samePath((await f.readRecord(state.sessionId)).worktree, worker.path));
+});
+
+test("actual Pi rejects foreign, non-root and missing adoption targets and keeps the original adoption", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+  const f = await fixture(t);
+  const worker = await linkedWorktree(f);
+  await fs.mkdir(join(worker.path, "sub"));
+  const foreign = join(f.dir, "foreign");
+  await fs.mkdir(foreign); await git(foreign, ["init", "-q"]);
+  await git(foreign, ["config", "user.name", "Foreign"]); await git(foreign, ["config", "user.email", "foreign@example.invalid"]);
+  await fs.writeFile(join(foreign, "x.txt"), "x\n"); await commit(foreign, "foreign");
+  const cloned = join(f.dir, "clone");
+  await git(f.dir, ["clone", "-q", f.repo, cloned]); // Same history, different common dir.
+  const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  const initial = await f.readRecord(state.sessionId);
+
+  // Before any adoption: a rejected target leaves the launch measurement untouched.
+  let mark = client.events.length;
+  await client.prompt("WORKTREE_ADOPT " + foreign);
+  assert.ok(toolEnds(client, "drift_worktree", mark)[0]?.isError, JSON.stringify(toolEnds(client, "drift_worktree", mark)));
+  let record = await f.readRecord(state.sessionId);
+  assert.equal(record.worktree, undefined);
+  assert.equal(record.intervalId, initial.intervalId);
+  assert.deepEqual(record.baseline, initial.baseline);
+
+  await client.request({ type: "prompt", message: "/drift-worktree ../worker" });
+  await until(async () => (await f.readRecord(state.sessionId)).worktree, "adoption failed");
+  const adopted = await f.readRecord(state.sessionId);
+  const bytes = await fs.readFile(f.recordPath(state.sessionId), "utf8");
+  for (const target of [foreign, cloned, join(worker.path, "sub"), join(f.dir, "missing")]) {
+    mark = client.events.length;
+    await client.request({ type: "prompt", message: `/drift-worktree ${target}` });
+    await until(() => notices(client, mark).length, `${target} produced no notice`);
+    assert.ok(notices(client, mark).some((event: any) => event.notifyType === "error"), `${target} was not refused: ${JSON.stringify(notices(client, mark))}`);
+    assert.equal(await fs.readFile(f.recordPath(state.sessionId), "utf8"), bytes, `${target} changed the record`);
+  }
+  for (const target of [foreign, join(worker.path, "sub")]) {
+    mark = client.events.length;
+    await client.prompt("WORKTREE_ADOPT " + target);
+    assert.ok(toolEnds(client, "drift_worktree", mark)[0]?.isError, `${target} adopted by the model`);
+    record = await f.readRecord(state.sessionId);
+    assert.ok(samePath(record.worktree, worker.path));
+    assert.equal(record.intervalId, adopted.intervalId);
+    assert.equal(record.startCommit, adopted.startCommit);
+    assert.deepEqual(record.baseline, adopted.baseline);
+    assert.equal(record.history.length, adopted.history.length);
+  }
+});
+
+test("actual Pi never writes main when the adopted root disappears, and the model recovers through drift_worktree", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+  const f = await fixture(t);
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"trackArtifacts":true}\n');
+  await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
+  await commit(f.repo, "tracked");
+  const worker = await linkedWorktree(f);
+  const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  await client.prompt("WORKTREE_ADOPT ../worker");
+  assert.ok(samePath((await f.readRecord(state.sessionId)).worktree, worker.path));
+  await fs.rm(worker.path, { recursive: true, force: true });
+
+  let mark = client.events.length;
+  await client.prompt("PUBLISH_HANDOFF");
+  let record = await f.readRecord(state.sessionId);
+  assert.equal(record.completed, undefined);
+  assert.ok(samePath(record.worktree, worker.path), "a missing target must not silently fall back to main");
+  assert.ok(!(await exists(join(f.repo, "drift"))), "publication silently wrote main");
+  assert.ok(toolEnds(client, "drift_publish", mark).every((event: any) => event.isError), JSON.stringify(toolEnds(client, "drift_publish", mark)));
+  mark = client.events.length;
+  await client.prompt("WORKTREE_STATUS");
+  assert.equal(toolEnds(client, "drift_worktree", mark).length, 1, "status must stay available to the model for recovery");
+
+  // Explicit recovery: adopt the launch root, then publish in a separate round.
+  mark = client.events.length;
+  await client.prompt("WORKTREE_ADOPT_THEN_PUBLISH " + f.repo);
+  const [adoption] = toolEnds(client, "drift_worktree", mark);
+  assert.ok(adoption && !adoption.isError, JSON.stringify(adoption));
+  record = await f.readRecord(state.sessionId);
+  assert.ok(record.completed, client.stderr);
+  assert.ok(record.worktree === undefined || samePath(record.worktree, f.repo), record.worktree);
+  assert.ok(await exists(join(f.repo, record.completed.path)));
+});
+
+test("actual Pi refuses drift_worktree adopt batched beside another tool call, then accepts separate calls", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+  const f = await fixture(t);
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"trackArtifacts":true}\n');
+  await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
+  await commit(f.repo, "tracked");
+  const worker = await linkedWorktree(f);
+  const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  const initial = await f.readRecord(state.sessionId);
+
+  let mark = client.events.length;
+  await client.prompt("WORKTREE_ADOPT_PUBLISH ../worker");
+  const adoptions = toolEnds(client, "drift_worktree", mark);
+  assert.equal(adoptions.length, 1);
+  assert.ok(adoptions[0].isError, "adopt beside a sibling call must be refused");
+  let record = await f.readRecord(state.sessionId);
+  assert.equal(record.worktree, undefined);
+  assert.equal(record.intervalId, initial.intervalId);
+  assert.equal(record.startBranch, initial.startBranch);
+  assert.ok(!(await exists(join(worker.path, "drift"))), "the batched sibling ran against the worker");
+  assert.ok(!(await exists(join(f.repo, "drift"))), "the batched sibling ran against main");
+  assert.ok(!record.receipts.length && !record.completed && !record.pending, JSON.stringify(record));
+  assert.ok(!record.history?.length);
+
+  mark = client.events.length;
+  await client.prompt("WORKTREE_ADOPT_THEN_PUBLISH ../worker");
+  assert.ok(!toolEnds(client, "drift_worktree", mark)[0]?.isError, JSON.stringify(toolEnds(client, "drift_worktree", mark)));
+  record = await f.readRecord(state.sessionId);
+  assert.ok(samePath(record.worktree, worker.path));
+  assert.equal(record.startBranch, worker.branch);
+  assert.ok(record.completed, client.stderr);
+  assert.ok(await exists(join(worker.path, record.completed.path)), "separate publication did not use the adopted root");
+});
+
+test("actual Pi auto-lands the ADOPTED worker's branch, runs its check there and leaves main untouched", { skip: !piPresent, timeout: 120_000 }, async (t) => {
+  const f = await fixture(t);
+  const { bare, branch } = await withOrigin(f);
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"trackArtifacts":true}\n');
+  await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\nland-cwd.txt\n");
+  await commit(f.repo, "tracked policy");
+  await git(f.repo, ["push", "-q", "origin", `HEAD:${branch}`]);
+  const worker = await linkedWorktree(f);
+  // A harmless check recording where it ran, into a worker-only ignored file (never committed by landing).
+  const check = `"${process.execPath}" -e "require('fs').writeFileSync('land-cwd.txt', process.cwd())"`;
+  await fs.writeFile(join(worker.path, ".drift.json"), JSON.stringify({ trackArtifacts: true, land: { auto: true, check } }) + "\n");
+  await fs.writeFile(join(worker.path, "worker-code.txt"), "worker code\n");
+  await commit(worker.path, "worker work");
+  const mainHead = (await git(f.repo, ["rev-parse", "HEAD"])).trim();
+
+  const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  let mark = client.events.length;
+  await client.prompt("WORKTREE_ADOPT ../worker");
+  assert.ok(!toolEnds(client, "drift_worktree", mark)[0]?.isError, JSON.stringify(toolEnds(client, "drift_worktree", mark)));
+  mark = client.events.length;
+  await client.prompt("PUBLISH_HANDOFF");
+  const record = await f.readRecord(state.sessionId);
+  assert.ok(record.completed, client.stderr);
+  const [published] = toolEnds(client, "drift_publish", mark);
+  assert.ok(published && !published.isError, JSON.stringify(published));
+  assert.match(JSON.stringify(published), new RegExp(`Landed ${worker.branch} on origin/${branch}`));
+  assert.match(JSON.stringify(published), /1 check passed/);
+  const remote = (await git(bare, ["ls-tree", "-r", "--name-only", branch])).trim().split("\n");
+  for (const file of ["worker-code.txt", record.completed.path, "drift/INDEX.md"]) assert.ok(remote.includes(file), `${file} not on the bare origin: ${remote}`);
+  assert.ok(samePath(await fs.readFile(join(worker.path, "land-cwd.txt"), "utf8"), worker.path), "the check did not run in the worker");
+  assert.ok(!(await exists(join(f.repo, "land-cwd.txt"))), "the check ran in main");
+  assert.equal((await git(f.repo, ["rev-parse", "HEAD"])).trim(), mainHead, "main HEAD moved");
+  assert.ok(!(await exists(join(f.repo, "drift"))), "artifact written to main");
+  assert.ok(!(await exists(join(f.repo, "changelog.d"))), "fragment written to main");
+  assert.ok(!(await exists(join(f.repo, "worker-code.txt"))));
+});
+
+test("actual Pi refuses adoption while a profiled continuation is queued, keeps the scope, and still continues", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+  const f = await fixture(t);
+  const worker = await linkedWorktree(f);
+  const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  const initial = await f.readRecord(state.sessionId);
+  const requestsBefore = f.requests.length;
+  const mark = client.events.length;
+  // Publish a profiled handoff, then adopt in the next tool round, before agent_settled queues compaction.
+  await client.prompt("PUBLISH_AUTO_THEN_ADOPT ../worker");
+  const [published] = toolEnds(client, "drift_publish", mark);
+  assert.ok(published && !published.isError, JSON.stringify(published));
+  const adoptions = toolEnds(client, "drift_worktree", mark);
+  assert.equal(adoptions.length, 1);
+  assert.ok(adoptions[0].isError, "adoption must be refused while a continuation is queued");
+  assert.match(JSON.stringify(adoptions[0]), /Continuation queued for drift\/runtime\/001-handoff-fixture\.md/);
+  const completed = await f.readRecord(state.sessionId);
+  assert.equal(completed.worktree, undefined);
+  assert.ok(!completed.history?.length);
+  assert.equal(completed.startBranch, initial.startBranch);
+  assert.equal(completed.completed?.path, "drift/runtime/001-handoff-fixture.md");
+  assert.ok(!(await exists(join(worker.path, "drift"))));
+  // The ordinary automatic continuation still runs from the original scope.
+  await until(() => f.requests.slice(requestsBefore + 1).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + completed.completed.path + "`")), "queued continuation did not run");
+  await until(async () => !(await client.request({ type: "get_state" })).isStreaming, "continuation did not settle");
+  const continued = await f.readRecord(state.sessionId);
+  assert.equal(continued.worktree, undefined);
+  assert.notEqual(continued.intervalId, initial.intervalId);
+  assert.equal(continued.previousHandoff, completed.completed.path);
+});
+
+test("actual Pi refuses adoption while the record holds a pending publication, then the same input recovers it", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+  const f = await fixture(t);
+  const worker = await linkedWorktree(f);
+  const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  await client.prompt("WORKTREE_ADOPT ../worker");
+  assert.ok(samePath((await f.readRecord(state.sessionId)).worktree, worker.path));
+
+  // A genuine pending intent on the session's own record: the index renderer is missing after the intent is saved.
+  const records = (await Records.open(f.repo, state.sessionId, f.agent))!;
+  assert.equal(records.file, f.recordPath(state.sessionId));
+  const input = { feature: "runtime", kind: "research" as const, slug: "pending", body: researchBody, source_research: "", previous_handoff: "", related_artifacts: [] };
+  await assert.rejects(publish(records, input, join(f.dir, "missing-python")));
+  const pending = await f.readRecord(state.sessionId);
+  assert.ok(pending.pending?.path, JSON.stringify(pending));
+  const pendingJson = JSON.stringify(pending.pending);
+
+  const mark = client.events.length;
+  await client.prompt("WORKTREE_ADOPT " + f.repo);
+  const [refused] = toolEnds(client, "drift_worktree", mark);
+  assert.ok(refused?.isError, JSON.stringify(refused));
+  assert.match(JSON.stringify(refused), /Incomplete publication/);
+  const after = await f.readRecord(state.sessionId);
+  assert.equal(JSON.stringify(after.pending), pendingJson, "pending publication changed");
+  assert.equal(after.intervalId, pending.intervalId, "a new interval started");
+  assert.equal(after.history.length, pending.history.length);
+  assert.ok(samePath(after.worktree, worker.path));
+
+  // Retrying the SAME input completes it.
+  const receipt = await publish(records, input);
+  assert.equal(receipt.path, pending.pending.path);
+  const recovered = await f.readRecord(state.sessionId);
+  assert.equal(recovered.pending, undefined);
+  assert.ok(recovered.receipts.some((item: any) => item.path === receipt.path));
+  assert.equal(recovered.intervalId, pending.intervalId);
+});
+
 async function legacySkill(f: Awaited<ReturnType<typeof fixture>>) {
   const dir = join(f.home, ".agents/skills/drift");
   // Replace only the fixture's own link. Never touch the real user's skills.
@@ -585,7 +1045,7 @@ test("actual Pi handles initialization failure without inference or a success cl
 
 test("actual pi-acp initialization failure returns without inference", { skip: !acpBinary || !piPresent, timeout: 45_000 }, async (t) => {
   const f = await fixture(t, true);
-  const client = new Client(process.execPath, [resolve(acpBinary!)], f.repo, { ...f.env, PI_ACP_PI_COMMAND: piBinary }); f.clients.push(client);
+  const client = new Client(process.execPath, [resolve(acpBinary!)], f.repo, f.acpEnv); f.clients.push(client);
   const request = (method: string, params: any) => client.request({ jsonrpc: "2.0", method, params });
   await request("initialize", { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "drift-test", version: "1" } });
   const created = await request("session/new", { cwd: f.repo, mcpServers: [] });
@@ -594,12 +1054,41 @@ test("actual pi-acp initialization failure returns without inference", { skip: !
   assert.ok(JSON.stringify(client.events).includes("No successful recording is claimed"), "ACP did not surface the failure notice");
 });
 
+test("actual pi-acp adopts a worker worktree from a main-checkout session without slash commands", { skip: !acpBinary || !piPresent, timeout: 90_000 }, async (t) => {
+  const f = await fixture(t);
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"trackArtifacts":true}');
+  await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
+  await commit(f.repo, "tracked");
+  const worker = await linkedWorktree(f);
+  const client = new Client(process.execPath, [resolve(acpBinary!)], f.repo, f.acpEnv);
+  f.clients.push(client);
+  const request = (method: string, params: any) => client.request({ jsonrpc: "2.0", method, params });
+  await request("initialize", { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "drift-test", version: "1" } });
+  const created = await request("session/new", { cwd: f.repo, mcpServers: [] });
+  const records = join(f.agent, "drift", hash(f.repo).slice(0, 24));
+  const paths = (await fs.readdir(records)).filter((name) => name.endsWith(".json"));
+  assert.equal(paths.length, 1);
+  const initial = JSON.parse(await fs.readFile(join(records, paths[0]), "utf8"));
+  const prompt = (text: string) => request("session/prompt", { sessionId: created.sessionId, prompt: [{ type: "text", text }] });
+  await prompt("WORKTREE_ADOPT ../worker");
+  const adopted = await f.readRecord(initial.sessionId);
+  assert.ok(samePath(adopted.worktree, worker.path));
+  assert.notEqual(adopted.intervalId, initial.intervalId);
+  assert.equal(adopted.startBranch, worker.branch);
+  await prompt("PUBLISH_HANDOFF");
+  const completed = await f.readRecord(initial.sessionId);
+  assert.ok(completed.completed, JSON.stringify(client.events).slice(-4000));
+  const text = await fs.readFile(join(worker.path, completed.completed.path), "utf8");
+  assert.ok(text.includes(`branch: ${JSON.stringify(worker.branch)}`));
+  assert.ok(text.includes(`session_id: ${JSON.stringify(initial.sessionId)}`));
+  assert.ok(!(await exists(join(f.repo, "drift"))), "ACP publication wrote the launch checkout");
+});
+
 test("actual pi-acp loads the package and publishes tracked artifacts without extension slash commands", { skip: !acpBinary || !piPresent, timeout: 90_000 }, async (t) => {
   const f = await fixture(t);
   await fs.writeFile(join(f.repo, ".drift.json"), '{"trackArtifacts":true}');
   await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
-  const env = { ...f.env, PI_ACP_PI_COMMAND: piBinary };
-  const client = new Client(process.execPath, [resolve(acpBinary!)], f.repo, env); f.clients.push(client);
+  const client = new Client(process.execPath, [resolve(acpBinary!)], f.repo, f.acpEnv); f.clients.push(client);
   const request = (method: string, params: any) => client.request({ jsonrpc: "2.0", method, params });
   await request("initialize", { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "drift-test", version: "1" } });
   const created = await request("session/new", { cwd: f.repo, mcpServers: [] });
