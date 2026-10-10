@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Drift artifacts now carry citation anchors: `drift_publish` records a content hash per `path:line` reference, and `/drift` or an automatic continuation grades every citation at pickup — fresh (proven), moved (forwarded to its new location), changed (with a similarity ratio), gone, or uncertain — so a reading session knows exactly what to re-check instead of trusting stale references. Older artifacts are graded heuristically from their recorded commit; `scripts/check-staleness.py` also runs standalone. <!-- changelog.d/citation-staleness-003-anchors-implemented-and-verified.md 2026-10-10T19:47:39+01:00 -->
 - The repository pins `@types/node` as a dev dependency, with a lockfile, so linting and type-checking resolve Node built-ins. <!-- changelog.d/changelog-pipeline-002-types-node-housekeeping-landed.md 2026-10-10T18:28:02+01:00 -->
 - Explicit worktree adoption via `drift_worktree` and `/drift-worktree`: workers can keep their Pi/ACP thread while using fresh, persistent worktree-scoped measurements and publication, with preserved interval history and guards against stale targets or interrupted publication. <!-- changelog.d/worktree-scope-001-explicit-worktree-adoption.md 2026-10-10T13:52:24+01:00 -->
 
