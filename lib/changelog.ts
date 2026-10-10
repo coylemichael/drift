@@ -137,6 +137,10 @@ function classify(error: unknown): ChangelogSync | undefined {
     const lines = message.split(/\r?\n/).filter((line) => line.includes("not produced by any fragment")).map((line) => line.replace(/^.*? failed: /, ""));
     return { status: "unrecognised", detail: `${lines.join("; ")}; move them into changelog.d/ fragments or delete them` };
   }
+  if (message.includes("edited in the generated region")) {
+    const lines = message.split(/\r?\n/).filter((line) => line.includes("edited in the generated region")).map((line) => line.replace(/^.*? failed: /, ""));
+    return { status: "unrecognised", detail: `${lines.join("; ")}; the generated region is a one-way view, so move the edits into their changelog.d/ fragments` };
+  }
   return undefined;
 }
 

@@ -12,11 +12,12 @@ Usage:
               by fragment id, regroup and reorder, three-way merge the hand-written parts
               around them, and write the result over <ours>.
 
-Without a flag the file is regenerated in place. Before rendering, a bullet whose text was
-edited in CHANGELOG.md but still carries its id comment is written back into its fragment,
-so an edit made in the generated file persists. A line in the generated region that no
-fragment produced is reported with its line number and nothing is written (exit 2): Drift
-does not guess at content it did not write.
+Without a flag the file is regenerated in place. The generated region is a one-way view of
+changelog.d/: to change a bullet, edit its fragment and regenerate. A bullet whose region
+text matches no current or committed version of its fragment was edited by hand and stops
+regeneration (exit 2), as does a line no fragment produced, reported with its line number:
+Drift does not guess at content it did not write, and never copies view text back into a
+fragment.
 
 Fragments:
     changelog.d/<feature>-<NNN>-<slug>.md
@@ -73,6 +74,15 @@ def parse_date(raw):
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
 
 
+def normalize_body(body):
+    """One bullet's text with no leading list marker on its first line: the renderer owns the
+    "- ", so a marker in a fragment (or doubled in a legacy region) would render twice.
+    Continuation lines keep theirs; a nested sub-bullet is intentional."""
+    body = body.strip()
+    first, sep, rest = body.partition("\n")
+    return re.sub(r"^[-*+] +", "", first) + sep + rest
+
+
 def git(repo, *args, ok=(0,)):
     """Run git in `repo`; return stdout, or None when the exit code is an expected negative."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
@@ -103,6 +113,7 @@ def read_fragment(path, repo):
         raise ValueError(f"invalid fragment (empty body): {path.relative_to(repo).as_posix()}")
     if re.search(r"\n\s*\n", body):
         raise ValueError(f"invalid fragment (a fragment is one bullet; no blank lines): {path.relative_to(repo).as_posix()}")
+    body = normalize_body(body)
     raw_date = scalar(block, "date")
     return {
         "id": path.relative_to(repo).as_posix(),
@@ -336,17 +347,31 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
 
 
-def write_back_edits(repo, fragments, current_entries):
-    """A bullet edited in the file but still carrying its id updates its fragment. Returns the ids rewritten."""
+def committed_bodies(repo, ident):
+    """Every committed version of a fragment's body, normalized, so a stale view is recognisable."""
+    bodies = set()
+    for sha in (git(repo, "log", "--format=%H", "--", ident) or "").split():
+        text = git(repo, "show", f"{sha}:{ident}", ok=(0, 128))
+        match = FRONTMATTER.match((text or "").replace("\r\n", "\n"))
+        if match:
+            bodies.add(normalize_body(text[match.end():].strip("\n").rstrip()))
+    return bodies
+
+
+def hand_edited(repo, fragments, current_entries):
+    """Region bullets that match no current or committed version of their fragment. The region is a
+    one-way view: a stale bullet regenerates, a hand-edited one is the caller's to move into its
+    fragment; nothing is ever copied back from the view into a source."""
     by_id = {f["id"]: f for f in fragments}
-    changed = []
-    for ident, entry in current_entries.items():
+    edited = []
+    for ident, entry in sorted(current_entries.items()):
         fragment = by_id.get(ident)
-        if fragment and entry["body"].strip() != fragment["body"].strip():
-            fragment["body"] = entry["body"].strip()
-            (repo / ident).write_text(fragment["frontmatter"].rstrip("\n") + "\n" + fragment["body"] + "\n", encoding="utf-8", newline="\n")
-            changed.append(ident)
-    return changed
+        if fragment is None:
+            continue  # Fragment deleted: its bullet simply leaves the view.
+        body = normalize_body(entry["body"])
+        if body != normalize_body(fragment["body"]) and body not in committed_bodies(repo, ident):
+            edited.append(ident)
+    return edited
 
 
 def regenerate(repo, mode):
@@ -369,7 +394,12 @@ def regenerate(repo, mode):
                 print(f"{changelog}:{number}: not produced by any fragment: {line}", file=sys.stderr)
             print("error: move these lines into changelog.d/ fragments or delete them; nothing written", file=sys.stderr)
             return 2
-        edited = write_back_edits(repo, fragments, current) if mode == "--write" else []
+        edited = hand_edited(repo, fragments, current)
+        if edited:
+            for ident in edited:
+                print(f"{changelog}: the bullet for {ident} was edited in the generated region; edit the fragment instead", file=sys.stderr)
+            print("error: the generated region is a one-way view of changelog.d/; move these edits into their fragments or restore the bullets; nothing written", file=sys.stderr)
+            return 2
         content = "\n".join(head + render_region(groups_from_fragments(repo, fragments)) + tail)
         if mode == "--stdout":
             print(content, end="")
@@ -380,13 +410,11 @@ def regenerate(repo, mode):
                 return 0
             print(f"{changelog}: out of date", file=sys.stderr)
             return 1
-        if content == text.replace("\r\n", "\n") and not edited:
+        if content == text.replace("\r\n", "\n"):
             return 0
         if digest(changelog) != before:
             continue  # Someone wrote meanwhile: recompute from their version rather than replace it.
         atomic_write(changelog, content)
-        for ident in edited:
-            print(f"wrote edit back to {ident}")
         print(f"wrote {changelog}: {len(fragments)} fragments")
         return 0
     print(f"error: {changelog} kept changing underneath; try again", file=sys.stderr)
@@ -446,9 +474,12 @@ def merge(paths):
 
 
 def main(argv):
-    # --stdout feeds the Pi publisher byte for byte: LF everywhere, not the platform's text-mode translation.
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(newline="\n")
+    # --stdout feeds the Pi publisher byte for byte: UTF-8 and LF everywhere, never the console
+    # code page (a cp1252 console crashes on characters the changelog already uses) or the
+    # platform's text-mode translation. stderr too: error reports quote region lines verbatim.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", newline="\n")
     args = [a for a in argv[1:] if not a.startswith("-")]
     flags = {a for a in argv[1:] if a.startswith("-")}
     if flags & {"-h", "--help"}:

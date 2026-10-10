@@ -243,9 +243,11 @@ def render(dated, undated):
 
 
 def main(argv):
-    # --stdout feeds the Pi publisher byte for byte: LF everywhere, not the platform's text-mode translation.
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(newline="\n")
+    # --stdout feeds the Pi publisher byte for byte: UTF-8 and LF everywhere, never the console
+    # code page (a cp1252 console crashes on non-cp1252 artifact titles) or text-mode translation.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", newline="\n")
     args = [a for a in argv[1:] if not a.startswith("-")]
     flags = {a for a in argv[1:] if a.startswith("-")}
     if flags & {"-h", "--help"}:

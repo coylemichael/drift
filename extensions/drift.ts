@@ -452,7 +452,7 @@ export default function drift(pi: ExtensionAPI) {
       next_session_profile: Type.Optional(Type.String({ description: "Portable lowercase-hyphenated model profile for the receiving session; handoffs only." })),
       changelog: Type.Optional(Type.Object({
         section: StringEnum(sections),
-        text: Type.String({ description: "One Markdown bullet describing the user-visible change; no blank lines", maxLength: 4096 }),
+        text: Type.String({ description: "Text of one changelog bullet; the renderer adds the leading '- '. Further lines continue the same bullet; no blank lines", maxLength: 4096 }),
       }, { additionalProperties: false, description: "The change's changelog entry, written as a changelog.d/ fragment beside the artifact. Only when context says the changelog is generated here; omit otherwise." })),
     }, { additionalProperties: false }),
     async execute(_id, params, signal, _update, ctx) {
