@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- The repository pins `@types/node` as a dev dependency, with a lockfile, so linting and type-checking resolve Node built-ins. <!-- changelog.d/changelog-pipeline-002-types-node-housekeeping-landed.md 2026-10-10T18:28:02+01:00 -->
 - Explicit worktree adoption via `drift_worktree` and `/drift-worktree`: workers can keep their Pi/ACP thread while using fresh, persistent worktree-scoped measurements and publication, with preserved interval history and guards against stale targets or interrupted publication. <!-- changelog.d/worktree-scope-001-explicit-worktree-adoption.md 2026-10-10T13:52:24+01:00 -->
 
 ### Fixed
