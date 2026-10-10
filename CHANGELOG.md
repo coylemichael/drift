@@ -10,6 +10,10 @@ All notable changes to this project will be documented in this file.
 
 - Explicit worktree adoption via `drift_worktree` and `/drift-worktree`: workers can keep their Pi/ACP thread while using fresh, persistent worktree-scoped measurements and publication, with preserved interval history and guards against stale targets or interrupted publication. <!-- changelog.d/worktree-scope-001-explicit-worktree-adoption.md 2026-10-10T13:52:24+01:00 -->
 
+### Fixed
+
+- The changelog generator no longer copies edits from the generated region back into their changelog.d/ fragments: the region is a one-way view, and a hand-edited bullet is reported and refused instead of silently reverting fragment corrections. Both builders emit UTF-8 regardless of console code page, and a leading bullet marker in a fragment renders a single '- ' instead of doubling. <!-- changelog.d/changelog-pipeline-001-one-way-changelog-and-utf8-builders.md 2026-10-10T17:53:59+01:00 -->
+
 <!-- /drift:changelog -->
 
 ## [Unreleased]
