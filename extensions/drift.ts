@@ -8,6 +8,9 @@ import { attributeFor, changelogDriver, changelogDriverCommand, indexDriver, ind
 import { describeLanding, land } from "../lib/land.ts";
 import { artifactStore, driftConfig, git, hasOrigin, Records, WorktreeScopeError } from "../lib/state.ts";
 import { citationNote, pickup } from "../lib/pickup.ts";
+
+// The citation usefulness ledger: one JSONL line per checked pickup, in the agent dir, never a repo.
+const citationLedger = () => join(getAgentDir(), "drift", "citation-metrics.jsonl");
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
 import { registerSkillBinding } from "./skill-binding.ts";
 
@@ -19,7 +22,7 @@ export default function drift(pi: ExtensionAPI) {
     const match = /^\/drift(?:\s+([\s\S]*))?$/.exec(event.text.trim());
     if (!match) return { action: "continue" };
     try {
-      const { text, artifact } = await exclusive(async () => pickup(await activeRepo(ctx), match[1] ?? ""));
+      const { text, artifact } = await exclusive(async () => pickup(await activeRepo(ctx), match[1] ?? "", citationLedger()));
       if (artifact) ctx.ui.notify(`Drift: picking up ${artifact}`, "info");
       return { action: "transform", text };
     } catch (error) {
@@ -214,7 +217,7 @@ export default function drift(pi: ExtensionAPI) {
       pendingContinuationPath = undefined;
       continuationQueued = false;
       // The same citation grading /drift gets: what to re-check before relying on the handoff.
-      const note = await citationNote(repo, (await artifactStore(repo)).root, route.path).catch(() => undefined);
+      const note = await citationNote(repo, (await artifactStore(repo)).root, route.path, citationLedger()).catch(() => undefined);
       await pi.sendUserMessage(`Continue the work recorded in the Drift handoff at \`${route.path}\`. Follow the handoff workflow: read this handoff and its referenced source documents, inspect the recent project artifact index, then continue from its Next Steps. Do not re-research completed work.${note ? `\n\n${note}` : ""}`);
     } catch (error) {
       pendingContinuationPath = undefined;

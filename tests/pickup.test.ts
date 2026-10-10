@@ -94,11 +94,20 @@ test("/drift grades an artifact's citations and notes what to re-check", async (
   await fs.mkdir(join(dir, "drift", "auth"), { recursive: true });
   await fs.writeFile(join(dir, "drift", "auth", "001-handoff-cited.md"),
     `---\ndate: "2026-10-09T10:00:00+01:00"\nfeature: "auth"\nsequence: "001"\ntype: "handoff"\nstatus: "in-progress"\ngit_commit: "${sha}"\n---\n\n## Body\nSee \`app.py:2\`.\n`);
-  assert.match((await pickup(dir, "")).text, /Citation check \(heuristic mode\): 1 fresh\. All cited code is unchanged\./);
+  assert.match((await pickup(dir, "", join(dir, "metrics", "citations.jsonl"))).text, /Citation check \(heuristic mode\): 1 fresh\. All cited code is unchanged\./);
 
   await fs.writeFile(join(dir, "app.py"), "one\nTWO CHANGED\nthree\n");
-  const stale = await pickup(dir, "001-handoff-cited.md");
+  const stale = await pickup(dir, "001-handoff-cited.md", join(dir, "metrics", "citations.jsonl"));
   assert.match(stale.text, /Citation check \(heuristic mode\): 1 changed\. Re-check before relying on: app\.py:2 changed/);
   // The citation note precedes the user's words, which stay last.
   assert.match(stale.text, /Citation check[\s\S]*The user's message: 001-handoff-cited\.md$/);
+  // The usefulness ledger recorded both checks, zero-stale pickups included.
+  const lines = (await fs.readFile(join(dir, "metrics", "citations.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].total, 1);
+  assert.equal(lines[0].counts.fresh, 1);
+  assert.equal(lines[1].counts.changed, 1);
+  assert.equal(lines[1].artifact, "drift/auth/001-handoff-cited.md");
+  assert.equal(lines[1].mode, "heuristic");
+  assert.match(lines[1].date, /2026-10-09/);
 });

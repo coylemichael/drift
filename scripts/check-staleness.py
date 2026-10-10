@@ -204,7 +204,7 @@ def check(artifact, repo):
             why = "no recorded commit" if not commit else ("recorded commit not in this repository" if not pinned else "cited path not in the recorded commit")
             results.append({**citation, "verdict": "uncertain", "detail": why})
     return {"artifact": artifact.as_posix(), "mode": "exact" if anchors else "heuristic",
-            "commit": commit, "citations": results,
+            "commit": commit, "date": scalar(block, "date"), "citations": results,
             "counts": {v: sum(1 for r in results if r["verdict"] == v) for v in ("fresh", "moved", "changed", "gone", "uncertain")}}
 
 

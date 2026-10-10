@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { syncIndex } from "./artifacts.ts";
 import { artifactStore, exists, python, run, safePath } from "./state.ts";
@@ -51,14 +51,23 @@ async function status(repo: string, path: string): Promise<string | undefined> {
  * Strictly non-blocking: a checker failure degrades to an "unavailable" note, never an error,
  * and an artifact without citations gets no note at all.
  */
-export async function citationNote(repo: string, root: string, artifact: string): Promise<string | undefined> {
-  let report: { mode?: string; citations?: Record<string, any>[]; counts?: Record<string, number> };
+export async function citationNote(repo: string, root: string, artifact: string, ledger?: string): Promise<string | undefined> {
+  let report: { mode?: string; date?: string; commit?: string; citations?: Record<string, any>[]; counts?: Record<string, number> };
   try {
     report = JSON.parse(await run(await python(), ["-I", checker, join(root, artifact), repo, "--json"], repo));
   } catch {
     return "Citation check unavailable; treat the artifact's path:line references as unverified.";
   }
   const results = report.citations ?? [];
+  if (ledger) {
+    // The usefulness ledger: one line per successful check, zero-citation pickups included —
+    // they are the denominator. Metrics never matter more than the pickup, so failures vanish.
+    const line = JSON.stringify({ ts: new Date().toISOString(), repo, artifact, date: report.date ?? null, commit: report.commit ?? null, mode: report.mode, total: results.length, counts: report.counts ?? {} });
+    try {
+      await fs.mkdir(dirname(ledger), { recursive: true });
+      await fs.appendFile(ledger, line + "\n", "utf8");
+    } catch { /* ignored */ }
+  }
   if (!results.length) return undefined;
   const counts = report.counts ?? {};
   const summary = ["fresh", "moved", "changed", "gone", "uncertain"].filter((v) => counts[v]).map((v) => `${counts[v]} ${v}`).join(", ");
@@ -75,7 +84,7 @@ export async function citationNote(repo: string, root: string, artifact: string)
  * Rewrite `/drift [args]` into a Drift skill request. Code picks the artifact so the default is deterministic:
  * a named artifact if the user gave one, otherwise the newest in drift/INDEX.md, routed by kind and status.
  */
-export async function pickup(repo: string | undefined, args: string): Promise<{ text: string; artifact?: string }> {
+export async function pickup(repo: string | undefined, args: string, ledger?: string): Promise<{ text: string; artifact?: string }> {
   const request = args.trim();
   if (!repo) return { text: `/skill:drift ${request}`.trim() };
   const { root } = await artifactStore(repo); // A private linked worktree reads the main worktree's drift/.
@@ -97,7 +106,7 @@ export async function pickup(repo: string | undefined, args: string): Promise<{ 
     plan: `Execute the Drift plan at \`${artifact}\`. Follow the execute workflow: read the plan and its source research, then work through its Implementation Sequence.`,
     research: `Turn the Drift research at \`${artifact}\` into an implementation plan. Follow the planning workflow.`,
   }[kind as "handoff" | "plan" | "research"];
-  const citations = await citationNote(repo, root, artifact);
+  const citations = await citationNote(repo, root, artifact, ledger);
   const notes = [
     `Picked by /drift: ${source}.`,
     ...(citations ? [citations] : []),
