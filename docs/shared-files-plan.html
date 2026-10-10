@@ -41,6 +41,7 @@
 
 <h1>Shared files under many agents</h1>
 <p class="meta">Drift plan · drafted 2026-10-09 · status: <span class="tag">built</span> in 999390e, 6c3e773, 96bab20, d8c7964 (v0.5.0)</p>
+<p class="meta">Amended 2026-10-10: §5's edit-back rule (a bullet edited in <code>CHANGELOG.md</code> written back to its fragment) proved destructive in use and was removed in 2097285 — generation is one-way, and a hand-edited bullet is reported and refused. This document records the design as built; current behaviour is described in README.md.</p>
 
 <p class="lede">When a dozen agents land on one branch within minutes of each other, the files every one of them touches, <code>drift/INDEX.md</code> and <code>CHANGELOG.md</code>, conflict on nearly every rebase, and the hand resolutions silently lose work. This plan makes both files <em>derived</em>: rebuilt from per-thread source files that cannot collide, merged by code when two versions meet, and never resolved by a model or a person. A third piece, <code>/drift-land</code>, turns the landing rulebook into one command.</p>
 
