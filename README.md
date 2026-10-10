@@ -226,7 +226,10 @@ line or file; `changed` reports a difflib similarity; `gone` and `uncertain`
 could not be verified. Artifacts published before anchors existed are graded
 heuristically from their recorded `git_commit`. The check is a report, never a
 gate: it blocks nothing, writes nothing, and a checker failure degrades to one
-"unavailable" note. It also runs standalone:
+"unavailable" note. Each check also appends one line to a local usefulness
+ledger — `<agent dir>/drift/citation-metrics.jsonl`, verdict counts, mode and
+artifact date, never in a repository — so the feature's exposure and the
+corpus's rot rate can be measured over time. The checker also runs standalone:
 `python -I scripts/check-staleness.py drift/<feature>/<artifact>.md [<repo>]`.
 
 ### Landing (per repository)
