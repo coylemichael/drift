@@ -27,5 +27,6 @@
   },
   "scripts": {
     "test": "node --experimental-strip-types --test tests/*.test.ts"
-  }
+  },
+  "devDependencies": { "@types/node": "^26.6.5" }
 }
