@@ -1,7 +1,10 @@
 import * as fs from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { syncIndex } from "./artifacts.ts";
-import { artifactStore, exists, safePath } from "./state.ts";
+import { artifactStore, exists, python, run, safePath } from "./state.ts";
+
+const checker = fileURLToPath(new URL("../scripts/check-staleness.py", import.meta.url));
 
 // An artifact reference as typed, pasted or mentioned: `drift/<feature>/<NNN>-<kind>-<slug>.md` with either slash,
 // or the bare file name. Zed mentions look like [@009-handoff-x.md](file:///C:/repo/drift/feature/009-handoff-x.md).
@@ -43,6 +46,32 @@ async function status(repo: string, path: string): Promise<string | undefined> {
 }
 
 /**
+ * One pickup note grading the artifact's code citations (scripts/check-staleness.py), so the
+ * reading session knows what to re-check instead of trusting blindly or re-verifying everything.
+ * Strictly non-blocking: a checker failure degrades to an "unavailable" note, never an error,
+ * and an artifact without citations gets no note at all.
+ */
+export async function citationNote(repo: string, root: string, artifact: string): Promise<string | undefined> {
+  let report: { mode?: string; citations?: Record<string, any>[]; counts?: Record<string, number> };
+  try {
+    report = JSON.parse(await run(await python(), ["-I", checker, join(root, artifact), repo, "--json"], repo));
+  } catch {
+    return "Citation check unavailable; treat the artifact's path:line references as unverified.";
+  }
+  const results = report.citations ?? [];
+  if (!results.length) return undefined;
+  const counts = report.counts ?? {};
+  const summary = ["fresh", "moved", "changed", "gone", "uncertain"].filter((v) => counts[v]).map((v) => `${counts[v]} ${v}`).join(", ");
+  const ref = (c: any) => `${c.path}:${c.start}${c.end !== c.start ? `-${c.end}` : ""}`;
+  const detail = (c: any) =>
+    c.verdict === "moved" ? `${ref(c)} moved to ${c.to.path}:${c.to.line}`
+    : c.verdict === "changed" ? `${ref(c)} changed${c.similarity !== undefined ? ` (${Math.round(c.similarity * 100)}% similar)` : ""}`
+    : `${ref(c)} ${c.verdict}`;
+  const stale = results.filter((c) => c.verdict !== "fresh").slice(0, 12).map(detail);
+  return `Citation check (${report.mode} mode): ${summary}.` + (stale.length ? ` Re-check before relying on: ${stale.join("; ")}.` : " All cited code is unchanged.");
+}
+
+/**
  * Rewrite `/drift [args]` into a Drift skill request. Code picks the artifact so the default is deterministic:
  * a named artifact if the user gave one, otherwise the newest in drift/INDEX.md, routed by kind and status.
  */
@@ -68,8 +97,10 @@ export async function pickup(repo: string | undefined, args: string): Promise<{ 
     plan: `Execute the Drift plan at \`${artifact}\`. Follow the execute workflow: read the plan and its source research, then work through its Implementation Sequence.`,
     research: `Turn the Drift research at \`${artifact}\` into an implementation plan. Follow the planning workflow.`,
   }[kind as "handoff" | "plan" | "research"];
+  const citations = await citationNote(repo, root, artifact);
   const notes = [
     `Picked by /drift: ${source}.`,
+    ...(citations ? [citations] : []),
     ...(finished ? [`Its status is "${state}"; confirm with the user that they mean to reopen it before changing anything.`] : []),
     ...(named ? [`The user's message: ${request}`] : []),
   ];

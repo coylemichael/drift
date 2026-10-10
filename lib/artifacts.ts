@@ -6,6 +6,7 @@ import type { Pending, Receipt, RecordData } from "./state.ts";
 export { trackArtifacts } from "./state.ts";
 import { hasAttribute, indexAttributeLine, indexDriver } from "./git-drivers.ts";
 import { changelogState, sections } from "./changelog.ts";
+import { extractAnchors } from "./anchors.ts";
 
 export interface ArtifactInput {
   feature: string;
@@ -303,6 +304,10 @@ async function prepare(repo: string, root: string, record: RecordData, input: Ar
   for (const name of ["status", "source_research", "previous_handoff", "related_artifacts", "next_session_profile"] as const) {
     if (input[name] !== undefined) fields[name] = input[name];
   }
+  // What the cited code said at publication, so a later pickup can prove citations fresh,
+  // follow moved ones and grade changed ones (scripts/check-staleness.py reads these).
+  const anchors = await extractAnchors(repo, input.body);
+  if (anchors.length) fields.anchors = anchors;
   const frontmatter = Object.entries(fields).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n");
   const content = `---\n${frontmatter}\n---\n\n${input.body}`;
   // The fragment is named after the artifact, so two threads' fragments can never share a name.

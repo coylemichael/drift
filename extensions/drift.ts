@@ -7,7 +7,7 @@ import { changelogState, sections, setChangelog, syncChangelog, type ChangelogRe
 import { attributeFor, changelogDriver, changelogDriverCommand, indexDriver, indexDriverCommand, installDriver } from "../lib/git-drivers.ts";
 import { describeLanding, land } from "../lib/land.ts";
 import { artifactStore, driftConfig, git, hasOrigin, Records, WorktreeScopeError } from "../lib/state.ts";
-import { pickup } from "../lib/pickup.ts";
+import { citationNote, pickup } from "../lib/pickup.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
 import { registerSkillBinding } from "./skill-binding.ts";
 
@@ -213,7 +213,9 @@ export default function drift(pi: ExtensionAPI) {
       ctx.ui.notify(`Drift profile ${route.profile}: ${target.provider}/${target.model}`, "info");
       pendingContinuationPath = undefined;
       continuationQueued = false;
-      await pi.sendUserMessage(`Continue the work recorded in the Drift handoff at \`${route.path}\`. Follow the handoff workflow: read this handoff and its referenced source documents, inspect the recent project artifact index, then continue from its Next Steps. Do not re-research completed work.`);
+      // The same citation grading /drift gets: what to re-check before relying on the handoff.
+      const note = await citationNote(repo, (await artifactStore(repo)).root, route.path).catch(() => undefined);
+      await pi.sendUserMessage(`Continue the work recorded in the Drift handoff at \`${route.path}\`. Follow the handoff workflow: read this handoff and its referenced source documents, inspect the recent project artifact index, then continue from its Next Steps. Do not re-research completed work.${note ? `\n\n${note}` : ""}`);
     } catch (error) {
       pendingContinuationPath = undefined;
       continuationQueued = false;

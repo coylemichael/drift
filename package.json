@@ -13,7 +13,7 @@
   },
   "files": [
     "skills/", "prompts/", ".claude-plugin/",
-    "extensions/", "lib/", "scripts/build-index.py", "README.md", "CHANGELOG.md", "assets/"
+    "extensions/", "lib/", "scripts/_driftmeta.py", "scripts/build-index.py", "scripts/build-changelog.py", "scripts/check-staleness.py", "README.md", "CHANGELOG.md", "assets/"
   ],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

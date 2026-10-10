@@ -955,3 +955,14 @@ test("landing commits Drift's own publication outputs first and still halts on a
   await fs.appendFile(join(repo, ".gitignore"), "secret.env\n");
   await assert.rejects(land(repo), (error: any) => error instanceof LandHalt && error.stage === "tree" && /\.gitignore/.test(error.message));
 });
+
+test("published artifacts carry citation anchors the checker verifies as fresh", async (t) => {
+  const { repo, agent } = await fixture(t);
+  const store = (await Records.open(repo, "session-anchors", agent))!;
+  const receipt = await publish(store, { ...input, slug: "anchored", body: body + "\nSee `file.txt:1`.\n" });
+  const text = await fs.readFile(join(repo, receipt.path), "utf8");
+  assert.match(text, /^anchors: \[\{"path":"file\.txt","start":1,"end":1,"sha256":"[a-f0-9]{64}","context":\["original","original"\]\}\]$/m);
+  const report = JSON.parse(await run(await python(), ["-I", join(root, "scripts/check-staleness.py"), join(repo, receipt.path), repo, "--json"], repo));
+  assert.equal(report.mode, "exact");
+  assert.deepEqual(report.counts, { fresh: 1, moved: 0, changed: 0, gone: 0, uncertain: 0 });
+});

@@ -34,7 +34,9 @@ import re
 import sys
 from pathlib import Path
 
-FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.S)
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # -I omits the script dir; trusted sibling import
+from _driftmeta import FRONTMATTER, parse_date, scalar  # noqa: E402
+
 NAME_PREFIX = re.compile(r"(\d{3})-")
 NAME_KIND = re.compile(r"\d{3}-(research|plan|handoff)-")
 BODY_DATE = re.compile(r"^\*\*Date:\*\*\s*(\S+)", re.M)
@@ -42,39 +44,6 @@ BODY_DATE = re.compile(r"^\*\*Date:\*\*\s*(\S+)", re.M)
 INDEX_HEADER = "| # | Date | Feature | Type | Artifact |"
 INDEX_ROW = re.compile(r"^\| \d+ \| (?P<date>.+?) \| (?P<feature>.+?) \| (?P<kind>.+?) \| \[(?P<title>.+?)\]\((?P<path>.+?)\) \|$")
 INDEX_UNDATED = re.compile(r"^- (?P<feature>.+?) / \[(?P<title>.+?)\]\((?P<path>.+?)\)$")
-
-
-def scalar(block, key):
-    """Read a flat `key: value` scalar out of a frontmatter block."""
-    match = re.search(rf"^{key}:\s*(.+?)\s*$", block, re.M)
-    if not match:
-        return None
-    value = match.group(1).strip().strip('"').strip("'")
-    return None if value in ("", "null", "~") else value
-
-
-def parse_date(raw):
-    """Parse an ISO 8601 datetime, or a bare date, into an aware datetime.
-
-    Every result is timezone-aware, because the index sorts on absolute instants
-    and naive values cannot be compared against aware ones. A value carrying no
-    offset is read as UTC: the only dates that reach here without one are bare
-    `**Date:**` body lines, which the index already marks approximate.
-    """
-    # fromisoformat covers the frontmatter case and zero-padded bare dates. It
-    # only gained "Z" support in 3.11, so normalize the suffix for older runtimes.
-    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
-    for parse in (
-        lambda: dt.datetime.fromisoformat(normalized),
-        # Catches a hand-written date that isn't zero-padded, e.g. 2026-8-30.
-        lambda: dt.datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=dt.timezone.utc),
-    ):
-        try:
-            parsed = parse()
-        except ValueError:
-            continue
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
-    return None
 
 
 def parse_artifact(path, root):

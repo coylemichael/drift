@@ -44,6 +44,8 @@ When presenting findings, use this structure:
 [Anything that needs further investigation]
 ```
 
+Cite committed state where possible: `path:line` references are recorded against the artifact's `git_commit`, and a host may verify them against the code later. When a reference points at uncommitted work, say so beside the reference.
+
 ## Writing to Disk
 
 **If a host overlay applies** (see "Host overlays" in `SKILL.md`), follow its publication instructions instead of writing frontmatter and the index yourself. Otherwise use the portable procedure below.

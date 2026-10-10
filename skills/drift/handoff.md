@@ -127,7 +127,7 @@ Leave other threads' and historical records untouched. An explicitly owned legac
 
 ## Guidelines
 
-- File references over prose. `src/db/schema.py:84` beats "the schema file."
+- **File references over prose.** `src/db/schema.py:84` beats "the schema file." But match the anchor to the tree state: a handoff is routinely written over uncommitted changes, where line numbers are wrong the moment the work is committed or rebased. For code you did not just commit, prefer symbol-shaped references — `lib/changelog.ts: syncChangelog()` — and keep `path:line` for committed state you verified this session.
 - Be honest about state. If something is half-done or broken, say so. The next session needs the truth, not a clean narrative.
 - Keep "Codebase Context" factual. "The extraction module uses X pattern, follow it" — good. "The extraction module should be refactored" — out of scope.
 - Don't repeat the research doc. Reference it, don't restate it. The next session will read both documents.
@@ -145,5 +145,5 @@ A host overlay may continue a profiled handoff automatically; see "Host overlays
 5. Skim the tail of `drift/INDEX.md` to see what happened elsewhere in the repo since that handoff was written — other features may have landed changes it does not know about
 6. Pick up at the **Next Steps** section of the handoff
 7. Do not re-investigate the codebase or re-research. Trust the handoff's description of current state
-8. If a file reference in the handoff no longer matches what's on disk, note the discrepancy and adapt — don't halt
+8. If a file reference in the handoff no longer matches what's on disk, note the discrepancy and adapt — don't halt. A host may attach a citation report grading each reference (fresh / moved / changed / gone / uncertain); when one is supplied, use it to decide what to re-check instead of trusting blindly or re-verifying everything
 9. When you finish or need to stop, write a new handoff using the format above, referencing the one you resumed from as `previous_handoff` and using the next flat numbered artifact file in the same feature folder. Then flip the resumed handoff's frontmatter `status` to `superseded` per Status updates above

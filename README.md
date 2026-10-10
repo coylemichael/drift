@@ -199,16 +199,35 @@ artifact: "drift/cards-pass/043-handoff-ledger-recut.md"
 One Markdown bullet; further lines continue it. No blank lines.
 ```
 
-A bullet edited in `CHANGELOG.md` that keeps its trailing id comment is written
-back to its fragment. A line added to the generated region without an id is
-reported with its line number and left alone; regeneration skips until it is
-moved into a fragment or deleted. Drift does not guess at text it did not
-write. A repository that already uses changesets or towncrier is left to its own
+The generated region is a one-way view of `changelog.d/`: to change a bullet,
+edit its fragment and regenerate. A bullet edited directly in the region, or a
+line added there without an id, is reported with its line number and left
+alone; regeneration stops until the text is moved into its fragment or deleted.
+Drift does not guess at text it did not write, and never copies view text back
+into a fragment. A repository that already uses changesets or towncrier is left to its own
 convention. `.drift.json` overrides the trigger: `"changelog": false` keeps a
 shared repository's changelog hand-written, `true` (or `{ "tags": ... }`) forces
 generation in a local one; `/drift-changelog on|off|status` sets or explains it.
 `changelog.d/README.md` states the convention for anything else that reads the
 repository. Nothing is staged or committed.
+
+### Citation anchors (per artifact)
+
+An artifact's `path:line` references rot as the code moves on, and a reading
+session cannot tell a current claim from a stale one. At publication,
+`drift_publish` records an anchor per citation in the artifact's frontmatter:
+the range, a content hash of the cited lines (trailing whitespace stripped),
+and the first and last lines as a search needle. When `/drift` or an automatic
+continuation picks an artifact up, `scripts/check-staleness.py` grades every
+citation against the tree and a single note tells the session what still
+holds: `fresh` is proven by hash; `moved` is located and forwarded to its new
+line or file; `changed` reports a difflib similarity; `gone` and `uncertain`
+(no recorded commit, or anchored over uncommitted changes) say exactly what
+could not be verified. Artifacts published before anchors existed are graded
+heuristically from their recorded `git_commit`. The check is a report, never a
+gate: it blocks nothing, writes nothing, and a checker failure degrades to one
+"unavailable" note. It also runs standalone:
+`python -I scripts/check-staleness.py drift/<feature>/<artifact>.md [<repo>]`.
 
 ### Landing (per repository)
 

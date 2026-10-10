@@ -46,32 +46,17 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # -I omits the script dir; trusted sibling import
+from _driftmeta import FRONTMATTER, git, parse_date, scalar  # noqa: E402
+
 START = "<!-- drift:changelog: generated from changelog.d/ - edit a bullet only if you keep its id comment -->"
 END = "<!-- /drift:changelog -->"
 FRAGMENT_DIR = "changelog.d"
 SECTIONS = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"]
-FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?", re.S)
 # The id comment also carries the fragment's date, so a driver merge reorders exactly as a rebuild would.
 ID_COMMENT = re.compile(r" <!-- (changelog\.d/[^ ]+\.md)(?: (\S+))? -->$")
 GROUP_HEADING = re.compile(r"^## (?:\[Unreleased\]|\[(?P<version>[^\]]+)\] — (?P<vdate>\d{4}-\d{2}-\d{2})|(?P<day>\d{4}-\d{2}-\d{2}))$")
 SECTION_HEADING = re.compile(r"^### (?P<name>\S.*)$")
-
-
-def scalar(block, key):
-    match = re.search(rf"^{key}:\s*(.+?)\s*$", block, re.M)
-    if not match:
-        return None
-    value = match.group(1).strip().strip('"').strip("'")
-    return None if value in ("", "null", "~") else value
-
-
-def parse_date(raw):
-    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
-    try:
-        parsed = dt.datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
 
 
 def normalize_body(body):
@@ -81,20 +66,6 @@ def normalize_body(body):
     body = body.strip()
     first, sep, rest = body.partition("\n")
     return re.sub(r"^[-*+] +", "", first) + sep + rest
-
-
-def git(repo, *args, ok=(0,)):
-    """Run git in `repo`; return stdout, or None when the exit code is an expected negative."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env["GIT_CONFIG_NOSYSTEM"] = "1"
-    env["GIT_CONFIG_GLOBAL"] = "NUL" if os.name == "nt" else os.devnull
-    proc = subprocess.run(["git", "--no-optional-locks", *args], cwd=repo, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", env=env)
-    if proc.returncode in ok:
-        return proc.stdout
-    if proc.returncode == 1 and 1 not in ok and not proc.stderr.strip():
-        return None
-    raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip() or proc.returncode}")
 
 
 # --- fragments -----------------------------------------------------------------------------

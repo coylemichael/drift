@@ -83,3 +83,22 @@ test("/drift passes anything else through as an ordinary Drift skill request", a
   assert.deepEqual(await pickup(dir, "001-handoff-same.md"), { text: "/skill:drift 001-handoff-same.md" });
   assert.deepEqual(await pickup(undefined, ""), { text: "/skill:drift" });
 });
+
+test("/drift grades an artifact's citations and notes what to re-check", async (t) => {
+  const dir = await repo(t);
+  for (const [key, value] of [["user.name", "t"], ["user.email", "t@example.invalid"], ["commit.gpgsign", "false"]]) await git(dir, ["config", key, value]);
+  await fs.writeFile(join(dir, "app.py"), "one\ntwo\nthree\n");
+  await git(dir, ["add", "-A"]);
+  await git(dir, ["commit", "-qm", "base"]);
+  const sha = (await git(dir, ["rev-parse", "HEAD"])).trim();
+  await fs.mkdir(join(dir, "drift", "auth"), { recursive: true });
+  await fs.writeFile(join(dir, "drift", "auth", "001-handoff-cited.md"),
+    `---\ndate: "2026-10-09T10:00:00+01:00"\nfeature: "auth"\nsequence: "001"\ntype: "handoff"\nstatus: "in-progress"\ngit_commit: "${sha}"\n---\n\n## Body\nSee \`app.py:2\`.\n`);
+  assert.match((await pickup(dir, "")).text, /Citation check \(heuristic mode\): 1 fresh\. All cited code is unchanged\./);
+
+  await fs.writeFile(join(dir, "app.py"), "one\nTWO CHANGED\nthree\n");
+  const stale = await pickup(dir, "001-handoff-cited.md");
+  assert.match(stale.text, /Citation check \(heuristic mode\): 1 changed\. Re-check before relying on: app\.py:2 changed/);
+  // The citation note precedes the user's words, which stay last.
+  assert.match(stale.text, /Citation check[\s\S]*The user's message: 001-handoff-cited\.md$/);
+});
