@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 560" width="1280" height="560">
+  <defs>
+    <marker id="arrGreen2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2bbd97"/>
+    </marker>
+    <marker id="arrDim2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6d7a72"/>
+    </marker>
+  </defs>
+  <style>
+    .t { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+    .m { font-family: Consolas, 'Cascadia Code', Menlo, monospace; }
+    .title { font-size: 30px; font-weight: 600; fill: #e8ede9; }
+    .sub { font-size: 15px; fill: #8b968f; }
+    .stage { font-size: 19px; font-weight: 600; fill: #2bbd97; }
+    .body { font-size: 13px; fill: #9aa49d; }
+    .file { font-size: 11.5px; fill: #c3ccc6; }
+    .small { font-size: 11px; fill: #8b968f; }
+    .panel { fill: #171c19; stroke: #2b342f; stroke-width: 1; }
+  </style>
+
+  <rect width="1280" height="560" fill="#0f1311"/>
+
+  <text class="t title" x="640" y="62" text-anchor="middle">Four modes. One loop.</text>
+  <text class="t sub" x="640" y="92" text-anchor="middle">Ask in ordinary language &#8212; each step lands as a numbered Markdown artifact in drift/.</text>
+
+  <!-- RESEARCH -->
+  <rect class="panel" x="60" y="150" width="250" height="180" rx="6"/>
+  <text class="t stage" x="80" y="188">Research</text>
+  <text class="t body" x="80" y="218">Document what actually</text>
+  <text class="t body" x="80" y="238">exists &#8212; code, behaviour,</text>
+  <text class="t body" x="80" y="258">constraints.</text>
+  <text class="m file" x="80" y="292">001-research-&#8230;.md</text>
+  <text class="t small" x="80" y="312">complete on write</text>
+
+  <line x1="310" y1="240" x2="354" y2="240" stroke="#2bbd97" stroke-width="1.5" marker-end="url(#arrGreen2)"/>
+
+  <!-- PLAN -->
+  <rect class="panel" x="360" y="150" width="250" height="180" rx="6"/>
+  <text class="t stage" x="380" y="188">Plan</text>
+  <text class="t body" x="380" y="218">Turn research into a</text>
+  <text class="t body" x="380" y="238">verifiable sequence with</text>
+  <text class="t body" x="380" y="258">acceptance checks.</text>
+  <text class="m file" x="380" y="292">002-plan-&#8230;.md</text>
+  <text class="t small" x="380" y="312">pending &#8594; in-progress</text>
+
+  <line x1="610" y1="240" x2="654" y2="240" stroke="#2bbd97" stroke-width="1.5" marker-end="url(#arrGreen2)"/>
+
+  <!-- EXECUTE -->
+  <rect class="panel" x="660" y="150" width="250" height="180" rx="6"/>
+  <text class="t stage" x="680" y="188">Execute</text>
+  <text class="t body" x="680" y="218">Carry out the plan;</text>
+  <text class="t body" x="680" y="238">record decisions and</text>
+  <text class="t body" x="680" y="258">deviations as you go.</text>
+  <text class="m file" x="680" y="292">&#8212;</text>
+  <text class="t small" x="680" y="312">flips the plan &#8594; complete</text>
+
+  <line x1="910" y1="240" x2="954" y2="240" stroke="#2bbd97" stroke-width="1.5" marker-end="url(#arrGreen2)"/>
+
+  <!-- HANDOFF -->
+  <rect class="panel" x="960" y="150" width="250" height="180" rx="6"/>
+  <text class="t stage" x="980" y="188">Handoff</text>
+  <text class="t body" x="980" y="218">Pin the state, the next</text>
+  <text class="t body" x="980" y="238">task and the profile for</text>
+  <text class="t body" x="980" y="258">whoever continues.</text>
+  <text class="m file" x="980" y="292">003-handoff-&#8230;.md</text>
+  <text class="t small" x="980" y="312">in-progress &#8594; superseded</text>
+
+  <!-- loop back -->
+  <path d="M 1085 330 V 430 H 185 V 342" fill="none" stroke="#6d7a72" stroke-width="1.5" stroke-dasharray="6 5" marker-end="url(#arrDim2)"/>
+  <text class="t" x="640" y="416" text-anchor="middle" font-size="13.5" fill="#b8c1ba">a fresh session picks it up &#8212; right model, minimal durable context, not the old transcript</text>
+  <text class="m" x="640" y="460" text-anchor="middle" font-size="12.5" fill="#2bbd97">drift-continue &lt;handoff&gt;  &#183;  /drift</text>
+
+  <text class="t" x="640" y="520" text-anchor="middle" font-size="13" font-style="italic" fill="#8b968f">Statuses are visible without opening a file: grep -r "^status:" drift/</text>
+</svg>

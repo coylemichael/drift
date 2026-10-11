@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- README illustrations: five SVG diagrams — the context-drift problem, the four-mode workflow loop, what lands in the repository, profile-directed continuation, and parallel worktrees — embedded in the sections they illustrate. <!-- changelog.d/readme-illustrations-001-five-svg-diagrams-embedded.md 2026-10-11T14:37:52+01:00 -->
+
 ### Changed
 
 - Automatic continuation after a profiled handoff is now a per-repository opt-in: `/drift-auto-continue on` records `autoContinue: true` in `.drift.json`. By default the handoff is only published (and still lands itself where `land.auto` is set); the tool result names the `drift-continue` command so you decide if and when the work continues, and in which thread. <!-- changelog.d/auto-continue-001-manual-default-and-switch.md 2026-10-11T13:09:36+01:00 -->

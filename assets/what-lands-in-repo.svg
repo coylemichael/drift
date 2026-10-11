@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 640" width="1100" height="640">
+  <style>
+    .t { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+    .m { font-family: Consolas, 'Cascadia Code', Menlo, monospace; }
+    .title { font-size: 30px; font-weight: 600; fill: #e8ede9; }
+    .sub { font-size: 15px; fill: #8b968f; }
+    .tree { font-size: 13.5px; fill: #c3ccc6; }
+    .treedim { font-size: 13.5px; fill: #5b655f; }
+    .callh { font-size: 12px; font-weight: 700; letter-spacing: 2px; fill: #2bbd97; }
+    .callb { font-size: 13px; fill: #9aa49d; }
+    .panel { fill: #171c19; stroke: #2b342f; stroke-width: 1; }
+  </style>
+
+  <rect width="1100" height="640" fill="#0f1311"/>
+
+  <text class="t title" x="550" y="56" text-anchor="middle">What lands in your repository</text>
+  <text class="t sub" x="550" y="86" text-anchor="middle">Durable state is plain Markdown &#8212; readable, diffable, reviewable. No database, no lock-in.</text>
+
+  <!-- file tree panel -->
+  <rect class="panel" x="60" y="120" width="500" height="400" rx="6"/>
+  <circle cx="84" cy="142" r="4.5" fill="#c0655a"/>
+  <circle cx="100" cy="142" r="4.5" fill="#d2a44a"/>
+  <circle cx="116" cy="142" r="4.5" fill="#2bbd97"/>
+
+  <text class="m tree" x="84" y="180">your-project/</text>
+  <text class="m tree" x="84" y="208"><tspan class="treedim">&#9500;&#9472; </tspan><tspan fill="#2bbd97">drift/</tspan></text>
+  <text class="m tree" x="84" y="236"><tspan class="treedim">&#9474;  &#9500;&#9472; </tspan>INDEX.md</text>
+  <text class="m tree" x="84" y="264"><tspan class="treedim">&#9474;  &#9492;&#9472; </tspan>auth-refactor/</text>
+  <text class="m tree" x="84" y="292"><tspan class="treedim">&#9474;     &#9500;&#9472; </tspan>001-research-auth-flow.md</text>
+  <text class="m tree" x="84" y="320"><tspan class="treedim">&#9474;     &#9500;&#9472; </tspan>002-plan-implementation.md</text>
+  <text class="m tree" x="84" y="348"><tspan class="treedim">&#9474;     &#9492;&#9472; </tspan>003-handoff-progress.md</text>
+  <text class="m tree" x="84" y="376"><tspan class="treedim">&#9500;&#9472; </tspan>changelog.d/</text>
+  <text class="m tree" x="84" y="404"><tspan class="treedim">&#9474;  &#9492;&#9472; </tspan>auth-refactor-003-&#8230;.md</text>
+  <text class="m tree" x="84" y="432"><tspan class="treedim">&#9500;&#9472; </tspan>CHANGELOG.md</text>
+  <text class="m tree" x="84" y="460"><tspan class="treedim">&#9492;&#9472; </tspan><tspan class="treedim">src/ &#8230;</tspan></text>
+
+  <!-- status chips -->
+  <rect x="446" y="279" width="70" height="18" rx="9" fill="#2bbd97" fill-opacity="0.12" stroke="#2bbd97" stroke-width="0.8"/>
+  <text class="t" x="481" y="292" font-size="10.5" fill="#2bbd97" text-anchor="middle">complete</text>
+  <rect x="446" y="307" width="70" height="18" rx="9" fill="#2bbd97" fill-opacity="0.12" stroke="#2bbd97" stroke-width="0.8"/>
+  <text class="t" x="481" y="320" font-size="10.5" fill="#2bbd97" text-anchor="middle">complete</text>
+  <rect x="430" y="335" width="86" height="18" rx="9" fill="#d2a44a" fill-opacity="0.12" stroke="#d2a44a" stroke-width="0.8"/>
+  <text class="t" x="473" y="348" font-size="10.5" fill="#d2a44a" text-anchor="middle">in-progress</text>
+
+  <!-- callouts -->
+  <line x1="560" y1="231" x2="608" y2="170" stroke="#2b342f" stroke-width="1"/>
+  <text class="t callh" x="616" y="158">ONE TIMELINE</text>
+  <text class="t callb" x="616" y="180">INDEX.md is the repo-wide chronological journal,</text>
+  <text class="t callb" x="616" y="198">rebuilt automatically; a merge driver unions rows so</text>
+  <text class="t callb" x="616" y="216">rebases never stop on it.</text>
+
+  <line x1="560" y1="315" x2="608" y2="290" stroke="#2b342f" stroke-width="1"/>
+  <text class="t callh" x="616" y="278">MEASURED, NOT CLAIMED</text>
+  <text class="t callb" x="616" y="300">Frontmatter carries measured branch, commit and</text>
+  <text class="t callb" x="616" y="318">duration; every path:line citation is graded at pickup:</text>
+  <text class="m" x="616" y="338" font-size="12" fill="#2bbd97">fresh <tspan fill="#8b968f">&#183;</tspan> moved <tspan fill="#8b968f">&#183;</tspan> <tspan fill="#d2a44a">changed</tspan> <tspan fill="#8b968f">&#183;</tspan> <tspan fill="#c0655a">gone</tspan></text>
+
+  <line x1="560" y1="427" x2="608" y2="410" stroke="#2b342f" stroke-width="1"/>
+  <text class="t callh" x="616" y="398">CHANGELOG WITHOUT FIGHTS</text>
+  <text class="t callb" x="616" y="420">One fragment per change in changelog.d/;</text>
+  <text class="t callb" x="616" y="438">CHANGELOG.md is generated, so parallel agents stop</text>
+  <text class="t callb" x="616" y="456">losing entries to [Unreleased] merge conflicts.</text>
+
+  <!-- footer -->
+  <line x1="60" y1="556" x2="1040" y2="556" stroke="#2b342f" stroke-width="1"/>
+  <text class="t" x="550" y="592" text-anchor="middle" font-size="13" fill="#8b968f">Private by default (ignored by Git). <tspan class="m" fill="#2bbd97">/drift-track-artifacts on</tspan> commits them so handoffs travel between machines.</text>
+</svg>

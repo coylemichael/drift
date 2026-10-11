@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 620" width="1280" height="620">
+  <defs>
+    <marker id="arrGreen5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2bbd97"/>
+    </marker>
+    <marker id="arrDim5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6d7a72"/>
+    </marker>
+  </defs>
+  <style>
+    .t { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+    .m { font-family: Consolas, 'Cascadia Code', Menlo, monospace; }
+    .title { font-size: 30px; font-weight: 600; fill: #e8ede9; }
+    .sub { font-size: 15px; fill: #8b968f; }
+    .h { font-size: 14px; font-weight: 600; fill: #e8ede9; letter-spacing: 1px; }
+    .body { font-size: 12.5px; fill: #9aa49d; }
+    .panel { fill: #171c19; stroke: #2b342f; stroke-width: 1; }
+  </style>
+
+  <rect width="1280" height="620" fill="#0f1311"/>
+
+  <text class="t title" x="640" y="58" text-anchor="middle">Parallel workers. One timeline.</text>
+  <text class="t sub" x="640" y="88" text-anchor="middle">An orchestrator assigns Git worktrees; every session publishes into the same history.</text>
+
+  <!-- orchestrator -->
+  <rect class="panel" x="480" y="118" width="320" height="100" rx="6"/>
+  <text class="t h" x="500" y="146">ORCHESTRATOR</text>
+  <text class="m" x="500" y="168" font-size="12" fill="#2bbd97">main checkout</text>
+  <text class="t body" x="500" y="192">Plans, assigns, reviews. Never has to ask</text>
+  <text class="t body" x="500" y="208">a worker what it was doing.</text>
+
+  <!-- arrows to workers -->
+  <path d="M 560 218 C 480 260, 320 250, 230 272" fill="none" stroke="#6d7a72" stroke-width="1.5" marker-end="url(#arrDim5)"/>
+  <line x1="640" y1="218" x2="640" y2="272" stroke="#6d7a72" stroke-width="1.5" marker-end="url(#arrDim5)"/>
+  <path d="M 720 218 C 800 260, 960 250, 1050 272" fill="none" stroke="#6d7a72" stroke-width="1.5" marker-end="url(#arrDim5)"/>
+
+  <!-- worker A -->
+  <rect class="panel" x="60" y="280" width="330" height="140" rx="6"/>
+  <text class="t h" x="80" y="308">WORKER A</text>
+  <text class="m" x="80" y="330" font-size="12" fill="#2bbd97">../wt-auth &#183; feat/auth</text>
+  <text class="t body" x="80" y="356">Adopts its worktree before work</text>
+  <text class="t body" x="80" y="374">(<tspan class="m" fill="#c3ccc6">/drift-worktree ../wt-auth</tspan>);</text>
+  <text class="t body" x="80" y="392">metadata is measured against it.</text>
+
+  <!-- worker B -->
+  <rect class="panel" x="475" y="280" width="330" height="140" rx="6"/>
+  <text class="t h" x="495" y="308">WORKER B</text>
+  <text class="m" x="495" y="330" font-size="12" fill="#2bbd97">../wt-api &#183; feat/api</text>
+  <text class="t body" x="495" y="356">Researches, executes, hands off in</text>
+  <text class="t body" x="495" y="374">its own branch &#8212; no fights over a</text>
+  <text class="t body" x="495" y="392">shared working copy.</text>
+
+  <!-- worker C -->
+  <rect class="panel" x="890" y="280" width="330" height="140" rx="6"/>
+  <text class="t h" x="910" y="308">WORKER C</text>
+  <text class="m" x="910" y="330" font-size="12" fill="#2bbd97">../wt-ui &#183; feat/ui</text>
+  <text class="t body" x="910" y="356">On completion the handoff can land</text>
+  <text class="t body" x="910" y="374">itself: fetch, rebase, checks, push.</text>
+  <text class="t body" x="910" y="392">Never squash, never force.</text>
+
+  <!-- arrows to index -->
+  <line x1="225" y1="420" x2="225" y2="466" stroke="#2bbd97" stroke-width="1.5" marker-end="url(#arrGreen5)"/>
+  <line x1="640" y1="420" x2="640" y2="466" stroke="#2bbd97" stroke-width="1.5" marker-end="url(#arrGreen5)"/>
+  <line x1="1055" y1="420" x2="1055" y2="466" stroke="#2bbd97" stroke-width="1.5" marker-end="url(#arrGreen5)"/>
+
+  <!-- index bar -->
+  <rect x="60" y="472" width="1160" height="66" rx="6" fill="#131a16" stroke="#1f5c4a" stroke-width="1"/>
+  <text class="m" x="640" y="500" text-anchor="middle" font-size="14" fill="#2bbd97">drift/INDEX.md &#8212; one chronological timeline</text>
+  <text class="t" x="640" y="522" text-anchor="middle" font-size="12.5" fill="#9aa49d">Rows from parallel branches are unioned, re-ordered and renumbered by a merge driver &#8212; a rebase never stops on the index.</text>
+
+  <text class="t" x="640" y="584" text-anchor="middle" font-size="12.5" font-style="italic" fill="#8b968f">Private mode: workers publish into the shared store, so history survives worktree removal. Tracked mode: artifacts travel with the branch.</text>
+</svg>

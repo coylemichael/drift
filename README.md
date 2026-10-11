@@ -8,6 +8,8 @@ Drift preserves the useful state of multi-session coding work: research,
 decisions, changes, and the next task. Its portable skill guides the workflow;
 the Pi extension owns session metadata and artifact publication.
 
+![Without Drift, each new session starts from zero and pays the context tax again; with Drift, sessions publish research, plan and handoff artifacts into drift/ and the next session resumes exactly where the work stopped.](assets/context-drifts.svg)
+
 ## Install
 
 Drift is one portable skill plus optional host automation. Clone it once; every
@@ -93,6 +95,8 @@ a bare command (or `status`) only reports.
 
 ## Workflow
 
+![Four Drift modes — research, plan, execute, handoff — each landing as a numbered artifact, with drift-continue looping a fresh session back to pick up the handoff.](assets/workflow-loop.svg)
+
 | Mode | Use |
 | --- | --- |
 | Research | `skills/drift/research.md` — document what exists. |
@@ -127,6 +131,8 @@ Plans start `pending` and execution flips them to `in-progress`, then
 `superseded` when a later handoff resumes them; research is `complete` on write.
 Flipping `status` is the one in-place edit Drift makes to an existing artifact.
 It is not an index column, because index rows never change.
+
+![A repository tree showing drift/INDEX.md, numbered feature artifacts with status chips, changelog.d fragments and a generated CHANGELOG.md, annotated with callouts for the timeline, measured metadata with graded citations, and conflict-free changelogs.](assets/what-lands-in-repo.svg)
 
 ### Artifact Git policy (per repository)
 
@@ -293,6 +299,8 @@ project context even though they must not contain credentials.
 
 ## Worktrees for parallel workers (Pi)
 
+![An orchestrator in the main checkout assigns three workers their own Git worktrees; all publish into one drift/INDEX.md whose rows are unioned, re-ordered and renumbered by a merge driver.](assets/parallel-workers.svg)
+
 A common layout: start several Pi ACP sessions in the main checkout, then have
 an orchestrator assign each worker an existing linked worktree. A Pi session's
 `cwd` is fixed when it starts, so Drift binds a worktree explicitly:
@@ -354,6 +362,8 @@ Workers should adopt their assigned worktree before any substantive work; the
 orchestrator can stay in the main checkout.
 
 ## Profile-directed continuation
+
+![Three sessions — research on a fast model, planning on a structured model, implementation on a strong model — chained by handoff documents that each declare the next session profile, every continuation starting in a fresh context window.](assets/profiled-continuation.svg)
 
 A handoff may declare the next task's portable profile: `research`, `planning`,
 or `implementation`. The model that performed the work writes its own handoff;

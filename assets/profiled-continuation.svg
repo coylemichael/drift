@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 520" width="1280" height="520">
+  <defs>
+    <marker id="arrGreen4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2bbd97"/>
+    </marker>
+  </defs>
+  <style>
+    .t { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+    .m { font-family: Consolas, 'Cascadia Code', Menlo, monospace; }
+    .title { font-size: 30px; font-weight: 600; fill: #e8ede9; }
+    .sub { font-size: 15px; fill: #8b968f; }
+    .profile { font-size: 20px; font-weight: 600; fill: #2bbd97; }
+    .model { font-size: 12.5px; fill: #c3ccc6; }
+    .body { font-size: 13px; fill: #9aa49d; }
+    .panel { fill: #171c19; stroke: #2b342f; stroke-width: 1; }
+    .doc { fill: #131a16; stroke: #1f5c4a; stroke-width: 1; }
+  </style>
+
+  <rect width="1280" height="520" fill="#0f1311"/>
+
+  <text class="t title" x="640" y="58" text-anchor="middle">The right model for the next task</text>
+  <text class="t sub" x="640" y="88" text-anchor="middle">The model that did the work writes the handoff; the handoff's profile selects the model that continues.</text>
+
+  <!-- session 1: research -->
+  <rect class="panel" x="60" y="130" width="240" height="190" rx="6"/>
+  <text class="t profile" x="80" y="168">research</text>
+  <text class="m model" x="80" y="194">gemini-3.8-flash</text>
+  <text class="m" x="80" y="212" font-size="11.5" fill="#8b968f">thinking: medium</text>
+  <line x1="80" y1="228" x2="280" y2="228" stroke="#2b342f" stroke-width="1"/>
+  <text class="t body" x="80" y="254">Fast and wide: survey</text>
+  <text class="t body" x="80" y="274">the codebase, document</text>
+  <text class="t body" x="80" y="294">what actually exists.</text>
+
+  <!-- arrow 1 (behind chip) -->
+  <line x1="300" y1="225" x2="510" y2="225" stroke="#2bbd97" stroke-width="1.5" marker-end="url(#arrGreen4)"/>
+
+  <!-- handoff doc 1 -->
+  <path class="doc" d="M 330 187 H 476 L 490 201 V 263 H 330 Z"/>
+  <path d="M 476 187 V 201 H 490" fill="none" stroke="#1f5c4a" stroke-width="1"/>
+  <text class="m" x="410" y="211" font-size="11" fill="#c3ccc6" text-anchor="middle">001-handoff-&#8230;.md</text>
+  <text class="m" x="410" y="231" font-size="9.5" fill="#8b968f" text-anchor="middle">next_session_profile:</text>
+  <text class="m" x="410" y="251" font-size="12.5" font-weight="600" fill="#2bbd97" text-anchor="middle">planning</text>
+
+  <!-- session 2: planning -->
+  <rect class="panel" x="520" y="130" width="240" height="190" rx="6"/>
+  <text class="t profile" x="540" y="168">planning</text>
+  <text class="m model" x="540" y="194">gpt-6-astra</text>
+  <text class="m" x="540" y="212" font-size="11.5" fill="#8b968f">thinking: high</text>
+  <line x1="540" y1="228" x2="740" y2="228" stroke="#2b342f" stroke-width="1"/>
+  <text class="t body" x="540" y="254">Careful and structured:</text>
+  <text class="t body" x="540" y="274">turn findings into a</text>
+  <text class="t body" x="540" y="294">verifiable sequence.</text>
+
+  <!-- arrow 2 (behind chip) -->
+  <line x1="760" y1="225" x2="970" y2="225" stroke="#2bbd97" stroke-width="1.5" marker-end="url(#arrGreen4)"/>
+
+  <!-- handoff doc 2 -->
+  <path class="doc" d="M 790 187 H 936 L 950 201 V 263 H 790 Z"/>
+  <path d="M 936 187 V 201 H 950" fill="none" stroke="#1f5c4a" stroke-width="1"/>
+  <text class="m" x="870" y="211" font-size="11" fill="#c3ccc6" text-anchor="middle">002-handoff-&#8230;.md</text>
+  <text class="m" x="870" y="231" font-size="9.5" fill="#8b968f" text-anchor="middle">next_session_profile:</text>
+  <text class="m" x="870" y="251" font-size="12.5" font-weight="600" fill="#2bbd97" text-anchor="middle">implementation</text>
+
+  <!-- session 3: implementation -->
+  <rect class="panel" x="980" y="130" width="240" height="190" rx="6"/>
+  <text class="t profile" x="1000" y="168">implementation</text>
+  <text class="m model" x="1000" y="194">claude-opus-5</text>
+  <text class="m" x="1000" y="212" font-size="11.5" fill="#8b968f">thinking: high</text>
+  <line x1="1000" y1="228" x2="1200" y2="228" stroke="#2b342f" stroke-width="1"/>
+  <text class="t body" x="1000" y="254">Strong and deliberate:</text>
+  <text class="t body" x="1000" y="274">execute the plan, verify,</text>
+  <text class="t body" x="1000" y="294">hand off or land.</text>
+
+  <!-- fresh-window band -->
+  <rect x="60" y="364" width="1160" height="64" rx="6" fill="#131a16" stroke="#1f5c4a" stroke-width="1"/>
+  <text class="t" x="640" y="390" text-anchor="middle" font-size="14" fill="#b8c1ba">Each continuation starts in a fresh context window, from the handoff &#8212; not a 180k-token transcript.</text>
+  <text class="t" x="640" y="412" text-anchor="middle" font-size="12.5" fill="#8b968f">Manual by default: publication names the <tspan class="m" fill="#2bbd97">drift-continue</tspan> command, you decide where it runs. <tspan class="m" fill="#2bbd97">/drift-auto-continue on</tspan> chains it automatically.</text>
+
+  <text class="m" x="640" y="476" text-anchor="middle" font-size="12" fill="#5b655f">profiles &#8594; your model IDs: ~/.pi/agent/drift-model-profiles.json</text>
+</svg>

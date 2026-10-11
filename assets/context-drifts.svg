@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <defs>
+    <linearGradient id="green" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#17806a"/>
+      <stop offset="100%" stop-color="#2bbd97"/>
+    </linearGradient>
+    <linearGradient id="fillbar" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2bbd97"/>
+      <stop offset="60%" stop-color="#d2a44a"/>
+      <stop offset="100%" stop-color="#c0655a"/>
+    </linearGradient>
+    <marker id="arrDim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5b655f"/>
+    </marker>
+    <marker id="arrGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2bbd97"/>
+    </marker>
+  </defs>
+  <style>
+    .t { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+    .m { font-family: Consolas, 'Cascadia Code', Menlo, monospace; }
+    .title { font-size: 30px; font-weight: 600; fill: #e8ede9; }
+    .h { font-size: 15px; font-weight: 600; fill: #e8ede9; letter-spacing: 1px; }
+    .body { font-size: 13px; fill: #9aa49d; }
+    .rowlabel { font-size: 12px; letter-spacing: 3px; font-weight: 700; }
+    .panel { fill: #171c19; stroke: #2b342f; stroke-width: 1; }
+    .caption { font-size: 15px; font-style: italic; fill: #8b968f; }
+  </style>
+
+  <rect width="1280" height="640" fill="#0f1311"/>
+
+  <text class="t title" x="640" y="64" text-anchor="middle">Context drifts if you don't pin it down</text>
+
+  <!-- ====================== ROW A: WITHOUT DRIFT ====================== -->
+  <text class="t rowlabel" x="70" y="128" fill="#c0655a">WITHOUT DRIFT</text>
+
+  <!-- Session 1 -->
+  <rect class="panel" x="70" y="150" width="290" height="130" rx="6"/>
+  <text class="t h" x="90" y="178">SESSION 1</text>
+  <text class="t body" x="90" y="206">Research, decisions, dead ends,</text>
+  <text class="t body" x="90" y="226">fixes &#8212; all living only in the</text>
+  <text class="t body" x="90" y="246">transcript.</text>
+  <rect x="90" y="258" width="250" height="6" rx="3" fill="url(#fillbar)"/>
+
+  <line x1="360" y1="215" x2="403" y2="215" stroke="#5b655f" stroke-width="1.5" marker-end="url(#arrDim)"/>
+
+  <!-- window ends -->
+  <circle cx="427" cy="215" r="16" fill="none" stroke="#c0655a" stroke-width="1.5"/>
+  <line x1="419" y1="207" x2="435" y2="223" stroke="#c0655a" stroke-width="1.5"/>
+  <line x1="435" y1="207" x2="419" y2="223" stroke="#c0655a" stroke-width="1.5"/>
+  <text class="t body" x="427" y="256" text-anchor="middle" fill="#c0655a" font-size="11">context window ends</text>
+
+  <line x1="449" y1="215" x2="494" y2="215" stroke="#5b655f" stroke-width="1.5" marker-end="url(#arrDim)"/>
+
+  <!-- Session 2 -->
+  <rect class="panel" x="500" y="150" width="280" height="130" rx="6"/>
+  <text class="t h" x="520" y="178">SESSION 2</text>
+  <text class="t body" x="520" y="206">Starts from zero.</text>
+  <text class="t body" x="520" y="234" font-style="italic" fill="#b8c1ba">&#8220;&#8230;so, what were we doing?&#8221;</text>
+
+  <line x1="780" y1="215" x2="824" y2="215" stroke="#5b655f" stroke-width="1.5" marker-end="url(#arrDim)"/>
+
+  <!-- Session 3 -->
+  <rect class="panel" x="830" y="150" width="380" height="130" rx="6"/>
+  <text class="t h" x="850" y="178">SESSION 3</text>
+  <text class="t body" x="850" y="206">Re-research. Re-explain. Re-decide.</text>
+  <text class="t body" x="850" y="226">Pay the context tax again &#8212; and trust</text>
+  <text class="t body" x="850" y="246">whatever the model misremembers.</text>
+
+  <!-- ====================== ROW B: WITH DRIFT ====================== -->
+  <text class="t rowlabel" x="70" y="368" fill="#2bbd97">WITH DRIFT</text>
+
+  <!-- Session 1 -->
+  <rect class="panel" x="70" y="390" width="290" height="150" rx="6"/>
+  <text class="t h" x="90" y="418">SESSION 1</text>
+  <text class="t body" x="90" y="446">Works normally, and pins the</text>
+  <text class="t body" x="90" y="466">durable state as it goes:</text>
+  <text class="t body" x="90" y="486">research &#8594; plan &#8594; handoff.</text>
+
+  <line x1="360" y1="465" x2="404" y2="465" stroke="#2bbd97" stroke-width="1.5" marker-end="url(#arrGreen)"/>
+
+  <!-- repo chip -->
+  <rect x="410" y="390" width="360" height="150" rx="6" fill="#131a16" stroke="#1f5c4a" stroke-width="1"/>
+  <text class="m" x="426" y="418" font-size="13" fill="#2bbd97">drift/ <tspan fill="#8b968f">&#8212; in your repo</tspan></text>
+
+  <text class="m" x="426" y="446" font-size="12.5" fill="#c3ccc6">001-research-auth-flow.md</text>
+  <rect x="684" y="433" width="70" height="18" rx="9" fill="#2bbd97" fill-opacity="0.12" stroke="#2bbd97" stroke-width="0.8"/>
+  <text class="t" x="719" y="446" font-size="10.5" fill="#2bbd97" text-anchor="middle">complete</text>
+
+  <text class="m" x="426" y="470" font-size="12.5" fill="#c3ccc6">002-plan-implementation.md</text>
+  <rect x="684" y="457" width="70" height="18" rx="9" fill="#2bbd97" fill-opacity="0.12" stroke="#2bbd97" stroke-width="0.8"/>
+  <text class="t" x="719" y="470" font-size="10.5" fill="#2bbd97" text-anchor="middle">complete</text>
+
+  <text class="m" x="426" y="494" font-size="12.5" fill="#c3ccc6">003-handoff-progress.md</text>
+  <rect x="668" y="481" width="86" height="18" rx="9" fill="#d2a44a" fill-opacity="0.12" stroke="#d2a44a" stroke-width="0.8"/>
+  <text class="t" x="711" y="494" font-size="10.5" fill="#d2a44a" text-anchor="middle">in-progress</text>
+
+  <text class="m" x="426" y="522" font-size="11.5" fill="#8b968f">INDEX.md &#8212; chronological timeline</text>
+
+  <line x1="770" y1="465" x2="814" y2="465" stroke="#2bbd97" stroke-width="1.5" marker-end="url(#arrGreen)"/>
+
+  <!-- Session 2 -->
+  <rect class="panel" x="820" y="390" width="390" height="150" rx="6"/>
+  <text class="t h" x="840" y="418">SESSION 2 <tspan fill="#8b968f" font-weight="400">&#8212; fresh window</tspan></text>
+  <text class="t body" x="840" y="446"><tspan class="m" fill="#2bbd97">/drift</tspan> picks up the handoff and resumes</text>
+  <text class="t body" x="840" y="466">exactly where the work stopped.</text>
+  <text class="t body" x="840" y="486">Nothing re-explained, nothing invented.</text>
+
+  <!-- caption -->
+  <text class="t caption" x="640" y="604" text-anchor="middle">The transcript dies. The repository remembers.</text>
+</svg>
