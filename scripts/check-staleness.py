@@ -32,13 +32,14 @@ difflib over the real texts; fuzzy hashes are deliberately not used (see _driftm
 Requires only the Python standard library (3.7+) and git on PATH.
 """
 import difflib
+import io
 import json
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # -I omits the script dir; trusted sibling import
-from _driftmeta import FRONTMATTER, anchor_hash, git, normalize_lines, scalar  # noqa: E402
+from _driftmeta import FRONTMATTER, anchor_hash, git, normalize_lines, scalar
 
 # A file path with a letter-led extension, then :start[-end]. The extension rule keeps
 # timestamps (2026-10-10T18:33) and URL ports out; the lookbehind keeps scheme tails out.
@@ -174,7 +175,7 @@ def check(artifact, repo):
     body = text[match.end():] if match else text
     commit = scalar(block, "git_commit")
     anchors = []
-    anchor_line = re.search(r"^anchors:\s*(\[.*\])\s*$", block, re.M)
+    anchor_line = re.search(r"^anchors:\s*(\[.*\])\s*$", block, re.MULTILINE)
     if anchor_line:
         try:
             anchors = json.loads(anchor_line.group(1))
@@ -231,12 +232,12 @@ def render(report):
 
 def main(argv):
     for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
+        if isinstance(stream, io.TextIOWrapper):
             stream.reconfigure(encoding="utf-8", newline="\n")
     args = [a for a in argv[1:] if not a.startswith("-")]
     flags = {a for a in argv[1:] if a.startswith("-")}
     if flags & {"-h", "--help"} or not args or len(args) > 2 or flags - {"--json", "-h", "--help"}:
-        print(__doc__.strip(), file=sys.stderr if args or flags - {"-h", "--help"} else sys.stdout)
+        print((__doc__ or "").strip(), file=sys.stderr if args or flags - {"-h", "--help"} else sys.stdout)
         return 0 if flags & {"-h", "--help"} else 2
     artifact = Path(args[0]).resolve()
     if not artifact.is_file():

@@ -10,6 +10,11 @@ All notable changes to this project will be documented in this file.
 
 - Automatic continuation after a profiled handoff is now a per-repository opt-in: `/drift-auto-continue on` records `autoContinue: true` in `.drift.json`. By default the handoff is only published (and still lands itself where `land.auto` is set); the tool result names the `drift-continue` command so you decide if and when the work continues, and in which thread. <!-- changelog.d/auto-continue-001-manual-default-and-switch.md 2026-10-11T13:09:36+01:00 -->
 
+### Fixed
+
+- The helper scripts pass Ruff's default lint while staying inside the documented Python 3.7 floor: canonical regex flag names, explicit `subprocess.run(check=False)` where return codes are handled manually, tuple `startswith`, `.items()`-style dict iteration and unused `noqa` directives removed, a 3.8-only walrus expression in the index builder's kind fallback replaced with 3.7-safe code, and a root `ruff.toml` pins `target-version = "py37"` so suggested fixes (such as `datetime.UTC` or `str.removeprefix`) never exceed what the README promises to support. <!-- changelog.d/editor-diagnostics-002-ruff-clean-and-py37-floor.md 2026-10-11T14:14:48+01:00 -->
+- The repository type-checks and lints clean, and the diagnostics exposed three real bugs now fixed: `drift_worktree`'s tool result carries the required `details` field, the `Pending` record type matches the changelog-fragment object it actually stores (the old `Receipt` intersection made `fragment` unsatisfiable), and the changelog builder normalizes CRLF before slicing a committed fragment's body, so hand-edit detection cannot misfire on Windows checkouts. A strict `tsconfig.json`, locally installed peer-dependency types and a `.markdownlint.jsonc` keep editor diagnostics at zero. <!-- changelog.d/editor-diagnostics-001-typecheck-and-lint-clean.md 2026-10-11T13:45:33+01:00 -->
+
 ## [0.6.0] — 2026-10-10
 
 ### Added
@@ -25,6 +30,8 @@ All notable changes to this project will be documented in this file.
 
 <!-- /drift:changelog -->
 
+<!-- Hand-written history from before the generated region above; the duplicate heading is intentional. -->
+<!-- markdownlint-disable-next-line no-duplicate-heading -->
 ## [Unreleased]
 
 ### Added
@@ -163,20 +170,24 @@ The entries below describe the superseded multi-agent implementation, not the cu
 ## [0.2.0] - 2026-04-01
 
 ### Changed
+
 - All prompts now anchor output paths to the **repository root** with explicit "do not use editor memory systems" guardrail
 - `research-codebase.md` — research saves to disk by default instead of only when asked
 - `mid-work-handoff.md` — `git diff --stat` replaced with state-resilient alternatives (`git diff HEAD --stat` / `git log --stat -1`)
 - `README.md` — added "Where files are stored" section with `.gitignore` guidance, updated references to renamed file
 
 ### Added
+
 - `mid-work-handoff.md` — "Resuming from a Handoff" section with 7-step resume protocol
 
 ### Renamed
+
 - `mid-work-handover.md` → `mid-work-handoff.md` — normalized terminology across the project
 
 ## [0.1.0] - 2026-03-30
 
 ### Added
+
 - `research-codebase.md` — prompt for investigating and documenting how a codebase works
 - `from-research.md` — prompt for turning a research document into an actionable implementation handoff
 - `mid-work-handover.md` — prompt for snapshotting mid-implementation state for the next session

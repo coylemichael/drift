@@ -25,12 +25,12 @@ import os
 import re
 import subprocess
 
-FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?", re.S)
+FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?", re.DOTALL)
 
 
 def scalar(block, key):
     """Read a flat `key: value` scalar out of a frontmatter block."""
-    match = re.search(rf"^{key}:\s*(.+?)\s*$", block, re.M)
+    match = re.search(rf"^{key}:\s*(.+?)\s*$", block, re.MULTILINE)
     if not match:
         return None
     value = match.group(1).strip().strip('"').strip("'")
@@ -72,7 +72,7 @@ def git(repo, *args, ok=(0,)):
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = "NUL" if os.name == "nt" else os.devnull
     proc = subprocess.run(["git", "--no-optional-locks", *args], cwd=repo, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", env=env)
+                          encoding="utf-8", errors="replace", env=env, check=False)
     if proc.returncode in ok:
         return proc.stdout
     if proc.returncode == 1 and 1 not in ok and not proc.stderr.strip():

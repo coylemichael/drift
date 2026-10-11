@@ -1,0 +1,11 @@
+{
+  // Styles this repository uses on purpose; everything else stays at markdownlint defaults.
+  // Long prose lines are the house style (one sentence per line is not enforced).
+  "MD013": false,
+  // Keep a Changelog repeats "### Added"/"### Fixed" under each version; only flag true siblings.
+  "MD024": { "siblings_only": true },
+  // README's centered header uses a small, fixed set of HTML elements.
+  "MD033": { "allowed_elements": ["p", "img", "h3", "em", "br", "a"] },
+  // README opens with the centered logo block, not a heading.
+  "MD041": false
+}

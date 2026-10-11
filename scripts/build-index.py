@@ -30,16 +30,17 @@ in the path on Windows; git runs drivers through `sh -c`.
 Requires only the Python standard library (3.7+).
 """
 import datetime as dt
+import io
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # -I omits the script dir; trusted sibling import
-from _driftmeta import FRONTMATTER, parse_date, scalar  # noqa: E402
+from _driftmeta import FRONTMATTER, parse_date, scalar
 
 NAME_PREFIX = re.compile(r"(\d{3})-")
 NAME_KIND = re.compile(r"\d{3}-(research|plan|handoff)-")
-BODY_DATE = re.compile(r"^\*\*Date:\*\*\s*(\S+)", re.M)
+BODY_DATE = re.compile(r"^\*\*Date:\*\*\s*(\S+)", re.MULTILINE)
 # The rows this script renders, read back for --merge. Everything a row needs is in the row.
 INDEX_HEADER = "| # | Date | Feature | Type | Artifact |"
 INDEX_ROW = re.compile(r"^\| \d+ \| (?P<date>.+?) \| (?P<feature>.+?) \| (?P<kind>.+?) \| \[(?P<title>.+?)\]\((?P<path>.+?)\) \|$")
@@ -118,7 +119,8 @@ def parse_index(text):
 def row_from_index(match, when, approximate):
     title = match.group("title")
     prefix = NAME_PREFIX.match(title)
-    kind = match.groupdict().get("kind") or (NAME_KIND.match(title).group(1) if NAME_KIND.match(title) else "-")
+    kind_match = NAME_KIND.match(title)
+    kind = match.groupdict().get("kind") or (kind_match.group(1) if kind_match else "-")
     return {
         "path": match.group("path"),
         "title": title,
@@ -215,16 +217,16 @@ def main(argv):
     # --stdout feeds the Pi publisher byte for byte: UTF-8 and LF everywhere, never the console
     # code page (a cp1252 console crashes on non-cp1252 artifact titles) or text-mode translation.
     for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
+        if isinstance(stream, io.TextIOWrapper):
             stream.reconfigure(encoding="utf-8", newline="\n")
     args = [a for a in argv[1:] if not a.startswith("-")]
     flags = {a for a in argv[1:] if a.startswith("-")}
     if flags & {"-h", "--help"}:
-        print(__doc__.strip())
+        print((__doc__ or "").strip())
         return 0
     modes = flags & {"--check", "--stdout", "--merge"}
     if flags - modes or len(modes) > 1 or ("--merge" in flags) != (len(args) == 3):
-        print(__doc__.strip(), file=sys.stderr)
+        print((__doc__ or "").strip(), file=sys.stderr)
         return 2
     if "--merge" in flags:
         return merge(args)

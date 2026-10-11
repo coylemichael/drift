@@ -82,7 +82,7 @@ detail; the configuration commands are per repository, write `.drift.json`, and
 a bare command (or `status`) only reports.
 
 | Command | What it does |
-|---|---|
+| --- | --- |
 | `/drift [artifact \| request]` | The entry point: picks up the newest artifact in `drift/INDEX.md`, the one you name, or passes any other request to the Drift skill. |
 | `drift-continue <handoff>` | Continues a published handoff, switching to its declared `next_session_profile` before inference. Bare on purpose — no leading slash — so hosts that reserve `/` pass it through; run it in a fresh thread. |
 | `/drift-worktree [status \| <path>]` | Shows the launch repo, active Drift root and record, or adopts an existing linked worktree of the same repository. |
@@ -94,7 +94,7 @@ a bare command (or `status`) only reports.
 ## Workflow
 
 | Mode | Use |
-|---|---|
+| --- | --- |
 | Research | `skills/drift/research.md` — document what exists. |
 | Plan | `skills/drift/plan.md` — turn research into a verifiable sequence. |
 | Execute | `skills/drift/execute.md` — carry out a plan or handoff. |
@@ -205,7 +205,7 @@ unions entries by id on rebase and three-way merges the hand-written parts.
 `drift_publish` takes an optional `changelog: { section, text }` and writes the
 fragment beside the artifact in the same transaction:
 
-```
+```text
 changelog.d/cards-pass-043-ledger-recut.md
 ---
 date: "2026-10-09T16:29:21+01:00"
@@ -298,7 +298,7 @@ an orchestrator assign each worker an existing linked worktree. A Pi session's
 `cwd` is fixed when it starts, so Drift binds a worktree explicitly:
 
 | Form | Effect |
-|---|---|
+| --- | --- |
 | `/drift-worktree` or `/drift-worktree status` | Shows the launch repo, the active Drift root and the record. Read-only. |
 | `/drift-worktree <path>` | Adopts that worktree. A relative path resolves from the session's original `cwd`. |
 | `drift_worktree { action: "status" }` / `{ action: "adopt", path }` | The same, as a model tool. |
@@ -414,7 +414,7 @@ artifact. A pending user decision never triggers a profiled automatic handoff.
 On Pi, `/drift` is the one entry point:
 
 | You type | Drift does |
-|---|---|
+| --- | --- |
 | `/drift` | Picks the newest artifact in `drift/INDEX.md`: resumes an `in-progress` handoff, executes a `pending` plan, plans from research. If it is already `complete`, it says so and asks rather than reopening it. |
 | `/drift <link, path or file name>` | Picks up that artifact; anything else you write is passed on as your note. Zed `@` mentions and Windows paths work. |
 | `/drift <anything else>` | An ordinary Drift request, like `/skill:drift`. |

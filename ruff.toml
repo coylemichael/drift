@@ -1,0 +1,4 @@
+# The helper scripts run on whatever Python a host machine has; the README pins the
+# floor at 3.7 ("Git and Python 3.7+ are required everywhere"), so lint must not
+# suggest fixes that need newer runtimes (datetime.UTC is 3.11+, str.removeprefix 3.9+).
+target-version = "py37"

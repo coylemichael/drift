@@ -38,6 +38,7 @@ Requires only the Python standard library (3.7+) and git on PATH.
 """
 import datetime as dt
 import hashlib
+import io
 import json
 import os
 import re
@@ -47,7 +48,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # -I omits the script dir; trusted sibling import
-from _driftmeta import FRONTMATTER, git, parse_date, scalar  # noqa: E402
+from _driftmeta import FRONTMATTER, git, parse_date, scalar
 
 START = "<!-- drift:changelog: generated from changelog.d/ - edit a bullet only if you keep its id comment -->"
 END = "<!-- /drift:changelog -->"
@@ -194,8 +195,8 @@ def build_groups(entries_by_key):
         sections = {}
         for entry in entries_by_key[key]:
             sections.setdefault(entry["section"], []).append(entry)
-        for name in sections:
-            sections[name].sort(key=entry_order)
+        for body in sections.values():
+            body.sort(key=entry_order)
         groups.append({"key": key, "sections": dict(sorted(sections.items(), key=lambda kv: section_order(kv[0])))})
     return groups
 
@@ -274,7 +275,7 @@ def parse_region(region, first_line_number=1):
             j = i + 1
             while not ID_COMMENT.search(block[-1]) and j < len(region) - 1:
                 nxt = region[j]
-                if nxt.startswith("- ") or nxt.startswith("#") or not nxt.strip():
+                if nxt.startswith(("- ", "#")) or not nxt.strip():
                     break
                 block.append(nxt)
                 j += 1
@@ -322,8 +323,8 @@ def committed_bodies(repo, ident):
     """Every committed version of a fragment's body, normalized, so a stale view is recognisable."""
     bodies = set()
     for sha in (git(repo, "log", "--format=%H", "--", ident) or "").split():
-        text = git(repo, "show", f"{sha}:{ident}", ok=(0, 128))
-        match = FRONTMATTER.match((text or "").replace("\r\n", "\n"))
+        text = (git(repo, "show", f"{sha}:{ident}", ok=(0, 128)) or "").replace("\r\n", "\n")
+        match = FRONTMATTER.match(text)
         if match:
             bodies.add(normalize_body(text[match.end():].strip("\n").rstrip()))
     return bodies
@@ -402,7 +403,7 @@ def three_way(base, ours, theirs):
             path = Path(folder) / name
             path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8", newline="\n")
             paths.append(str(path))
-        proc = subprocess.run(["git", "merge-file", "-p", paths[1], paths[0], paths[2]], capture_output=True, text=True, encoding="utf-8")
+        proc = subprocess.run(["git", "merge-file", "-p", paths[1], paths[0], paths[2]], capture_output=True, text=True, encoding="utf-8", check=False)
         if proc.returncode < 0 or proc.returncode > 0 and "<<<<<<<" in proc.stdout:
             return None
         merged = proc.stdout.replace("\r\n", "\n")
@@ -449,16 +450,16 @@ def main(argv):
     # code page (a cp1252 console crashes on characters the changelog already uses) or the
     # platform's text-mode translation. stderr too: error reports quote region lines verbatim.
     for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
+        if isinstance(stream, io.TextIOWrapper):
             stream.reconfigure(encoding="utf-8", newline="\n")
     args = [a for a in argv[1:] if not a.startswith("-")]
     flags = {a for a in argv[1:] if a.startswith("-")}
     if flags & {"-h", "--help"}:
-        print(__doc__.strip())
+        print((__doc__ or "").strip())
         return 0
     modes = flags & {"--check", "--stdout", "--merge"}
     if flags - modes or len(modes) > 1 or ("--merge" in flags) != (len(args) == 3):
-        print(__doc__.strip(), file=sys.stderr)
+        print((__doc__ or "").strip(), file=sys.stderr)
         return 2
     try:
         if "--merge" in flags:
