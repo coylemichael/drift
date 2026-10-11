@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- README restructured: reference detail moved to focused docs/ pages (install, artifact Git policy, changelog, citation anchors, landing, worktrees, continuation); the front page keeps the diagrams, summaries and a linked command table. <!-- changelog.d/readme-restructure-001-prose-split-into-docs-pages.md 2026-10-11T14:53:42+01:00 -->
 - Automatic continuation after a profiled handoff is now a per-repository opt-in: `/drift-auto-continue on` records `autoContinue: true` in `.drift.json`. By default the handoff is only published (and still lands itself where `land.auto` is set); the tool result names the `drift-continue` command so you decide if and when the work continues, and in which thread. <!-- changelog.d/auto-continue-001-manual-default-and-switch.md 2026-10-11T13:09:36+01:00 -->
 
 ### Fixed

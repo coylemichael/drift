@@ -25,73 +25,41 @@ git clone https://github.com/coylemichael/drift ~/projects/drift
 pi install ~/projects/drift
 ```
 
-Restart Pi or open a fresh Pi ACP thread after installation (and after updating
-the checkout: a running extension keeps the tools it loaded, so a new tool such
-as `drift_worktree` appears only after `/reload` or a new connection). Remove the package
-with `pi remove ~/projects/drift`; this does not remove the checkout, artifacts,
-or session records.
+Restart Pi (or `/reload`) after installing or updating the checkout; a running
+extension keeps the tools it loaded. `pi remove ~/projects/drift` uninstalls
+without touching the checkout, artifacts, or session records.
 
-**Workflow selection is self-healing on Pi.** The extension binds Drift's
-model-facing skill entry and explicit `/skill:drift` requests to the workflow
-shipped in the same package. An older standalone copy (for example under
-`~/.agents/skills/drift`) cannot silently supply an outdated workflow. This is
-reapplied on working prompts, including after reload, resume and compaction;
-there is no repair command or settings edit to run. Old checkouts, local edits,
-other skills and user settings are left untouched. Pi's discovery inventory may
-still report the duplicate; the runtime uses the bundled workflow.
-
-To retire an older copy, save any local edits it holds, then replace it with a
-symlink to `skills/drift` in this checkout. The binding compares real paths, so
-the symlinked entry counts as the bundled file and the notice stops, and any host
-that reads that folder (Zed's native agent reads `~/.agents/skills`) follows the
-current workflow:
-
-```sh
-ln -s ~/projects/drift/skills/drift ~/.agents/skills/drift
-```
-
-Explicitly disabled skill discovery stays disabled. If a required bundled
-workflow file is missing or unreadable, Drift blocks inference rather than
-falling back to another version, and retries on the next prompt after the file
-is restored. This does not invent model mappings or credentials: profile routing
-still uses your configuration below.
-
-**Claude Code, including Zed's `claude-acp` agent** — the checkout carries a
-`.claude-plugin/plugin.json`, so a folder under `~/.claude/skills/` that points
-at it loads as the `drift` plugin on the next session with no install step:
+**Claude Code, including Zed's `claude-acp` agent** — a symlink loads the
+checkout as the `drift` plugin on the next session, with no install step:
 
 ```sh
 ln -s ~/projects/drift ~/.claude/skills/drift
 ```
 
-The skill is advertised as `drift:drift`. Remove the symlink to uninstall.
-Claude namespaces everything a plugin provides, so `/drift` itself comes from a
-personal command file. Copy `claude/commands/drift.md` from this checkout to
-`~/.claude/commands/drift.md`; then `/drift`, `/drift <artifact>` and
-`/drift <request>` behave as on Pi (pick up the newest artifact, a named one,
-or run a Drift request), expanding to the `drift:drift` skill with your words.
-On this host Drift is currently the skill alone: artifacts are written by the
-portable manual procedure, and the profiled continuation chain described
-below is Pi-only until the Claude worker agents and hooks land.
+Workflow selection is self-healing on Pi: the extension binds Drift's skill
+entry to the workflow shipped in the same package, so an older standalone copy
+cannot silently supply an outdated one. Stale-copy retirement, the Claude
+`/drift` command file and the rest of the per-host fine print:
+[docs/install.md](docs/install.md).
 
 Naming: `skills/drift/` in this checkout is the skill; `drift/` inside a target
 repository holds that repository's artifacts.
 
 ## Commands (Pi)
 
-Every user-facing command on one page. The sections below explain each in
-detail; the configuration commands are per repository, write `.drift.json`, and
-a bare command (or `status`) only reports.
+Every user-facing command on one page; each links to its reference page. The
+configuration commands are per repository, write `.drift.json`, and a bare
+command (or `status`) only reports.
 
 | Command | What it does |
 | --- | --- |
 | `/drift [artifact \| request]` | The entry point: picks up the newest artifact in `drift/INDEX.md`, the one you name, or passes any other request to the Drift skill. |
-| `drift-continue <handoff>` | Continues a published handoff, switching to its declared `next_session_profile` before inference. Bare on purpose — no leading slash — so hosts that reserve `/` pass it through; run it in a fresh thread. |
-| `/drift-worktree [status \| <path>]` | Shows the launch repo, active Drift root and record, or adopts an existing linked worktree of the same repository. |
-| `/drift-track-artifacts on\|off\|status` | Whether this repo's `drift/` artifacts are committed to Git or stay private (ignored). |
-| `/drift-changelog on\|off\|status` | Whether `CHANGELOG.md` is generated from `changelog.d/` fragments (automatic with an origin remote and a changelog). |
-| `/drift-auto-continue on\|off\|status` | Whether publishing a profiled handoff automatically compacts and continues in a fresh context window. Off by default: you decide if a handoff goes into a new thread. |
-| `/drift-land` | Lands the current branch on origin's default branch: fetch, rebase, verify, check, push; never squash or force. |
+| `drift-continue <handoff>` | Continues a published handoff, switching to its declared `next_session_profile` before inference. Bare on purpose — no leading slash — so hosts that reserve `/` pass it through; run it in a fresh thread. ([details](docs/continuation.md)) |
+| `/drift-worktree [status \| <path>]` | Shows the launch repo, active Drift root and record, or adopts an existing linked worktree of the same repository. ([details](docs/worktrees.md)) |
+| `/drift-track-artifacts on\|off\|status` | Whether this repo's `drift/` artifacts are committed to Git or stay private (ignored). ([details](docs/artifact-git-policy.md)) |
+| `/drift-changelog on\|off\|status` | Whether `CHANGELOG.md` is generated from `changelog.d/` fragments (automatic with an origin remote and a changelog). ([details](docs/changelog.md)) |
+| `/drift-auto-continue on\|off\|status` | Whether publishing a profiled handoff automatically compacts and continues in a fresh context window. Off by default: you decide if a handoff goes into a new thread. ([details](docs/continuation.md)) |
+| `/drift-land` | Lands the current branch on origin's default branch: fetch, rebase, verify, check, push; never squash or force. ([details](docs/landing.md)) |
 
 ## Workflow
 
@@ -136,166 +104,49 @@ It is not an index column, because index rows never change.
 
 ### Artifact Git policy (per repository)
 
-Artifacts are ignored by default. To let handoffs travel between machines,
-commit this **repository-root** `.drift.json` alongside the artifacts:
-
-```json
-{ "trackArtifacts": true }
-```
-
-This is host-neutral project data, not a Pi user setting or a per-tool argument.
-The Pi publisher reads it on every publication; other hosts follow the same
-choice through the portable skill. Missing config, `{}` or `false` keeps the
-ignored default and adds `/drift/` to `.gitignore` if needed.
-
-With `true`, Drift does not create or edit `.gitignore`, stage files, commit, or
-push. Artifact and index paths must actually be unignored; resolve existing
-rules explicitly. The flag is permission to publish trackable files, **not** an
-automatic commit. Already-tracked artifacts or an `!/drift/` exception alone do
-not select this mode. Invalid JSON, unknown fields, non-boolean values and unsafe
-config paths fail rather than silently selecting a policy.
-
-**On Pi, use `/drift-track-artifacts`** in a thread bound to the target checkout
-(the session's Drift root; see "Worktrees for parallel workers"): `on`, `off`,
-or `status` (no argument shows status). It is a Pi command, never
-sent to a model. **On** writes the flag and removes the `/drift/` rule (and
-`/drift`, `drift/`, `drift` variants) from `.gitignore`, keeping everything
-else. **Off** writes `false` and adds `/drift/` back; files already committed
-stay tracked until you run the `git rm -r --cached drift` it suggests. Either
-way it then asks Git whether an index and an artifact path landed on the chosen
-side; if another rule defeats the choice, both files are restored and the rule
-is named. Nothing is staged or committed. In other hosts, make the same edits
-and commit them.
-
-**Many threads, one index.** A tracked index is committed, so two worktrees'
-copies meet at every rebase. In a tracked repository with an `origin` remote,
-Drift writes `drift/INDEX.md merge=drift-index` to `.gitattributes` at session
-start (`/drift-track-artifacts on` writes it too) and installs the matching
-driver in the clone
-(`build-index.py --merge`): rows from both sides are unioned, reordered by
-timestamp and renumbered, so the rebase never stops on the index. Without the
-driver git falls back to its normal text merge; nothing else changes. In
-tracked mode the next `NNN` also counts artifacts already landed on any
-remote-tracking ref. Other hosts install the driver with one command:
-
-```sh
-git config merge.drift-index.name "Drift index row merge"
-git config merge.drift-index.driver "python3 -I /path/to/drift/scripts/build-index.py --merge %O %A %B"
-```
-
-**Worktrees in private mode** share the main worktree's `drift/`: a linked
-worktree holds no `drift/` of its own, publishes into the shared store, and
-sees the whole history in `/drift`, so nothing is lost when the worktree is
-removed. `.drift.json`, changelog fragments and record metadata still come from
-the linked worktree itself. Tracked worktrees keep a folder each, because those
-artifacts travel with the branch.
+Artifacts are private by default: Drift keeps `drift/` ignored. Committing
+`{ "trackArtifacts": true }` in a repository-root `.drift.json` lets handoffs
+travel between machines; on Pi, `/drift-track-artifacts on|off|status` makes
+the `.gitignore` edits for you and verifies Git agrees, staging nothing. A
+tracked `drift/INDEX.md` gets a merge driver so parallel branches union their
+rows instead of conflicting, and linked worktrees in private mode publish into
+the main worktree's shared store. Review artifacts before committing: handoffs
+can contain private project context even though they must not contain
+credentials. Exact rules, edge cases and the driver setup for other hosts:
+[docs/artifact-git-policy.md](docs/artifact-git-policy.md).
 
 ### Changelog from fragments (per repository)
 
-Many agents editing one `[Unreleased]` section conflict on every rebase and lose
-entries to "keep mine" resolutions. That can only happen where two copies of the
-file can meet in git, so the trigger is a shared branch: in a repository with an
-`origin` remote and a root `CHANGELOG.md`, Drift makes the changelog a generated
-file at the first session start or publication, with no command. One fragment per
-change goes in `changelog.d/`, named after the artifact so names never collide,
-and the file is rebuilt between two marker comments at each publication and
-session start, with the project's own text outside the markers preserved byte
-for byte. A local-only repository has one writer and is left alone. Entries are grouped by the first
-version tag whose tree contains the fragment (`v*` by default; configurable as
-`changelog.tags` in `.drift.json`), so releases need no step of their own;
-untagged entries are `[Unreleased]`, and a repository without version tags is
-grouped by day. Adoption also writes `CHANGELOG.md merge=drift-changelog` to
-`.gitattributes`; the matching driver, installed per clone at session start,
-unions entries by id on rebase and three-way merges the hand-written parts.
-
-`drift_publish` takes an optional `changelog: { section, text }` and writes the
-fragment beside the artifact in the same transaction:
-
-```text
-changelog.d/cards-pass-043-ledger-recut.md
----
-date: "2026-10-09T16:29:21+01:00"
-section: "Changed"
-artifact: "drift/cards-pass/043-handoff-ledger-recut.md"
----
-One Markdown bullet; further lines continue it. No blank lines.
-```
-
-The generated region is a one-way view of `changelog.d/`: to change a bullet,
-edit its fragment and regenerate. A bullet edited directly in the region, or a
-line added there without an id, is reported with its line number and left
-alone; regeneration stops until the text is moved into its fragment or deleted.
-Drift does not guess at text it did not write, and never copies view text back
-into a fragment. A repository that already uses changesets or towncrier is left to its own
-convention. `.drift.json` overrides the trigger: `"changelog": false` keeps a
-shared repository's changelog hand-written, `true` (or `{ "tags": ... }`) forces
-generation in a local one; `/drift-changelog on|off|status` sets or explains it.
-`changelog.d/README.md` states the convention for anything else that reads the
-repository. Nothing is staged or committed.
+Parallel agents editing one `[Unreleased]` section lose entries on every
+rebase, so in a repository with an `origin` remote and a root `CHANGELOG.md`
+Drift generates the changelog instead: one fragment per change in
+`changelog.d/`, rebuilt between marker comments at each publication, grouped by
+version tag, with the project's own text outside the markers preserved byte for
+byte. A local-only repository is left alone; `/drift-changelog on|off|status`
+overrides the trigger either way. Fragment format, hand-edit detection and the
+merge driver: [docs/changelog.md](docs/changelog.md).
 
 ### Citation anchors (per artifact)
 
-An artifact's `path:line` references rot as the code moves on, and a reading
-session cannot tell a current claim from a stale one. At publication,
-`drift_publish` records an anchor per citation in the artifact's frontmatter:
-the range, a content hash of the cited lines (trailing whitespace stripped),
-and the first and last lines as a search needle. When `/drift` or an automatic
-continuation picks an artifact up, `scripts/check-staleness.py` grades every
-citation against the tree and a single note tells the session what still
-holds: `fresh` is proven by hash; `moved` is located and forwarded to its new
-line or file; `changed` reports a difflib similarity; `gone` and `uncertain`
-(no recorded commit, or anchored over uncommitted changes) say exactly what
-could not be verified. Artifacts published before anchors existed are graded
-heuristically from their recorded `git_commit`. The check is a report, never a
-gate: it blocks nothing, writes nothing, and a checker failure degrades to one
-"unavailable" note. Each check also appends one line to a local usefulness
-ledger — `<agent dir>/drift/citation-metrics.jsonl`, verdict counts, mode and
-artifact date, never in a repository — so the feature's exposure and the
-corpus's rot rate can be measured over time. The checker also runs standalone:
-`python -I scripts/check-staleness.py drift/<feature>/<artifact>.md [<repo>]`.
+An artifact's `path:line` references rot as the code moves on. At publication
+every citation is anchored — range, content hash, search needle — and when an
+artifact is picked up each one is graded in a single note: `fresh` (proven by
+hash), `moved` (forwarded to its new location), `changed`, `gone` or
+`uncertain`. The check is a report, never a gate: it blocks nothing and writes
+nothing to the repository. Grading rules, the standalone checker and the local
+metrics ledger: [docs/citation-anchors.md](docs/citation-anchors.md).
 
 ### Landing (per repository)
 
 Drift already knows when a unit of work ends: the handoff that completes the
-interval. With a one-time opt-in, that handoff lands itself:
-
-```json
-{ "land": { "auto": true, "check": "pytest -q" } }
-{ "land": { "auto": true, "check": ["cargo fmt --check", "cargo test"] } }
-```
-
-The sequence is fetch; rebase onto origin's default branch (the index and
-changelog drivers resolve their files); verify the derived files; the guard
-(`git diff origin/<default> --name-only` may list only files the branch's own
-commits touch, which is how a squash against a moved ref or a push from a stale
-index reverts other threads' work); the repo's check commands, any shell
-command run in order, stopping at the first failure, nothing assumed about the
-toolchain and nothing run when unset; `git push origin HEAD:<default>`; redo
-from the fetch when the tip moved, at most three times; a `land` checkpoint on
-the record. Where `autoContinue` is on, the profiled continuation then resumes
-in the same active worktree
-at the landed commit; landing does not switch to the main checkout. It never
-squashes, force-pushes or resets against a moving ref. The one thing it commits
-is Drift's own publication output, which the handoff has just produced and which
-holds nothing the agent decided: the artifact and index in a tracked repo, the
-fragment and regenerated changelog, and Drift's own ignore and attribute lines,
-in one `drift: publish <artifact>` commit. Any other uncommitted tracked change
-is the agent's and stops the landing before anything happens.
-
-A real conflict in a non-derived file, or the guard tripping, halts the chain:
-the rebase is aborted, the branch is left as it was, the handoff stays
-published, continuation is held, and the tool result says what blocked.
-`/drift-land` is the same sequence as a manual command. Landings are
-serialised across a repository's worktrees.
-
-In Zed, Pi extension commands only appear in the `/` menu with an adapter that
-advertises them; upstream `pi-acp` v0.0.33 does not, and also leaves a turn
-open until a model run settles, so a command that never starts one spins.
-
-After changing the extension code, reload Pi or open a new Pi adapter connection;
-already-running extensions keep their loaded publisher. Config edits alone need
-no reload. Review artifacts before committing: handoffs can contain private
-project context even though they must not contain credentials.
+interval. With a one-time `{ "land": { "auto": true, "check": "pytest -q" } }`
+opt-in, that handoff lands itself: fetch, rebase onto origin's default branch,
+verify derived files, guard against reverting other threads' work, run the
+repo's checks, push — never squash, never force. A real conflict or a tripped
+guard halts with the branch as it was and says what blocked. `/drift-land` is
+the same sequence as a manual command, and landings are serialised across a
+repository's worktrees. The full sequence, the guard, and what the one
+`drift: publish` commit may contain: [docs/landing.md](docs/landing.md).
 
 ## Worktrees for parallel workers (Pi)
 
@@ -311,55 +162,16 @@ an orchestrator assign each worker an existing linked worktree. A Pi session's
 | `/drift-worktree <path>` | Adopts that worktree. A relative path resolves from the session's original `cwd`. |
 | `drift_worktree { action: "status" }` / `{ action: "adopt", path }` | The same, as a model tool. |
 
-What adoption accepts and does:
-
-- **Target:** the exact root of an existing worktree of the **same repository**
-  (same Git common directory). Other clones, submodules, subdirectories and
-  missing paths are rejected. Drift never creates, rebases or repairs a
-  worktree, and never edits its policy; the target's own (branch-local)
-  `.drift.json` applies. As at session start, derived files may be refreshed and
-  merge drivers installed before the new baseline; tracking opt-in and ignore
-  rules are not changed.
-- **When:** as the sole call in its tool-call batch, with no publication pending and
-  no continuation queued; otherwise it fails and changes nothing. Adopting the
-  current root is a no-op.
-- **Record:** the session keeps one record under Pi's agent directory, keyed to
-  the launch repository, with the active worktree on it. Each adoption snapshots the previous interval's
-  baseline and receipts into the record's history and takes a fresh measured
-  baseline in the target. Switching back is another adoption with another fresh
-  baseline. No handoff is written and no interval is marked complete; work done
-  before adoption is not measured against the new root. Worktree-aware records
-  use version 2 so an older publisher refuses them rather than measuring main.
-- **Scope:** every Drift repository operation then uses the adopted root:
-  metadata, numbering, index, publication, refs, changelog fragments,
-  `/drift-track-artifacts`, `/drift-changelog`, `/drift-auto-continue`,
-  `/drift-land` and continuation
-  artifacts. Tracked artifacts follow the worktree's branch; private artifacts
-  go to the shared main-worktree store, with metadata and fragments from the
-  worker.
-- **Durability:** the binding survives reload, resume, compaction and automatic
-  continuation of the same session. A new, forked or cloned session is not
-  adopted automatically.
-
-What it does not change: Pi's `cwd`, the default directory of built-in
-`read`/`edit`/`bash`, where Pi stores session files, and project trust. Use
-explicit worker paths with those tools. `cd` in a shell has no effect on Drift.
-A trusted launch project does not make the adopted checkout's
-`.pi/drift-model-profiles.json` trusted; the global profile file is used
-instead. Worktree selection is not a sandbox: the adopted branch's `.drift.json`
-still controls `land.auto` and the shell commands in `land.check`, just as when
-launching in that checkout directly. Review that branch and its landing config
-before adopting it; adoption does not itself run a landing.
-
-If the adopted worktree is removed or its Git directory is recreated, Drift
-operations fail and name it; there is no silent fallback to the launch repo.
-`status` and `adopt` still work: explicitly adopt another root, or the recreated
-worktree, to take a fresh baseline. If a queued continuation stalls, status names
-the artifact to recover with `drift-continue`; reload clears the in-memory queue
-without removing the artifact.
-
-Workers should adopt their assigned worktree before any substantive work; the
-orchestrator can stay in the main checkout.
+Adoption accepts only the root of an existing worktree of the same repository,
+then binds every Drift repository operation to it: metadata, numbering, index,
+publication, changelog fragments, the configuration commands and continuation.
+Each adoption takes a fresh measured baseline, and the binding survives reload,
+resume and compaction. It does not change Pi's `cwd` or the default directory
+of the built-in tools, and it is not a sandbox: the adopted branch's
+`.drift.json` still controls landing. Workers should adopt their assigned
+worktree before any substantive work; the orchestrator can stay in the main
+checkout. Full semantics — what adoption accepts, measures, survives and
+refuses: [docs/worktrees.md](docs/worktrees.md).
 
 ## Profile-directed continuation
 
@@ -369,45 +181,15 @@ A handoff may declare the next task's portable profile: `research`, `planning`,
 or `implementation`. The model that performed the work writes its own handoff;
 the profile selects the model for the **next** independent task.
 
-By default the chain stops at publication: the profiled handoff is recorded —
-and still lands itself where `land.auto` is set — nothing is queued, and the
-tool result names the `drift-continue` command; you decide if and when the
-work continues, and in which thread.
-
-`/drift-auto-continue on` opts a repository in, recording `"autoContinue":
-true` in `.drift.json`. Then, after publishing a profiled handoff, Drift
-automatically compacts to a fresh context window. It then validates the
-repository-local handoff, resolves its profile through the local model map,
-selects the model and optional thinking level, and continues the recorded
-work. Each profiled handoff therefore starts the next independent task with
-minimal durable context rather than the old transcript. `/drift-auto-continue
-off` returns to the manual default; the bare command reports status.
-
-If automatic continuation cannot validate the artifact/profile/model, it leaves
-the published handoff intact and reports the error. Recover manually in a fresh
-Pi thread with `drift-continue drift/<feature>/<NNN>-handoff-<description>.md`.
-
-Configure defaults at `~/.pi/agent/drift-model-profiles.json` (or Pi's configured
-agent directory). A trusted project may override profiles at
-`.pi/drift-model-profiles.json` (the launch project; see adopted worktrees
-above). Use Pi's **model IDs** from `pi --list-models`,
-not picker labels such as `Claude Opus 5`.
-
-The current GitHub Copilot starting policy is:
-
-```json
-{
-  "profiles": {
-    "research": { "provider": "github-copilot", "model": "gemini-3.8-flash", "thinkingLevel": "medium" },
-    "planning": { "provider": "github-copilot", "model": "gpt-6-astra", "thinkingLevel": "high" },
-    "implementation": { "provider": "github-copilot", "model": "claude-opus-5", "thinkingLevel": "high" }
-  }
-}
-```
-
-Profile files allow only `provider`, `model`, and optional `thinkingLevel`
-(`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`). Keep credentials
-out of them.
+By default the chain stops at publication: nothing is queued, the tool result
+names the `drift-continue` command, and you decide if, when and in which thread
+the work continues. `/drift-auto-continue on` opts a repository in: publishing
+a profiled handoff then compacts to a fresh context window, resolves the
+profile through your model map (`~/.pi/agent/drift-model-profiles.json`), and
+continues the recorded work with minimal durable context rather than the old
+transcript. Validation failures leave the handoff intact and name the manual
+recovery. The profile file format, trusted-project overrides and the current
+starting policy: [docs/continuation.md](docs/continuation.md).
 
 ## User decision checkpoints
 
