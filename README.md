@@ -75,6 +75,22 @@ below is Pi-only until the Claude worker agents and hooks land.
 Naming: `skills/drift/` in this checkout is the skill; `drift/` inside a target
 repository holds that repository's artifacts.
 
+## Commands (Pi)
+
+Every user-facing command on one page. The sections below explain each in
+detail; the configuration commands are per repository, write `.drift.json`, and
+a bare command (or `status`) only reports.
+
+| Command | What it does |
+|---|---|
+| `/drift [artifact \| request]` | The entry point: picks up the newest artifact in `drift/INDEX.md`, the one you name, or passes any other request to the Drift skill. |
+| `drift-continue <handoff>` | Continues a published handoff, switching to its declared `next_session_profile` before inference. Bare on purpose — no leading slash — so hosts that reserve `/` pass it through; run it in a fresh thread. |
+| `/drift-worktree [status \| <path>]` | Shows the launch repo, active Drift root and record, or adopts an existing linked worktree of the same repository. |
+| `/drift-track-artifacts on\|off\|status` | Whether this repo's `drift/` artifacts are committed to Git or stay private (ignored). |
+| `/drift-changelog on\|off\|status` | Whether `CHANGELOG.md` is generated from `changelog.d/` fragments (automatic with an origin remote and a changelog). |
+| `/drift-auto-continue on\|off\|status` | Whether publishing a profiled handoff automatically compacts and continues in a fresh context window. Off by default: you decide if a handoff goes into a new thread. |
+| `/drift-land` | Lands the current branch on origin's default branch: fetch, rebase, verify, check, push; never squash or force. |
+
 ## Workflow
 
 | Mode | Use |
@@ -250,7 +266,8 @@ index reverts other threads' work); the repo's check commands, any shell
 command run in order, stopping at the first failure, nothing assumed about the
 toolchain and nothing run when unset; `git push origin HEAD:<default>`; redo
 from the fetch when the tip moved, at most three times; a `land` checkpoint on
-the record. Then the profiled continuation resumes in the same active worktree
+the record. Where `autoContinue` is on, the profiled continuation then resumes
+in the same active worktree
 at the landed commit; landing does not switch to the main checkout. It never
 squashes, force-pushes or resets against a moving ref. The one thing it commits
 is Drift's own publication output, which the handoff has just produced and which
@@ -307,7 +324,8 @@ What adoption accepts and does:
   use version 2 so an older publisher refuses them rather than measuring main.
 - **Scope:** every Drift repository operation then uses the adopted root:
   metadata, numbering, index, publication, refs, changelog fragments,
-  `/drift-track-artifacts`, `/drift-changelog`, `/drift-land` and continuation
+  `/drift-track-artifacts`, `/drift-changelog`, `/drift-auto-continue`,
+  `/drift-land` and continuation
   artifacts. Tracked artifacts follow the worktree's branch; private artifacts
   go to the shared main-worktree store, with metadata and fragments from the
   worker.
@@ -341,11 +359,19 @@ A handoff may declare the next task's portable profile: `research`, `planning`,
 or `implementation`. The model that performed the work writes its own handoff;
 the profile selects the model for the **next** independent task.
 
-After publishing a profiled handoff, Drift automatically compacts to a fresh
-context window. It then validates the repository-local handoff, resolves its
-profile through the local model map, selects the model and optional thinking
-level, and continues the recorded work. Each profiled handoff therefore starts
-the next independent task with minimal durable context rather than the old transcript.
+By default the chain stops at publication: the profiled handoff is recorded —
+and still lands itself where `land.auto` is set — nothing is queued, and the
+tool result names the `drift-continue` command; you decide if and when the
+work continues, and in which thread.
+
+`/drift-auto-continue on` opts a repository in, recording `"autoContinue":
+true` in `.drift.json`. Then, after publishing a profiled handoff, Drift
+automatically compacts to a fresh context window. It then validates the
+repository-local handoff, resolves its profile through the local model map,
+selects the model and optional thinking level, and continues the recorded
+work. Each profiled handoff therefore starts the next independent task with
+minimal durable context rather than the old transcript. `/drift-auto-continue
+off` returns to the manual default; the bare command reports status.
 
 If automatic continuation cannot validate the artifact/profile/model, it leaves
 the published handoff intact and reports the error. Recover manually in a fresh

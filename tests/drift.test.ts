@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { artifactStore, atomicWrite, delta, driftConfig, fingerprint, git, mainWorktree, mergeInProgress, python, Records, run, safePath, withLock } from "../lib/state.ts";
+import { artifactStore, atomicWrite, delta, driftConfig, fingerprint, git, mainWorktree, mergeInProgress, python, Records, run, safePath, setAutoContinue, withLock } from "../lib/state.ts";
 import { changelogState, END, START, setChangelog, syncChangelog } from "../lib/changelog.ts";
 import { describeLanding, land, LandHalt, landingGuard } from "../lib/land.ts";
 import { pickup } from "../lib/pickup.ts";
@@ -743,16 +743,23 @@ test("private worktrees use the main worktree's drift/ and hold none of their ow
   assert.match(await (await Records.open(wtCRoot, "session-c", agent))!.context(), /holds its own drift\/ as well as the repository's shared store/);
 });
 
-test("Drift configuration accepts trackArtifacts, changelog and land, rejects anything else, and partial updates keep other fields", async (t) => {
+test("Drift configuration accepts trackArtifacts, changelog, autoContinue and land, rejects anything else, and partial updates keep other fields", async (t) => {
   const { repo } = await fixture(t);
-  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, changelog: { mode: "auto", tags: "v*" }, land: undefined });
+  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, changelog: { mode: "auto", tags: "v*" }, autoContinue: false, land: undefined });
   await fs.writeFile(join(repo, ".drift.json"), '{ "changelog": { "tags": "release-*" }, "land": { "auto": true, "check": ["make test"] } }\n');
-  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, changelog: { mode: "on", tags: "release-*" }, land: { auto: true, check: ["make test"] } });
+  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, changelog: { mode: "on", tags: "release-*" }, autoContinue: false, land: { auto: true, check: ["make test"] } });
   await setArtifactTracking(repo, "on");
   assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { changelog: { tags: "release-*" }, land: { auto: true, check: ["make test"] }, trackArtifacts: true });
-  await fs.writeFile(join(repo, ".drift.json"), '{ "changelog": true, "land": { "check": "pytest -q" } }');
-  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, changelog: { mode: "on", tags: "v*" }, land: { auto: false, check: ["pytest -q"] } });
-  for (const text of ['{"changelog":"yes"}', '{"land":{"auto":"yes"}}', '{"land":{"check":1}}', '{"changelog":{"tag":"v*"}}', '{"changelog":{"tags":""}}', '{"land":"auto"}', '{"other":1}']) {
+  await fs.writeFile(join(repo, ".drift.json"), '{ "changelog": true, "autoContinue": true, "land": { "check": "pytest -q" } }');
+  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, changelog: { mode: "on", tags: "v*" }, autoContinue: true, land: { auto: false, check: ["pytest -q"] } });
+  assert.match(await setAutoContinue(repo, "status"), /on for this repo/);
+  assert.match(await setAutoContinue(repo, "off"), /now off: set autoContinue to false in \.drift\.json/);
+  assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { changelog: true, autoContinue: false, land: { check: "pytest -q" } });
+  assert.match(await setAutoContinue(repo, "off"), /already off; nothing needed changing/);
+  assert.match(await setAutoContinue(repo, "status"), /off \(the default\)/);
+  assert.match(await setAutoContinue(repo, "on"), /now on: set autoContinue to true in \.drift\.json/);
+  assert.equal((await driftConfig(repo)).autoContinue, true);
+  for (const text of ['{"changelog":"yes"}', '{"land":{"auto":"yes"}}', '{"land":{"check":1}}', '{"changelog":{"tag":"v*"}}', '{"changelog":{"tags":""}}', '{"land":"auto"}', '{"autoContinue":"yes"}', '{"other":1}']) {
     await fs.writeFile(join(repo, ".drift.json"), text);
     await assert.rejects(driftConfig(repo), /Drift configuration/);
   }

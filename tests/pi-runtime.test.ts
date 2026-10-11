@@ -360,7 +360,7 @@ async function withOrigin(f: Awaited<ReturnType<typeof fixture>>) {
 test("actual Pi lands a completed interval itself where the repo opts in, then continues; a conflict holds the continuation", { skip: !piPresent, timeout: 120_000 }, async (t) => {
   const f = await fixture(t);
   const { branch, other } = await withOrigin(f);
-  await fs.writeFile(join(f.repo, ".drift.json"), '{ "land": { "auto": true } }\n');
+  await fs.writeFile(join(f.repo, ".drift.json"), '{ "autoContinue": true, "land": { "auto": true } }\n');
   await fs.writeFile(join(f.repo, "work.txt"), "done\n");
   await git(f.repo, ["add", ".drift.json", "work.txt"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "work"]);
   await fs.writeFile(join(other, "theirs.txt"), "t\n"); await git(other, ["add", "theirs.txt"]); await git(other, ["commit", "-qm", "theirs"]); await git(other, ["push", "-q", "origin", `HEAD:${branch}`]);
@@ -428,8 +428,9 @@ test("actual Pi lands a shared, tracked repository's handoff with its artifact, 
   assert.equal((await git(f.repo, ["status", "--porcelain", "--untracked-files=no"])).trim(), "");
 });
 
-test("actual Pi automatically continues a profiled handoff after a fresh context compaction", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+test("actual Pi automatically continues a profiled handoff after a fresh context compaction where the repo opts in", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"autoContinue":true}\n');
   const state = await client.request({ type: "get_state" });
   const requestsBeforeHandoff = f.requests.length;
   await client.prompt("PUBLISH_AUTO_HANDOFF");
@@ -446,6 +447,25 @@ test("actual Pi automatically continues a profiled handoff after a fresh context
   await client.request({ type: "prompt", message: "drift-continue drift/runtime/099-handoff-unprofiled.md" });
   await delay(100);
   assert.equal(f.requests.length, requestsBeforeFailure);
+});
+
+test("actual Pi leaves a profiled handoff manual by default and still honours drift-continue later", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+  const f = await fixture(t); const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  await client.prompt("PUBLISH_AUTO_HANDOFF");
+  const completed = await f.readRecord(state.sessionId);
+  const artifact = completed.completed!.path;
+  assert.ok((await fs.readFile(join(f.repo, artifact), "utf8")).includes('next_session_profile: "architecture"'));
+  const published = JSON.stringify(toolEnds(client, "drift_publish").at(-1));
+  assert.match(published, /Automatic continuation is off \(the default/);
+  assert.ok(published.includes(`drift-continue ${artifact}`), published);
+  assert.ok(!published.includes("queued automatically"), published);
+  await delay(1000); // agent_settled has run by now; nothing may have queued a compaction.
+  assert.ok(!(await client.request({ type: "get_entries" })).entries.some((entry: any) => entry.type === "compaction"), "the manual default still compacted to a fresh context window");
+  // The published handoff stays manually continuable, with the profile honoured.
+  const requestsBefore = f.requests.length;
+  await client.request({ type: "prompt", message: `drift-continue ${artifact}` });
+  await until(() => f.requests.slice(requestsBefore).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + artifact + "`")), "manual drift-continue did not send the profiled continuation prompt");
 });
 
 /** A linked worktree of the fixture repo on its own branch; same common dir, its own canonical root. */
@@ -606,7 +626,7 @@ test("actual Pi adopts a linked worktree as the active Drift root: measured inte
 
 test("actual Pi keeps private artifacts in main while an adopted worktree owns its branch, fragments, commands, /drift and profiled continuation", { skip: !piPresent, timeout: 120_000 }, async (t) => {
   const f = await fixture(t);
-  await fs.writeFile(join(f.repo, ".drift.json"), '{"changelog":true}\n');
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"changelog":true,"autoContinue":true}\n');
   await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
   await commit(f.repo, "private config");
   const worker = await linkedWorktree(f);
@@ -627,9 +647,9 @@ test("actual Pi keeps private artifacts in main while an adopted worktree owns i
 
   // Configuration commands target the active root.
   await client.request({ type: "prompt", message: "/drift-changelog off" });
-  assert.deepEqual(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")), { changelog: false });
+  assert.deepEqual(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")), { changelog: false, autoContinue: true });
   await client.request({ type: "prompt", message: "/drift-changelog on" });
-  assert.deepEqual(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")), { changelog: true });
+  assert.deepEqual(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")), { changelog: true, autoContinue: true });
   await client.request({ type: "prompt", message: "/drift-track-artifacts on" });
   assert.equal(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")).trackArtifacts, true);
   await client.request({ type: "prompt", message: "/drift-track-artifacts off" });
@@ -823,6 +843,7 @@ test("actual Pi auto-lands the ADOPTED worker's branch, runs its check there and
 
 test("actual Pi refuses adoption while a profiled continuation is queued, keeps the scope, and still continues", { skip: !piPresent, timeout: 90_000 }, async (t) => {
   const f = await fixture(t);
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"autoContinue":true}\n');
   const worker = await linkedWorktree(f);
   const client = f.rpc();
   const state = await client.request({ type: "get_state" });
@@ -954,6 +975,7 @@ test("actual Pi binds stale standalone Drift skills without modifying settings o
 
 test("actual Pi repeats handoff continuation with a stale skill and stops on the unprofiled final handoff", { skip: !piPresent, timeout: 90_000 }, async (t) => {
   const f = await fixture(t);
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"autoContinue":true}\n');
   const legacy = await legacySkill(f);
   const client = f.rpc();
   const state = await client.request({ type: "get_state" });

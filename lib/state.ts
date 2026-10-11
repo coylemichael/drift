@@ -11,7 +11,7 @@ const exec = promisify(execFile);
 export const hash = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
 export type Fingerprint = Record<string, string>;
 export type Receipt = { digest: string; path: string; kind: string; date: string; sha256: string; fragment?: string };
-export type Pending = Receipt & { content: string; fragment?: { path: string; content: string } };
+export type Pending = Omit<Receipt, "fragment"> & { content: string; fragment?: { path: string; content: string } };
 export const artifactPathPattern = /^drift\/[A-Za-z0-9][A-Za-z0-9_-]{0,79}\/\d{3}-(research|plan|handoff)-[a-z0-9-]+\.md$/;
 function validReceipt(value: any): value is Receipt {
   return value && typeof value.path === "string" && artifactPathPattern.test(value.path) &&
@@ -172,10 +172,12 @@ export interface DriftConfig {
   trackArtifacts: boolean;
   /** `auto`: on when the repo has an origin remote and a CHANGELOG.md. `on`/`off`: the repo's explicit override. */
   changelog: { mode: "auto" | "on" | "off"; tags: string };
+  /** Whether publishing a profiled handoff compacts and continues in a fresh context window itself. Off unless the repo opts in. */
+  autoContinue: boolean;
   land: { auto: boolean; check: string[] } | undefined;
 }
 
-const configShape = "trackArtifacts (boolean), changelog (boolean, or {tags: glob}) and land ({auto: boolean, check: command or [commands]})";
+const configShape = "trackArtifacts (boolean), changelog (boolean, or {tags: glob}), autoContinue (boolean) and land ({auto: boolean, check: command or [commands]})";
 
 async function rawConfig(repo: string): Promise<{ path: string; raw: Record<string, unknown> | undefined }> {
   const path = await safePath(repo, join(repo, ".drift.json"));
@@ -190,6 +192,7 @@ async function rawConfig(repo: string): Promise<{ path: string; raw: Record<stri
   const raw = input as Record<string, unknown>;
   for (const [key, value] of Object.entries(raw)) {
     if (key === "trackArtifacts" && typeof value === "boolean") continue;
+    if (key === "autoContinue" && typeof value === "boolean") continue;
     if (key === "changelog" && (typeof value === "boolean" || (value && typeof value === "object" && !Array.isArray(value) &&
         Object.keys(value).every((k) => k === "tags") && (!("tags" in value) || (typeof (value as any).tags === "string" && (value as any).tags.trim()))))) continue;
     if (key === "land" && value && typeof value === "object" && !Array.isArray(value) &&
@@ -211,6 +214,7 @@ export async function driftConfig(repo: string): Promise<DriftConfig> {
       mode: changelog === undefined ? "auto" : changelog === false ? "off" : "on",
       tags: (typeof changelog === "object" && changelog.tags?.trim()) || "v*",
     },
+    autoContinue: (raw?.autoContinue as boolean | undefined) ?? false,
     land: land ? { auto: land.auto ?? false, check: land.check === undefined ? [] : Array.isArray(land.check) ? land.check : [land.check] } : undefined,
   };
 }
@@ -227,6 +231,22 @@ export async function updateConfig(repo: string, patch: Record<string, unknown>)
   for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key];
   const mode = await exists(path) ? (await fs.stat(path)).mode & 0o777 : 0o644;
   await atomicWrite(path, JSON.stringify(next, null, 2) + "\n", mode);
+}
+
+export type AutoContinueRequest = "on" | "off" | "status";
+
+/** The user's choice whether a profiled handoff opens its own fresh context window. A command, never a model turn. */
+export async function setAutoContinue(repo: string, request: AutoContinueRequest): Promise<string> {
+  const current = (await driftConfig(repo)).autoContinue;
+  if (request === "status") return current
+    ? "Drift automatic continuation is on for this repo: publishing a profiled handoff compacts to a fresh context window and continues there. /drift-auto-continue off returns to the manual default."
+    : "Drift automatic continuation is off (the default): a profiled handoff is only published; continue it when you choose with drift-continue drift/<feature>/<NNN>-handoff-<description>.md. /drift-auto-continue on enables the automatic chain.";
+  const enable = request === "on";
+  if (enable === current) return `Drift automatic continuation is already ${request}; nothing needed changing.`;
+  await updateConfig(repo, { autoContinue: enable });
+  return enable
+    ? "Drift automatic continuation is now on: set autoContinue to true in .drift.json. The next profiled handoff compacts and continues itself."
+    : "Drift automatic continuation is now off: set autoContinue to false in .drift.json. A profiled handoff is only published (and landed where land.auto is set); continue when ready with drift-continue <handoff path>.";
 }
 
 /** Host-neutral, repo-local opt-in. Never infer consent from tracked history. */

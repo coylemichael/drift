@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 <!-- drift:changelog: generated from changelog.d/ - edit a bullet only if you keep its id comment -->
 
+## [Unreleased]
+
+### Changed
+
+- Automatic continuation after a profiled handoff is now a per-repository opt-in: `/drift-auto-continue on` records `autoContinue: true` in `.drift.json`. By default the handoff is only published (and still lands itself where `land.auto` is set); the tool result names the `drift-continue` command so you decide if and when the work continues, and in which thread. <!-- changelog.d/auto-continue-001-manual-default-and-switch.md 2026-10-11T13:09:36+01:00 -->
+
 ## [0.6.0] — 2026-10-10
 
 ### Added
