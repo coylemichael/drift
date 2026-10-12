@@ -32,7 +32,8 @@ without touching the checkout, artifacts, or session records.
 Keep Pi current where you can. Drift is developed and tested against the Pi
 version pinned in `package-lock.json` (1.1.0 today); releases from 0.85.1 still
 pass the suite, but Pi's queued-input and skill handling has changed between
-releases, so an old Pi is the first thing to rule out when something misbehaves.
+releases, so an old Pi is the first thing to rule out when something misbehaves;
+Drift warns once per session when the running Pi is older than that version.
 
 **Claude Code, including Zed's `claude-acp` agent** — a symlink loads the
 checkout as the `drift` plugin on the next session, with no install step:

@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { publish } from "../lib/artifacts.ts";
+import { compareVersions, developedAgainst } from "../lib/pi-version.ts";
 import { exists, git, hash, mergeInProgress, Records } from "../lib/state.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -37,7 +38,10 @@ function launcher(binary: string): [string, string[]] {
 const [piCommand, piPrefix] = launcher(piBinary);
 // Opt in to the installed adapter without downloading anything.
 const acpBinary = process.env.PI_TEST_ACP;
-const piPresent = spawnSync(piCommand, [...piPrefix, "--version"], { env: { PATH: process.env.PATH, PI_OFFLINE: "1", PI_TELEMETRY: "0" } }).status === 0;
+const piVersionRun = spawnSync(piCommand, [...piPrefix, "--version"], { env: { PATH: process.env.PATH, PI_OFFLINE: "1", PI_TELEMETRY: "0" }, encoding: "utf8" });
+const piPresent = piVersionRun.status === 0;
+const piVersion = piPresent ? /\d+(?:\.\d+)+/.exec(`${piVersionRun.stdout}${piVersionRun.stderr}`)?.[0] : undefined;
+const developedPi = developedAgainst(readFileSync(join(root, "package.json"), "utf8"));
 const body = ["Objective", "Source Documents", "Status", "What Changed", "Codebase Context", "What Deviated from Plan", "Open Questions", "Next Steps"].map((name) => `## ${name}\nA synthetic runtime fixture; no semantic model-quality claim.\n`).join("\n");
 const researchBody = ["Research Question", "Summary", "Detailed Findings", "Code References", "Open Questions"].map((name) => `## ${name}\nA synthetic research fixture with no source artifacts.\n`).join("\n");
 
@@ -204,6 +208,9 @@ test("actual Pi RPC: discovery, pre-inference record, context, resume/reload, co
   const commands = await client.request({ type: "get_commands" });
   assert.equal(commands.commands.filter((command: any) => command.name === "skill:drift").length, 1);
   await client.prompt("hello");
+  // One version warning per extension load, exactly when the Pi under test is older than the developed-against Pi.
+  const versionNotices = notices(client).filter((event: any) => /developed against Pi/.test(JSON.stringify(event)));
+  assert.equal(versionNotices.length, piVersion && developedPi && compareVersions(piVersion, developedPi) < 0 ? 1 : 0, JSON.stringify({ piVersion, developedPi, versionNotices }));
   const first = JSON.stringify(f.requests[0]);
   assert.ok(first.includes("drift_publish")); assert.ok(first.includes(initial.intervalId));
   // A fresh repository with no Drift investment starts on the quiet salience tier.

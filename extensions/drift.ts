@@ -12,6 +12,7 @@ import { citationNote, pickup } from "../lib/pickup.ts";
 // The citation usefulness ledger: one JSONL line per checked pickup, in the agent dir, never a repo.
 const citationLedger = () => join(getAgentDir(), "drift", "citation-metrics.jsonl");
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
+import { registerPiVersionNotice } from "./pi-version.ts";
 import { registerSkillBinding } from "./skill-binding.ts";
 
 /** Pi owns lifecycle invocation; the portable skill still owns the workflow. */
@@ -32,6 +33,7 @@ export default function drift(pi: ExtensionAPI) {
     }
   });
   registerSkillBinding(pi);
+  registerPiVersionNotice(pi);
   let key = "";
   let ready: Promise<Records | undefined> | undefined;
   let probedEmpty = false;

@@ -30,7 +30,8 @@ version pinned in `package-lock.json` (1.1.0 today). Releases from 0.85.1 still
 pass the suite, but Pi's queued-input and skill handling has changed between
 releases, so an old Pi is the first thing to rule out when something misbehaves.
 For an npm-global Pi: `npm install -g @earendil-works/pi-coding-agent@latest`,
-then `/reload` or a fresh session; `pi --version` shows what is running.
+then restart Pi; `pi --version` shows what is running, and Drift itself warns
+once per session when the running Pi is older than that version.
 
 After changing the extension code, reload Pi or open a new Pi adapter connection;
 already-running extensions keep their loaded publisher. Config edits alone need
