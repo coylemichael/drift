@@ -22,5 +22,5 @@ artifact date, never in a repository — so the feature's exposure and the
 corpus's rot rate can be measured over time. The checker also runs standalone:
 
 ```sh
-python -I scripts/check-staleness.py drift/<feature>/<artifact>.md [<repo>]
+python3 -I scripts/check-staleness.py drift/<feature>/<artifact>.md [<repo>]
 ```

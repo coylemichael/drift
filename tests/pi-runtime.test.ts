@@ -12,9 +12,19 @@ import { publish } from "../lib/artifacts.ts";
 import { exists, git, hash, mergeInProgress, Records } from "../lib/state.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const piBinary = process.env.PI_TEST_BINARY || "pi";
-// Node cannot spawn npm's Windows .cmd shims without a shell; run the script the shim points at instead.
+// The Pi under test is the one the lockfile installs, so every machine and CI exercise the same version;
+// PI_TEST_BINARY selects another, such as the machine's global pi, for a compatibility check.
+function installedPi(): string | undefined {
+  try {
+    // The package's exports map hides its bin script; it sits beside the resolved entry point.
+    const script = join(dirname(dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")))), "dist/bundle/cli.js");
+    return existsSync(script) ? script : undefined;
+  } catch { return undefined; }
+}
+const piBinary = process.env.PI_TEST_BINARY || installedPi() || "pi";
+// A script runs under this Node. Node cannot spawn npm's Windows .cmd shims without a shell; run the script the shim points at instead.
 function launcher(binary: string): [string, string[]] {
+  if (/\.[cm]?js$/.test(binary)) return [process.execPath, [binary]];
   if (process.platform !== "win32" || /[\\/]/.test(binary)) return [binary, []];
   for (const dir of (process.env.PATH ?? "").split(delimiter)) {
     const shim = join(dir, `${binary}.cmd`);
@@ -158,7 +168,7 @@ async function fixture(t: any, broken = false) {
   await fs.writeFile(join(agent, "models.json"), JSON.stringify({ providers: { "drift-fixture": { baseUrl: `http://127.0.0.1:${port}/v1`, api: "openai-completions", apiKey: "local-placeholder-not-a-credential", models: [{ id: "fixture", contextWindow: 32768, maxTokens: 4096, reasoning: false }, { id: "architecture", contextWindow: 32768, maxTokens: 4096, reasoning: true }] } } }));
   await fs.writeFile(join(agent, "drift-model-profiles.json"), JSON.stringify({ profiles: { architecture: { provider: "drift-fixture", model: "architecture", thinkingLevel: "high" } } }));
   await fs.mkdir(join(agent, "extensions"));
-  await fs.writeFile(join(agent, "extensions/reload-fixture.ts"), `export default function(pi) { pi.registerCommand("fixture-reload", { handler: async (_args, ctx) => { await ctx.reload(); } }); }`);
+  await fs.writeFile(join(agent, "extensions/reload-fixture.ts"), `export default function(pi) { pi.registerCommand("fixture-reload", { handler: async (_args, ctx) => { await ctx.reload(); } }); pi.on("input", (event) => event.text === "FIXTURE_INPUT_PROBE" ? { action: "transform", text: "FIXTURE_INPUT_PROBE transformed by an input handler" } : undefined); }`);
   if (process.platform !== "win32") {
     await fs.mkdir(join(home, ".agents/skills"), { recursive: true });
     await fs.symlink(root, join(home, ".agents/skills/drift"));
@@ -177,10 +187,10 @@ async function fixture(t: any, broken = false) {
   };
   const recordPath = (id: string) => join(agent, "drift", hash(repo).slice(0, 24), `${id}.json`);
   const readRecord = async (id: string) => JSON.parse(await fs.readFile(recordPath(id), "utf8"));
-  // The installed Windows adapter can launch the same resolved Node script as the RPC fixture,
-  // avoiding a shell-less spawn of npm's pi.cmd shim. No real-user session/config environment is inherited.
+  // The installed adapter can launch the same resolved Node script as the RPC fixture (on Windows that also
+  // avoids a shell-less spawn of npm's pi.cmd shim). No real-user session/config environment is inherited.
   const acpEnv = { ...env, PI_ACP_PI_COMMAND: piBinary,
-    ...(process.platform === "win32" && piPrefix.length === 1 ? { PI_ACP_PI_SCRIPT: piPrefix[0] } : {}) };
+    ...(piPrefix.length === 1 ? { PI_ACP_PI_SCRIPT: piPrefix[0] } : {}) };
   return { dir, home, agent, repo, requests, env, acpEnv, clients, rpc, recordPath, readRecord };
 }
 
@@ -954,6 +964,11 @@ function systemText(request: any): string {
   return (request.messages ?? []).filter((message: any) => ["system", "developer"].includes(message.role)).map((message: any) => message.content).join("\n");
 }
 
+function userTexts(response: any): string[] {
+  return (response.messages ?? []).filter((message: any) => message.role === "user").map((message: any) =>
+    typeof message.content === "string" ? message.content : (message.content ?? []).map((part: any) => part.text ?? "").join("\n"));
+}
+
 test("actual Pi binds stale standalone Drift skills without modifying settings or the old checkout", { skip: !piPresent, timeout: 90_000 }, async (t) => {
   const f = await fixture(t);
   const legacy = await legacySkill(f);
@@ -977,15 +992,25 @@ test("actual Pi binds stale standalone Drift skills without modifying settings o
   assert.ok(expanded.includes("Profile-directed handoffs"));
   assert.ok(expanded.includes("execute the plan"));
   assert.ok(!expanded.includes("STALE WORKFLOW MUST NOT REACH INFERENCE"));
-  // Direct RPC queue commands bypass Pi's input hook and expand the stale skill first.
+  // Direct RPC queue commands: Pi before 1.1 expands the stale skill natively, bypassing input handlers; Pi 1.1+
+  // runs input handlers first, so the binding expands the bundled skill before anything is stored, as for a typed
+  // /skill:drift. The fixture extension's probe reports which, so the stored form is asserted exactly either way.
   await client.request({ type: "steer", message: "/skill:drift queued steering" });
   await client.request({ type: "follow_up", message: "/skill:drift queued follow-up" });
+  await client.request({ type: "follow_up", message: "FIXTURE_INPUT_PROBE" });
   await client.prompt("Process the queued instructions");
   assert.ok(!JSON.stringify(f.requests).includes("STALE WORKFLOW MUST NOT REACH INFERENCE"));
   assert.ok(JSON.stringify(f.requests).includes("queued steering"));
   assert.ok(JSON.stringify(f.requests).includes("queued follow-up"));
-  const history = JSON.stringify(await client.request({ type: "get_messages" }));
-  assert.ok(history.includes("STALE WORKFLOW MUST NOT REACH INFERENCE"), "original session history was rewritten");
+  const stored = userTexts(await client.request({ type: "get_messages" }));
+  const hooked = stored.some((text) => text.includes("FIXTURE_INPUT_PROBE transformed"));
+  const queued = (texts: string[]) => texts.filter((text) => /queued (steering|follow-up)$/.test(text));
+  assert.equal(queued(stored).length, 2, JSON.stringify(stored));
+  for (const text of queued(stored)) {
+    // What Pi queued is what stays in history: the bundled expansion when input handlers ran, the stale one when not.
+    assert.ok(text.includes(hooked ? join(root, "skills/drift/SKILL.md") : legacy.path), text.slice(0, 200));
+    assert.equal(text.includes("STALE WORKFLOW MUST NOT REACH INFERENCE"), !hooked, "original session history was rewritten");
+  }
   await client.request({ type: "prompt", message: "/fixture-reload" });
   await client.prompt("Use Drift after reload");
   assertBound(f.requests.at(-1));
@@ -993,6 +1018,7 @@ test("actual Pi binds stale standalone Drift skills without modifying settings o
   client = f.rpc(state.sessionFile);
   await client.prompt("Use Drift after resume");
   assertBound(f.requests.at(-1));
+  assert.deepEqual(queued(userTexts(await client.request({ type: "get_messages" }))), queued(stored), "queued history was rewritten across reload and resume");
   await client.request({ type: "compact", customInstructions: "Preserve the bounded next checkpoint." });
   await client.prompt("Use Drift after compaction");
   assertBound(f.requests.at(-1));

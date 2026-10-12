@@ -52,7 +52,9 @@
     }
   },
   "scripts": {
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "ruff check scripts"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "^1.1.0",

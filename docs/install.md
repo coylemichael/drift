@@ -25,6 +25,13 @@ as `drift_worktree` appears only after `/reload` or a new connection). Remove th
 with `pi remove ~/projects/drift`; this does not remove the checkout, artifacts,
 or session records.
 
+**Keep Pi current where you can.** Drift is developed and tested against the Pi
+version pinned in `package-lock.json` (1.1.0 today). Releases from 0.85.1 still
+pass the suite, but Pi's queued-input and skill handling has changed between
+releases, so an old Pi is the first thing to rule out when something misbehaves.
+For an npm-global Pi: `npm install -g @earendil-works/pi-coding-agent@latest`,
+then `/reload` or a fresh session; `pi --version` shows what is running.
+
 After changing the extension code, reload Pi or open a new Pi adapter connection;
 already-running extensions keep their loaded publisher. Config edits alone need
 no reload.

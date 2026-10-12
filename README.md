@@ -29,6 +29,11 @@ Restart Pi (or `/reload`) after installing or updating the checkout; a running
 extension keeps the tools it loaded. `pi remove ~/projects/drift` uninstalls
 without touching the checkout, artifacts, or session records.
 
+Keep Pi current where you can. Drift is developed and tested against the Pi
+version pinned in `package-lock.json` (1.1.0 today); releases from 0.85.1 still
+pass the suite, but Pi's queued-input and skill handling has changed between
+releases, so an old Pi is the first thing to rule out when something misbehaves.
+
 **Claude Code, including Zed's `claude-acp` agent** — a symlink loads the
 checkout as the `drift` plugin on the next session, with no install step:
 
@@ -247,9 +252,15 @@ usable manually in other agents.
 
 ```sh
 npm test
-python3 scripts/build-index.py /path/to/project/drift --check
+npm run typecheck
+npm run lint
+python3 -I scripts/build-index.py /path/to/project/drift --check
 git diff --check
 ```
+
+CI runs the lint, typecheck and test steps on Ubuntu, macOS and Windows for
+every push and pull request; the real-Pi tests use the Pi version the lockfile
+installs (`PI_TEST_BINARY=pi npm test` runs them against the machine's own).
 
 `npm test` uses temporary repositories and loopback model fixtures. It covers
 record/publication safety and actual Pi RPC lifecycle, model selection, reload,

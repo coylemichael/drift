@@ -155,7 +155,7 @@ def grade(repo, names, citation, expected_text, expected_hash, resolved):
     current = range_text(lines, citation["start"], citation["end"])
     if current is not None and anchor_hash(current) == expected_hash:
         return {"verdict": "fresh"}
-    needle = max(expected_text.split("\n"), key=lambda l: len(l.strip())) if expected_text else None
+    needle = max(expected_text.split("\n"), key=lambda line: len(line.strip())) if expected_text else None
     if needle:
         moved = locate_moved(repo, names, resolved, needle.strip(), size, expected_hash)
         if moved:
