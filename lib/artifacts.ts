@@ -269,6 +269,20 @@ export async function syncIndex(repo: string, interpreter?: string): Promise<boo
   });
 }
 
+/** Whether the repository's artifact store already holds any Drift artifact: a deterministic salience signal, not policy. */
+export async function hasArtifacts(repo: string): Promise<boolean> {
+  const { root } = await artifactStore(repo);
+  const drift = join(root, "drift");
+  const features = await fs.readdir(drift, { withFileTypes: true }).catch(() => null);
+  if (!features) return false;
+  for (const feature of features) {
+    if (!feature.isDirectory()) continue;
+    const names = await fs.readdir(join(drift, feature.name)).catch(() => [] as string[]);
+    if (names.some((name) => artifactPathPattern.test(`drift/${feature.name}/${name}`))) return true;
+  }
+  return false;
+}
+
 const sequenceOf = (name: string) => /^(\d{3})-.*\.md$/.exec(basename(name))?.[1];
 
 /** Sequence numbers a feature already uses on any remote-tracking ref, as of the last fetch. No network. */

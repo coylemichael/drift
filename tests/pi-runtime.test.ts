@@ -120,7 +120,9 @@ async function fixture(t: any, broken = false) {
     if (requests.length > 40) { response.writeHead(500); response.end("Fixture request limit"); return; }
     const messages = payload.messages ?? [];
     const text = (message: any) => typeof message.content === "string" ? message.content : (message.content ?? []).map((part: any) => part.text ?? "").join("\n");
-    const user = messages.findLastIndex((message: any) => message.role === "user" && !text(message).includes("Drift lifecycle is managed by the Pi extension"));
+    // Lifecycle context arrives as an injected user-role message on every tier; it is never the scripted marker.
+    const lifecycle = (value: string) => value.includes("Drift lifecycle is managed by the Pi extension") || value.includes("Drift is recording this session silently") || value.includes("Drift is inactive:");
+    const user = messages.findLastIndex((message: any) => message.role === "user" && !lifecycle(text(message)));
     const marker = user >= 0 ? text(messages[user]) : "";
     const chainArtifact = /^Continue the work recorded.*`drift\/runtime\/(\d+)-handoff-chain\.md`/.exec(marker);
     const chainStep = marker === "PUBLISH_CHAIN" ? 1 : chainArtifact ? Number(chainArtifact[1]) + 1 : 0;
@@ -194,10 +196,14 @@ test("actual Pi RPC: discovery, pre-inference record, context, resume/reload, co
   await client.prompt("hello");
   const first = JSON.stringify(f.requests[0]);
   assert.ok(first.includes("drift_publish")); assert.ok(first.includes(initial.intervalId));
-  assert.ok(first.includes("Drift lifecycle is managed by the Pi extension"));
+  // A fresh repository with no Drift investment starts on the quiet salience tier.
+  assert.ok(first.includes("Drift is recording this session silently"), first);
+  assert.ok(!first.includes("Drift lifecycle is managed by the Pi extension"));
   await fs.writeFile(join(f.repo, "file.txt"), "modified\n");
   await client.prompt("another turn " + "padding ".repeat(1500));
   await until(async () => (await f.readRecord(state.sessionId)).checkpoint?.files.includes("file.txt"), "checkpoint missing");
+  // The first non-drift change engages the record; the full lifecycle context follows.
+  await until(async () => (await f.readRecord(state.sessionId)).engaged, "work did not engage the record");
   await client.stop();
   client = f.rpc(state.sessionFile);
   assert.equal((await client.request({ type: "get_state" })).sessionId, state.sessionId);
@@ -209,6 +215,7 @@ test("actual Pi RPC: discovery, pre-inference record, context, resume/reload, co
   await client.request({ type: "compact", customInstructions: "Summarize this synthetic fixture." });
   await client.prompt("after compaction");
   assert.ok(JSON.stringify(f.requests.at(-1)).includes(initial.intervalId));
+  assert.ok(JSON.stringify(f.requests.at(-1)).includes("Drift lifecycle is managed by the Pi extension"));
   await client.prompt("PUBLISH_RESEARCH");
   const researched = await f.readRecord(state.sessionId);
   assert.equal(researched.completed, undefined);
@@ -246,6 +253,27 @@ test("actual Pi RPC: discovery, pre-inference record, context, resume/reload, co
   await assert.rejects(client.request({ type: "compact" }), /Compaction cancelled/);
   assert.equal(f.requests.length, requestCount);
   assert.equal(await fs.readFile(f.recordPath(fork.sessionId), "utf8"), "{}");
+});
+
+test("actual Pi attaches Drift quietly when a repository appears in the launch directory after start", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+  const f = await fixture(t);
+  const late = join(f.dir, "late");
+  await fs.mkdir(late);
+  const client = new Client(piCommand, [...piPrefix, "--mode", "rpc", "--offline", "--no-context-files"], late, f.env);
+  f.clients.push(client);
+  const state = await client.request({ type: "get_state" });
+  await client.prompt("hello before any repository exists");
+  assert.ok(JSON.stringify(f.requests.at(-1)).includes("Drift is inactive:"), client.stderr);
+  await git(late, ["init", "-q"]); await git(late, ["config", "user.name", "Drift runtime"]); await git(late, ["config", "user.email", "drift@example.invalid"]);
+  await fs.writeFile(join(late, "cloned.txt"), "late clone\n");
+  await git(late, ["add", "."]); await git(late, ["-c", "commit.gpgsign=false", "commit", "-qm", "late fixture"]);
+  await client.prompt("hello after the clone");
+  const request = JSON.stringify(f.requests.at(-1));
+  assert.ok(request.includes("Drift is recording this session silently"), request);
+  assert.ok(!request.includes("Drift lifecycle is managed by the Pi extension"), request);
+  const record = JSON.parse(await fs.readFile(join(f.agent, "drift", hash(late).slice(0, 24), `${state.sessionId}.json`), "utf8"));
+  assert.equal(record.engaged, undefined);
+  assert.deepEqual(record.baseline, {});
 });
 
 test("actual Pi publishes repo-opted-in tracked artifacts without changing ignores or staging", { skip: !piPresent, timeout: 60_000 }, async (t) => {

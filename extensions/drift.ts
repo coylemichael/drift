@@ -2,11 +2,11 @@ import { CONFIG_DIR_NAME, getAgentDir, type ExtensionAPI, type ExtensionContext 
 import { join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { ensureIndexAttribute, publish, setArtifactTracking, syncIndex, trackArtifacts, type TrackingRequest } from "../lib/artifacts.ts";
+import { ensureIndexAttribute, hasArtifacts, publish, setArtifactTracking, syncIndex, trackArtifacts, type TrackingRequest } from "../lib/artifacts.ts";
 import { changelogState, sections, setChangelog, syncChangelog, type ChangelogRequest, type ChangelogSync } from "../lib/changelog.ts";
 import { attributeFor, changelogDriver, changelogDriverCommand, indexDriver, indexDriverCommand, installDriver } from "../lib/git-drivers.ts";
 import { describeLanding, land } from "../lib/land.ts";
-import { artifactStore, driftConfig, git, hasOrigin, Records, setAutoContinue, WorktreeScopeError, type AutoContinueRequest } from "../lib/state.ts";
+import { artifactStore, driftConfig, exists, git, hasOrigin, Records, setAutoContinue, WorktreeScopeError, type AutoContinueRequest } from "../lib/state.ts";
 import { citationNote, pickup } from "../lib/pickup.ts";
 
 // The citation usefulness ledger: one JSONL line per checked pickup, in the agent dir, never a repo.
@@ -21,6 +21,7 @@ export default function drift(pi: ExtensionAPI) {
   pi.on("input", async (event, ctx) => {
     const match = /^\/drift(?:\s+([\s\S]*))?$/.exec(event.text.trim());
     if (!match) return { action: "continue" };
+    engageExplicit(ctx, "user ran /drift");
     try {
       const { text, artifact } = await exclusive(async () => pickup(await activeRepo(ctx), match[1] ?? "", citationLedger()));
       if (artifact) ctx.ui.notify(`Drift: picking up ${artifact}`, "info");
@@ -33,6 +34,7 @@ export default function drift(pi: ExtensionAPI) {
   registerSkillBinding(pi);
   let key = "";
   let ready: Promise<Records | undefined> | undefined;
+  let probedEmpty = false;
   let failure: string | undefined;
   let pendingContinuationPath: string | undefined;
   let continuationQueued = false;
@@ -52,11 +54,13 @@ export default function drift(pi: ExtensionAPI) {
   function store(ctx: ExtensionContext): Promise<Records | undefined> {
     const identity = `${ctx.cwd}\0${ctx.sessionManager.getSessionId()}`;
     if (identity !== key || !ready) {
+      const attaching = identity === key && probedEmpty;
       key = identity;
+      probedEmpty = false;
       failure = reported = uiReported = scopeReported = undefined;
       pendingContinuationPath = undefined;
       continuationQueued = false;
-      ready = (async () => {
+      const probe: Promise<Records | undefined> = (async () => {
         // A new record measures after derived-file refresh. On resume refresh ONLY its persisted active root,
         // not the launch checkout, which may belong to the orchestrator by now.
         let prepared = false;
@@ -71,11 +75,20 @@ export default function drift(pi: ExtensionAPI) {
             reportScope(error, ctx);
           }
         }
+        if (records) {
+          await attachSignals(records);
+          if (attaching) ctx.ui.notify(`Drift attached to ${records.repo}; recording silently`, "info");
+        } else {
+          probedEmpty = true;
+        }
         return records;
       })().catch((error) => {
         failure = errorText(error);
         throw error;
       });
+      ready = probe;
+      // A launch directory with no repository is re-probed on later calls: a clone may create one mid-session.
+      probe.then((records) => { if (!records && ready === probe) ready = undefined; }, () => {});
     }
     return ready;
   }
@@ -88,6 +101,33 @@ export default function drift(pi: ExtensionAPI) {
     if (scopeReported === error.message) return;
     scopeReported = error.message;
     ctx.ui.notify(`${error.message}. Drift will not fall back to the launch checkout. Use drift_worktree status/adopt (or /drift-worktree) to select an existing worktree of this repository. Records are retained; independent investigation can continue.`, "warning");
+  }
+
+  /** Attach-time salience: engage when the repository or this session already shows Drift investment. Never blocks recording. */
+  async function attachSignals(records: Records) {
+    try {
+      const record = await records.read();
+      if (record.engaged) return;
+      if (record.receipts.length || record.completed || record.history?.length) { await records.engage("resumed interval with prior Drift activity"); return; }
+      const repo = await records.effectiveRepo(record).catch(() => records.repo);
+      if (await exists(join(repo, ".drift.json"))) { await records.engage("repository has .drift.json"); return; }
+      if (await hasArtifacts(repo)) { await records.engage("artifact store already holds artifacts"); return; }
+      if (await records.engagedElsewhere()) await records.engage("another session engaged this repository");
+    } catch { /* salience must never block recording */ }
+  }
+
+  /** Work-based salience: the first non-drift file change or commit since the measured baseline engages the record. */
+  async function engageOnWork(records: Records) {
+    const record = await records.read();
+    if (record.engaged || !record.checkpoint) return;
+    if (record.checkpoint.files.some((name) => !name.startsWith("drift/")) || record.checkpoint.commits.length) {
+      await records.engage("working tree diverged from the measured baseline");
+    }
+  }
+
+  /** Explicit Drift use is an engagement signal; it must never block or delay the invocation that caused it. */
+  function engageExplicit(ctx: ExtensionContext, reason: string) {
+    void (async () => { await (await store(ctx))?.engage(reason); })().catch(() => {});
   }
 
   /** A stale index degrades navigation only; it never blocks the record or the session. */
@@ -150,7 +190,14 @@ export default function drift(pi: ExtensionAPI) {
   }
 
   async function checkpoint(reason: string, ctx: ExtensionContext) {
-    try { await exclusive(async () => (await store(ctx))?.checkpoint(reason)); }
+    try {
+      await exclusive(async () => {
+        const records = await store(ctx);
+        if (!records) return;
+        await records.checkpoint(reason);
+        await engageOnWork(records);
+      });
+    }
     catch (error) {
       if (error instanceof WorktreeScopeError) reportScope(error, ctx);
       else { failure = errorText(error); report(failure, ctx); }
@@ -180,13 +227,14 @@ export default function drift(pi: ExtensionAPI) {
 
   async function worktreeAction(action: "status" | "adopt", path: string | undefined, ctx: ExtensionContext): Promise<string> {
     const records = await store(ctx);
-    if (!records) throw new Error("Worktree adoption requires Pi's launch directory to be inside a Git repository");
+    if (!records) throw new Error(`Drift found no Git repository at Pi's launch directory (${ctx.cwd}). If a repository was created or cloned here after launch, retry this call; Drift re-probes on each use.`);
     if (failure) throw new Error(failure);
     let changed = false;
     if (action === "adopt") {
       if (!path?.trim()) throw new Error("Provide the existing worktree root in path; relative paths resolve from Pi's fixed cwd");
       if (pendingContinuationPath) throw new Error(`Continuation queued for ${pendingContinuationPath}; finish it before switching worktrees`);
       changed = await records.adopt(resolve(ctx.cwd, path.trim()), (repo) => refreshIndex(repo, ctx));
+      await records.engage("worktree adoption");
       scopeReported = undefined;
     } else if (path !== undefined) throw new Error("status takes no path; use action: adopt to change Drift's worktree");
     return `${action === "adopt" ? (changed ? "Adopted worktree; earlier measurements preserved, fresh interval measured. No handoff was published.\n" : "Already using this worktree; no interval changed.\n") : ""}${await worktreeStatus(records, ctx)}`;
@@ -254,6 +302,7 @@ export default function drift(pi: ExtensionAPI) {
       try {
         const request = args.trim().toLowerCase() || "status"; // A bare command is safe: it only reports.
         if (!trackingRequests.includes(request as any)) throw new Error("Usage: /drift-track-artifacts on|off|status (no argument shows status)");
+        engageExplicit(ctx, "user ran /drift-track-artifacts");
         await exclusive(async () => {
           const repo = await activeRepo(ctx);
           if (!repo) throw new Error("/drift-track-artifacts requires an active Drift worktree");
@@ -274,6 +323,7 @@ export default function drift(pi: ExtensionAPI) {
       try {
         const request = args.trim().toLowerCase() || "status"; // A bare command is safe: it only reports.
         if (!changelogRequests.includes(request as any)) throw new Error("Usage: /drift-changelog on|off|status (no argument shows status)");
+        engageExplicit(ctx, "user ran /drift-changelog");
         await exclusive(async () => {
           const repo = await activeRepo(ctx);
           if (!repo) throw new Error("/drift-changelog requires an active Drift worktree");
@@ -294,6 +344,7 @@ export default function drift(pi: ExtensionAPI) {
       try {
         const request = args.trim().toLowerCase() || "status"; // A bare command is safe: it only reports.
         if (!continueRequests.includes(request as any)) throw new Error("Usage: /drift-auto-continue on|off|status (no argument shows status)");
+        engageExplicit(ctx, "user ran /drift-auto-continue");
         await exclusive(async () => {
           const repo = await activeRepo(ctx);
           if (!repo) throw new Error("/drift-auto-continue requires an active Drift worktree");
@@ -314,7 +365,7 @@ export default function drift(pi: ExtensionAPI) {
           const records = await store(ctx);
           const repo = await records?.effectiveRepo();
           if (!repo) throw new Error("/drift-land requires an active Drift worktree");
-          ctx.ui.notify(describeLanding(await land(repo, { records })), "info");
+          await records!.engage("user ran /drift-land");
         });
       } catch (error) {
         ctx.ui.notify(`Not landed: ${errorText(error)}`, "error");
@@ -326,6 +377,7 @@ export default function drift(pi: ExtensionAPI) {
   pi.on("input", async (event, ctx) => {
     const match = /^drift-continue(?:\s+([\s\S]*))?$/.exec(event.text.trim());
     if (!match) return { action: "continue" };
+    engageExplicit(ctx, "user ran drift-continue");
     await exclusive(() => continueHandoff(match[1] ?? "", ctx));
     return { action: "handled" };
   });
@@ -348,18 +400,24 @@ export default function drift(pi: ExtensionAPI) {
     try {
       const records = await store(ctx);
       if (failure) throw new Error(failure);
-      content = records ? await records.context() :
-        "Drift automation is inactive: Pi's working directory is not inside a Git repository. Do not guess a nested repository or claim a measured baseline. Open the intended repo to use drift_publish; portable skill instructions remain available.";
-      // The model learns whether to pass a changelog entry from context, not by trying and being refused.
-      if (records) {
-        content += `\nPi working directory (unchanged): ${ctx.cwd}. Before work in an assigned linked worktree, call drift_worktree adopt with its root as a separate tool call. Do not hand-write managed artifacts to bypass a destination or policy mismatch.`;
-        try {
-          const repo = await records.effectiveRepo();
-          if ((await changelogState(repo)).enabled) content += "\nChangelog: CHANGELOG.md is generated from changelog.d/ here. Pass changelog: { section, text } to drift_publish for a user-visible change; never edit the generated region of CHANGELOG.md.";
-        } catch (error) {
-          if (!(error instanceof WorktreeScopeError)) throw error;
-          content += "\nPublication and measurement are blocked, not independent investigation. Use drift_worktree status/adopt for explicit recovery; no fallback to main.";
-          reportScope(error, ctx);
+      if (!records) {
+        content = "Drift is inactive: Pi's working directory is not inside a Git repository. No action is needed; do not guess a nested repository or claim a measured baseline. Drift attaches automatically if a repository appears here; portable skill instructions remain available.";
+      } else {
+        const record = await records.read();
+        if (!record.engaged && !record.pending && !record.completed) {
+          content = await records.contextQuiet();
+        } else {
+          content = await records.context();
+          // The model learns whether to pass a changelog entry from context, not by trying and being refused.
+          content += `\nPi working directory (unchanged): ${ctx.cwd}. Before work in an assigned linked worktree, call drift_worktree adopt with its root as a separate tool call. Do not hand-write managed artifacts to bypass a destination or policy mismatch.`;
+          try {
+            const repo = await records.effectiveRepo();
+            if ((await changelogState(repo)).enabled) content += "\nChangelog: CHANGELOG.md is generated from changelog.d/ here. Pass changelog: { section, text } to drift_publish for a user-visible change; never edit the generated region of CHANGELOG.md.";
+          } catch (error) {
+            if (!(error instanceof WorktreeScopeError)) throw error;
+            content += "\nPublication and measurement are blocked, not independent investigation. Use drift_worktree status/adopt for explicit recovery; no fallback to main.";
+            reportScope(error, ctx);
+          }
         }
       }
     } catch (error) {
@@ -369,6 +427,9 @@ export default function drift(pi: ExtensionAPI) {
       ctx.abort();
       content = `Drift recording failed: ${failure}. Do not claim a valid record or publish artifacts. Fix the cause and reload.`;
     }
+    // An unchanged context keeps its place and timestamp; replacing it every turn would present old bookkeeping as news.
+    const previous = event.messages.find((message) => message.role === "custom" && message.customType === "drift-context");
+    if (previous?.role === "custom" && previous.content === content) return;
     return {
       messages: [
         ...event.messages.filter((message) => !(message.role === "custom" && message.customType === "drift-context")),
@@ -437,6 +498,7 @@ export default function drift(pi: ExtensionAPI) {
     description: "Show Drift's active worktree, or adopt an existing worktree of this repository (Pi's cwd stays unchanged)",
     handler: async (args, ctx) => {
       const path = args.trim();
+      engageExplicit(ctx, "user ran /drift-worktree");
       try { ctx.ui.notify(await exclusive(() => worktreeAction(!path || path === "status" ? "status" : "adopt", !path || path === "status" ? undefined : path, ctx)), "info"); }
       catch (error) { ctx.ui.notify(errorText(error), "error"); }
     },
@@ -486,6 +548,7 @@ export default function drift(pi: ExtensionAPI) {
         const records = await store(ctx);
         if (failure) throw new Error(failure);
         if (!records) throw new Error("drift_publish requires Pi's cwd to be inside the target Git repository");
+        await records.engage("drift_publish");
         // Finish an entered publication even if inference is cancelled: leave a receipt or retryable intent.
         const repo = await records.effectiveRepo();
         const receipt = await publish(records, params);

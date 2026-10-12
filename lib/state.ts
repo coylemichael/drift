@@ -58,6 +58,8 @@ export interface RecordData {
   worktreeIdentity?: string;
   /** Exited intervals preserved across explicit worktree adoption. Flat; snapshots hold no history. */
   history?: IntervalSnapshot[];
+  /** First deterministic engagement signal; once set it never clears. Salience only — recording is unconditional. */
+  engaged?: { at: string; reason: string };
 }
 
 /** A recoverable scope failure: the adopted (or requested) worktree is unavailable or not this repository's. */
@@ -81,6 +83,8 @@ function validInterval(r: any): boolean {
     (r.previousHandoff === undefined || typeof r.previousHandoff === "string") &&
     (r.completed === undefined || (validReceipt(r.completed) && r.completed.kind === "handoff" && r.receipts.some((item: Receipt) => item.digest === r.completed.digest)));
 }
+const validEngagement = (value: any) => Boolean(value) && typeof value === "object" && !Array.isArray(value) &&
+  Object.keys(value).length === 2 && typeof value.at === "string" && !Number.isNaN(Date.parse(value.at)) && typeof value.reason === "string";
 const validRoot = (value: unknown) => typeof value === "string" && isAbsolute(value) && resolve(value) === value;
 const validIdentity = (value: unknown) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const snapshotKeys = new Set(["intervalId", "started", "startBranch", "startCommit", "baseline", "checkpoint", "receipts", "completed", "previousHandoff", "worktree", "worktreeIdentity", "exited", "reason", "checkpointError"]);
@@ -456,6 +460,7 @@ export class Records {
     if (!r || typeof r !== "object" || ![1, 2].includes(r.version) || r.repo !== this.repo || r.sessionId !== this.sessionId || !validInterval(r) ||
         (r.version === 1 && (r.worktree !== undefined || r.worktreeIdentity !== undefined || r.history !== undefined)) ||
         (r.pending !== undefined && (!validReceipt(r.pending) || typeof r.pending.content !== "string" || hash(r.pending.content) !== r.pending.sha256)) ||
+        (r.engaged !== undefined && !validEngagement(r.engaged)) ||
         (r.worktree !== undefined && !validRoot(r.worktree)) ||
         (r.worktree === undefined ? r.worktreeIdentity !== undefined : !validIdentity(r.worktreeIdentity)) ||
         (r.history !== undefined && (!Array.isArray(r.history) || !r.history.every(validSnapshot)))) {
@@ -524,6 +529,7 @@ export class Records {
         next.worktreeIdentity = record.worktreeIdentity;
       }
       if (record.history !== undefined) next.history = record.history;
+      if (record.engaged !== undefined) next.engaged = record.engaged;
       await this.save(next);
     });
   }
@@ -547,7 +553,7 @@ export class Records {
       if (record.pending) throw new Error(`Incomplete publication ${record.pending.path}; retry the SAME drift_publish input before switching worktrees`);
       await driftConfig(root); // A target with invalid configuration is refused before anything changes.
       if (previous && !record.completed) await this.capture(record, "adopt", previous);
-      const { version, repo, sessionId, worktree, history, pending, ...interval } = record;
+      const { version, repo, sessionId, worktree, history, pending, engaged, ...interval } = record;
       const snapshot: IntervalSnapshot = {
         ...interval, worktree: worktree ?? this.repo, exited: now(), reason: "adopt",
         ...(checkpointError && !record.completed ? { checkpointError: `Final capture impossible; previous checkpoint kept. ${checkpointError}` } : {}),
@@ -561,6 +567,7 @@ export class Records {
         next.worktreeIdentity = await worktreeIdentity(root);
       }
       next.history = [...(history ?? []), snapshot];
+      if (engaged !== undefined) next.engaged = engaged;
       await this.save(next);
       return true;
     });
@@ -585,6 +592,42 @@ export class Records {
       await this.capture(record, reason);
       await this.save(record);
     });
+  }
+
+  /** Record the first deterministic engagement signal; hysteresis means it never clears. Returns true when newly set. */
+  async engage(reason: string): Promise<boolean> {
+    return this.update(async (record) => {
+      if (record.engaged) return false;
+      record.engaged = { at: now(), reason };
+      await this.save(record);
+      return true;
+    });
+  }
+
+  /** Whether another session's record for this repository shows engagement or published work. A read-only scan; every
+   * session writes a record unconditionally, so bare siblings (tourist sessions) are deliberately no signal. */
+  async engagedElsewhere(): Promise<boolean> {
+    let names: string[];
+    try { names = await fs.readdir(this.root); } catch { return false; }
+    for (const name of names) {
+      if (!name.endsWith(".json") || name === basename(this.file)) continue;
+      try {
+        const r = JSON.parse(await fs.readFile(join(this.root, name), "utf8"));
+        if (r && typeof r === "object" && (r.engaged !== undefined || r.completed !== undefined ||
+            (Array.isArray(r.receipts) && r.receipts.length > 0) || (Array.isArray(r.history) && r.history.length > 0))) return true;
+      } catch { /* an unreadable sibling is no signal */ }
+    }
+    return false;
+  }
+
+  /** The quiet salience tier: recording continues, but nothing shows this session needs Drift's full guidance. */
+  async contextQuiet(): Promise<string> {
+    const record = await this.read();
+    return [
+      "Drift is recording this session silently. This is bookkeeping, not a task: no action is needed and nothing is expected of you.",
+      `Drift record: ${this.file}; repository: ${this.repo}; work interval: ${record.intervalId}.`,
+      "Full lifecycle context appears when work lands in the repository or Drift is used explicitly. drift_publish and drift_worktree remain available; read the Drift skill before publishing.",
+    ].join("\n");
   }
 
   async context(): Promise<string> {

@@ -10,7 +10,7 @@ import { changelogState, END, START, setChangelog, syncChangelog } from "../lib/
 import { describeLanding, land, LandHalt, landingGuard } from "../lib/land.ts";
 import { pickup } from "../lib/pickup.ts";
 import { attributeFor, hasAttribute, indexDriverCommand, installDriver } from "../lib/git-drivers.ts";
-import { ensureIndexAttribute, publish, setArtifactTracking, syncIndex } from "../lib/artifacts.ts";
+import { ensureIndexAttribute, hasArtifacts, publish, setArtifactTracking, syncIndex } from "../lib/artifacts.ts";
 import type { ArtifactInput } from "../lib/artifacts.ts";
 import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
 
@@ -70,6 +70,52 @@ test("durable open is idempotent; completed intervals only rotate on a new worki
   assert.equal(next.completed, undefined);
   // Publication added .gitignore; it is inherited by the subsequent work interval too.
   assert.deepEqual(Object.keys(next.baseline), [".gitignore", "file.txt", "inherited.txt"]);
+});
+
+test("engagement is hysteretic, validated, and carried across rotation and adoption", async (t) => {
+  const { dir, repo, agent } = await fixture(t);
+  const a = (await Records.open(repo, "session-a", agent))!;
+  const b = (await Records.open(repo, "session-b", agent))!;
+  // A bare sibling record is a tourist session, not a signal; engagement elsewhere is one.
+  assert.equal((await a.read()).engaged, undefined);
+  assert.equal(await a.engagedElsewhere(), false);
+  assert.equal(await a.engage("first signal"), true);
+  assert.equal(await a.engage("second signal"), false);
+  const engaged = (await a.read()).engaged!;
+  assert.equal(engaged.reason, "first signal");
+  assert.match(engaged.at, /[+-]\d\d:\d\d$/);
+  assert.equal(await b.engagedElsewhere(), true);
+  assert.equal(await a.engagedElsewhere(), false);
+  // A completed handoff rotates the interval on the next working turn; engagement survives the rotation.
+  await publish(a, input);
+  await a.beginTurn();
+  const rotated = await a.read();
+  assert.equal(rotated.completed, undefined);
+  assert.deepEqual(rotated.engaged, engaged);
+  // Explicit adoption archives the interval without leaking engagement into the snapshot, and carries it forward.
+  const target = join(dir, "wt");
+  await git(repo, ["worktree", "add", "-q", "-b", "feature", target]);
+  await a.adopt(await fs.realpath(target));
+  const adopted = await a.read();
+  assert.deepEqual(adopted.engaged, engaged);
+  assert.equal(adopted.history!.length, 1);
+  assert.ok(!("engaged" in adopted.history![0]));
+  // A fabricated engagement value is refused rather than misread.
+  const raw = JSON.parse(await fs.readFile(a.file, "utf8"));
+  raw.engaged = { at: "around lunchtime", reason: "estimated" };
+  await fs.writeFile(a.file, JSON.stringify(raw) + "\n");
+  await assert.rejects(a.read(), /Invalid or mismatched Drift record/);
+});
+
+test("hasArtifacts detects only conventional artifacts in the store", async (t) => {
+  const { repo } = await fixture(t);
+  assert.equal(await hasArtifacts(repo), false);
+  await fs.mkdir(join(repo, "drift/notes"), { recursive: true });
+  await fs.writeFile(join(repo, "drift/INDEX.md"), "placeholder\n");
+  await fs.writeFile(join(repo, "drift/notes/scratch.md"), "not an artifact\n");
+  assert.equal(await hasArtifacts(repo), false);
+  await fs.writeFile(join(repo, "drift/notes/001-research-topic.md"), "## Research Question\nFixture.\n");
+  assert.equal(await hasArtifacts(repo), true);
 });
 
 test("distinct Pi sessions and fork identities never adopt or complete another record", async (t) => {

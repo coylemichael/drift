@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Drift's model-facing context is now tiered: a session records silently behind a minimal note until a deterministic signal (existing artifacts, .drift.json, another engaged session, work landing in the tree, or explicit Drift use) engages the full lifecycle context; an unchanged context keeps its place instead of re-arriving every turn; and Drift attaches automatically when a repository appears in the launch directory after session start (for example, cloning into an empty folder). <!-- changelog.d/salience-tiers-002-tiers-implemented-and-verified.md 2026-10-12T11:35:58+01:00 -->
 - README restructured: reference detail moved to focused docs/ pages (install, artifact Git policy, changelog, citation anchors, landing, worktrees, continuation); the front page keeps the diagrams, summaries and a linked command table. <!-- changelog.d/readme-restructure-001-prose-split-into-docs-pages.md 2026-10-11T14:53:42+01:00 -->
 - Automatic continuation after a profiled handoff is now a per-repository opt-in: `/drift-auto-continue on` records `autoContinue: true` in `.drift.json`. By default the handoff is only published (and still lands itself where `land.auto` is set); the tool result names the `drift-continue` command so you decide if and when the work continues, and in which thread. <!-- changelog.d/auto-continue-001-manual-default-and-switch.md 2026-10-11T13:09:36+01:00 -->
 

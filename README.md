@@ -229,13 +229,19 @@ pick-up rule from `SKILL.md` when you ask to "pick up" without naming an artifac
 - Measured start metadata and dirty-file fingerprints that survive reload,
   resume, and compaction.
 - Bounded Drift context on normal model requests and checkpoints after settled
-  turns or graceful teardown.
+  turns or graceful teardown. The context is tiered: a session records silently
+  behind a minimal note until a deterministic signal — existing artifacts,
+  `.drift.json`, another engaged session, work landing in the tree, or explicit
+  Drift use — engages the full lifecycle context. An unchanged context keeps its
+  place in the conversation instead of re-arriving every turn.
 - `drift_publish`, which validates artifact paths, writes measured frontmatter,
   allocates numbers, rebuilds the index, and retains retryable receipts.
 
 A published handoff completes only its current work interval. Pi conversation
 logs and session records are never deleted by Drift. The extension is inactive
-outside Git; the skill remains usable manually in other agents.
+outside Git but attaches automatically when a repository appears at the launch
+directory (for example, after cloning into an empty folder); the skill remains
+usable manually in other agents.
 
 ## Development
 
