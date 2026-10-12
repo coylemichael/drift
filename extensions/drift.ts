@@ -141,14 +141,21 @@ export default function drift(pi: ExtensionAPI) {
       storesReported.add(repo);
       if (await syncIndex(repo)) ctx.ui.notify("Drift rebuilt drift/INDEX.md from the repository's artifacts", "info");
       await installIndexDriver(repo, ctx);
+    } catch (error) {
+      const content = `Drift could not refresh drift/INDEX.md: ${errorText(error)}\nRecording continues; the index is rebuilt on the next publication or session.`;
+      pi.sendMessage({ customType: "drift-index", content, display: true });
+      if (ctx.mode === "rpc") ctx.ui.notify(content, "warning");
+    }
+    // The changelog is a separate derived file; its failure must not read as an index failure.
+    try {
       const changelog = await syncChangelog(repo);
-      if (changelog.adopted) ctx.ui.notify(`Drift now generates this repository's CHANGELOG.md from changelog.d/ (it has an origin remote): ${changelog.adopted.join("; ")}. Commit those with your next change, or set "changelog": false in .drift.json to keep it hand-written.`, "info");
+      if (changelog.adopted) ctx.ui.notify(`Drift set up CHANGELOG.md generation from changelog.d/ because .drift.json turns it on: ${changelog.adopted.join("; ")}. Nothing was staged or committed.`, "info");
       if (changelog.status === "written") ctx.ui.notify("Drift regenerated CHANGELOG.md from changelog.d/", "info");
       else if (changelog.status === "unrecognised") ctx.ui.notify(`Drift did not regenerate CHANGELOG.md: ${changelog.detail}`, "warning");
       await installChangelogDriver(repo, ctx);
     } catch (error) {
-      const content = `Drift could not refresh drift/INDEX.md: ${errorText(error)}\nRecording continues; the index is rebuilt on the next publication or session.`;
-      pi.sendMessage({ customType: "drift-index", content, display: true });
+      const content = `Drift could not regenerate CHANGELOG.md: ${errorText(error)}\nRecording and the index are unaffected; set "changelog": false in .drift.json if this repository keeps its changelog another way.`;
+      pi.sendMessage({ customType: "drift-changelog", content, display: true });
       if (ctx.mode === "rpc") ctx.ui.notify(content, "warning");
     }
   }
@@ -319,7 +326,7 @@ export default function drift(pi: ExtensionAPI) {
   // The user's choice to generate CHANGELOG.md from fragments. A command, never a model turn.
   const changelogRequests = ["on", "off", "status"] as const;
   pi.registerCommand("drift-changelog", {
-    description: "Override whether CHANGELOG.md is generated from changelog.d/ (automatic with an origin remote): on, off or status",
+    description: "Whether CHANGELOG.md is generated from changelog.d/ (never adopted without this or a committed adoption): on, off or status",
     getArgumentCompletions: (prefix) => changelogRequests.filter((value) => value.startsWith(prefix.trim())).map((value) => ({ value, label: value })),
     handler: async (args, ctx) => {
       try {

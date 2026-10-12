@@ -174,7 +174,7 @@ export function mainWorktree(repo: string): Promise<string | undefined> {
 /** Repository-root `.drift.json`, validated. Every field is an explicit, host-neutral project choice; nothing is inferred. */
 export interface DriftConfig {
   trackArtifacts: boolean;
-  /** `auto`: on when the repo has an origin remote and a CHANGELOG.md. `on`/`off`: the repo's explicit override. */
+  /** `auto`: on only where the committed CHANGELOG.md carries Drift's markers; never adopts. `on`/`off`: the repo's explicit override. */
   changelog: { mode: "auto" | "on" | "off"; tags: string };
   /** Whether publishing a profiled handoff compacts and continues in a fresh context window itself. Off unless the repo opts in. */
   autoContinue: boolean;

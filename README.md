@@ -63,7 +63,7 @@ command (or `status`) only reports.
 | `drift-continue <handoff>` | Continues a published handoff, switching to its declared `next_session_profile` before inference. Bare on purpose — no leading slash — so hosts that reserve `/` pass it through; run it in a fresh thread. ([details](docs/continuation.md)) |
 | `/drift-worktree [status \| <path>]` | Shows the launch repo, active Drift root and record, or adopts an existing linked worktree of the same repository. ([details](docs/worktrees.md)) |
 | `/drift-track-artifacts on\|off\|status` | Whether this repo's `drift/` artifacts are committed to Git or stay private (ignored). ([details](docs/artifact-git-policy.md)) |
-| `/drift-changelog on\|off\|status` | Whether `CHANGELOG.md` is generated from `changelog.d/` fragments (automatic with an origin remote and a changelog). ([details](docs/changelog.md)) |
+| `/drift-changelog on\|off\|status` | Whether `CHANGELOG.md` is generated from `changelog.d/` fragments (never automatic: on where a committed `CHANGELOG.md` carries Drift's markers or `.drift.json` turns it on). ([details](docs/changelog.md)) |
 | `/drift-auto-continue on\|off\|status` | Whether publishing a profiled handoff automatically compacts and continues in a fresh context window. Off by default: you decide if a handoff goes into a new thread. ([details](docs/continuation.md)) |
 | `/drift-land` | Lands the current branch on origin's default branch: fetch, rebase, verify, check, push; never squash or force. ([details](docs/landing.md)) |
 

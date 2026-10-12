@@ -439,14 +439,24 @@ test("actual Pi lands a completed interval itself where the repo opts in, then c
   assert.ok(!f.requests.slice(requestsBefore).some((request) => JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + secondRecord.completed.path + "`")), "a held landing must not continue");
 });
 
-test("actual Pi adopts a shared repository's changelog at session start and publishes fragments without a command", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+test("actual Pi leaves a fresh shared clone's changelog untouched and publishes fragments once the adoption is committed", { skip: !piPresent, timeout: 90_000 }, async (t) => {
   const f = await fixture(t);
   await withOrigin(f);
-  await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
+  const original = "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n";
+  await fs.writeFile(join(f.repo, "CHANGELOG.md"), original);
+  await git(f.repo, ["add", "CHANGELOG.md"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "shared changelog"]);
+  const before = await git(f.repo, ["status", "--porcelain"]);
   const client = f.rpc();
   const state = await client.request({ type: "get_state" });
-  await until(() => fs.stat(join(f.repo, "changelog.d", "README.md")).catch(() => undefined), "session start did not adopt the changelog");
-  assert.match(await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8"), /<!-- drift:changelog/);
+  await until(() => f.readRecord(state.sessionId).catch(() => undefined), "session start wrote no record"); // Written after the refresh.
+  assert.equal(await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8"), original);
+  assert.equal(await git(f.repo, ["status", "--porcelain"]), before);
+  await assert.rejects(fs.stat(join(f.repo, "changelog.d")), { code: "ENOENT" });
+  await assert.rejects(fs.stat(join(f.repo, ".gitattributes")), { code: "ENOENT" });
+
+  // The project adopts it once and commits that; the same session then generates with no command or flag.
+  await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n<!-- drift:changelog: generated from changelog.d/ - edit a bullet only if you keep its id comment -->\n<!-- /drift:changelog -->\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
+  await git(f.repo, ["add", "CHANGELOG.md"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "adopt generated changelog"]);
   await client.prompt("PUBLISH_HANDOFF_CHANGELOG");
   const record = await f.readRecord(state.sessionId);
   assert.equal(record.completed?.fragment, "changelog.d/runtime-001-fixture.md");
@@ -459,7 +469,7 @@ test("actual Pi lands a shared, tracked repository's handoff with its artifact, 
   const f = await fixture(t);
   const { branch } = await withOrigin(f);
   await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
-  await fs.writeFile(join(f.repo, ".drift.json"), '{ "trackArtifacts": true, "land": { "auto": true } }\n');
+  await fs.writeFile(join(f.repo, ".drift.json"), '{ "trackArtifacts": true, "changelog": true, "land": { "auto": true } }\n');
   await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
   await git(f.repo, ["add", "-A"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "shared"]); await git(f.repo, ["push", "-q", "origin", `HEAD:${branch}`]);
   const client = f.rpc();

@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { changelogAttributeLine, changelogDriver, hasAttribute } from "./git-drivers.ts";
-import { atomicWrite, driftConfig, exists, git, hasOrigin, mergeInProgress, python, run, safePath, updateConfig, withLock } from "./state.ts";
+import { atomicWrite, driftConfig, exists, git, mergeInProgress, python, run, safePath, updateConfig, withLock } from "./state.ts";
 
 // Must match scripts/build-changelog.py; the Python side owns the format, this side owns the lifecycle.
 export const START = "<!-- drift:changelog: generated from changelog.d/ - edit a bullet only if you keep its id comment -->";
@@ -14,6 +14,31 @@ export type ChangelogState = { enabled: boolean; reason: string; tags: string };
 export type ChangelogSync = { status: "disabled" | "unchanged" | "written" | "skipped" | "unrecognised"; detail?: string };
 export type ChangelogRequest = "on" | "off" | "toggle" | "status";
 
+/** Mirrors read_fragment in scripts/build-changelog.py: a leading frontmatter block with a `section` key. */
+const driftFragment = (text: string) => /^section:\s*\S/m.test(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text)?.[1] ?? "");
+
+/**
+ * A changelog.d/ that is already the project's own convention: fragments, none in Drift's format, or only a
+ * README that is not Drift's (a fragment system that deletes its files at release leaves exactly that).
+ * One Drift-format fragment means Drift is in use here, so a malformed file is then reported, not deferred to.
+ */
+async function foreignFragmentFolder(repo: string): Promise<string | undefined> {
+  const folder = join(repo, "changelog.d");
+  if (!(await exists(folder)) || !(await fs.stat(folder)).isDirectory()) return undefined;
+  const names = (await fs.readdir(folder)).filter((name) => name.endsWith(".md") && name !== "README.md").sort();
+  let foreign: string | undefined;
+  for (const name of names) {
+    const path = join(folder, name);
+    if (!(await fs.lstat(path)).isFile()) continue;
+    if (driftFragment(await fs.readFile(path, "utf8"))) return undefined;
+    foreign ??= name;
+  }
+  if (foreign) return `its own changelog.d/ format (changelog.d/${foreign} has no Drift frontmatter)`;
+  const readmePath = join(folder, "README.md");
+  if (await exists(readmePath) && !(await fs.readFile(readmePath, "utf8")).includes("drift:changelog")) return "its own changelog.d/ convention (changelog.d/README.md is not Drift's)";
+  return undefined;
+}
+
 /** A repository already keeping fragments another way should keep doing that; Drift does not add a second system. */
 async function foreignFragmentSystem(repo: string): Promise<string | undefined> {
   if (await exists(join(repo, ".changeset"))) return "changesets (.changeset/)";
@@ -21,13 +46,19 @@ async function foreignFragmentSystem(repo: string): Promise<string | undefined> 
   if (await exists(join(repo, "towncrier.toml"))) return "towncrier (towncrier.toml)";
   const pyproject = join(repo, "pyproject.toml");
   if (await exists(pyproject) && (await fs.readFile(pyproject, "utf8")).includes("[tool.towncrier]")) return "towncrier (pyproject.toml)";
-  return undefined;
+  return foreignFragmentFolder(repo);
+}
+
+/** The adoption a project committed: HEAD's CHANGELOG.md carries both markers. A working-tree copy does not count. */
+async function adoptionCommitted(repo: string): Promise<boolean> {
+  const committed = await git(repo, ["show", "HEAD:CHANGELOG.md"], true);
+  return committed.includes(START) && committed.includes(END);
 }
 
 /**
- * Whether this repository's changelog is generated from fragments, and why. Nothing here matters until two
- * versions of CHANGELOG.md can meet in git, so the default trigger is an origin remote plus a changelog to keep;
- * a local-only repository has one writer and edits the file directly. `.drift.json` overrides either way.
+ * Whether this repository's changelog is generated from fragments, and why. Generation is never adopted on its
+ * own: it runs where the project committed the markers or `.drift.json` turns it on. Opening a repository,
+ * even a fresh clone with an origin remote, writes nothing to CHANGELOG.md, .gitattributes or changelog.d/.
  */
 export async function changelogState(repo: string): Promise<ChangelogState> {
   const { changelog } = await driftConfig(repo);
@@ -36,9 +67,8 @@ export async function changelogState(repo: string): Promise<ChangelogState> {
   const foreign = await foreignFragmentSystem(repo);
   if (foreign) return { enabled: false, reason: `the repository keeps changelog fragments with ${foreign}`, tags };
   if (changelog.mode === "on") return { enabled: true, reason: ".drift.json turns it on", tags };
-  if (!(await hasOrigin(repo))) return { enabled: false, reason: "the repository has no origin remote, so one writer edits CHANGELOG.md directly", tags };
-  if (!(await exists(join(repo, "CHANGELOG.md"))) && !(await exists(join(repo, "changelog.d")))) return { enabled: false, reason: "the repository has no CHANGELOG.md", tags };
-  return { enabled: true, reason: "the repository has an origin remote and a CHANGELOG.md", tags };
+  if (await adoptionCommitted(repo)) return { enabled: true, reason: "the committed CHANGELOG.md carries Drift's markers", tags };
+  return { enabled: false, reason: "the committed CHANGELOG.md has no Drift markers, so the project has not adopted it", tags };
 }
 
 /** Fragments travel with the code, so an ignore rule over changelog.d/ makes generation impossible rather than silent. */
@@ -78,9 +108,10 @@ artifact: \`<feature>-<NNN>-<slug>.md\`). Two people adding files never conflict
 two people editing one section always do. Entries are grouped by the first version
 tag whose tree contains the file, or by day when the repository has no version tags.
 
-A bullet in \`CHANGELOG.md\` may be edited in place if its trailing id comment is
-kept; the edit is written back here. Lines added to the generated region without
-an id are reported and not regenerated over. Drift (https://github.com/coylemichael/drift)
+A bullet in \`CHANGELOG.md\` is a one-way view of its fragment here: to change
+it, edit the fragment and the region regenerates. Bullets edited directly in the
+generated region, and lines added there without an id, are reported and not
+regenerated over. Drift (https://github.com/coylemichael/drift)
 regenerates the file at each publication and session start.
 `;
 
@@ -133,6 +164,10 @@ export async function ensureChangelog(repo: string): Promise<string[]> {
 
 function classify(error: unknown): ChangelogSync | undefined {
   const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("invalid fragment (")) {
+    const lines = message.split(/\r?\n/).filter((line) => line.includes("invalid fragment (")).map((line) => line.replace(/^.*?error: /, ""));
+    return { status: "unrecognised", detail: `${lines.join("; ")}; give it Drift's frontmatter (see changelog.d/README.md), or set "changelog": false in .drift.json if the repository keeps its fragments another way` };
+  }
   if (message.includes("not produced by any fragment")) {
     const lines = message.split(/\r?\n/).filter((line) => line.includes("not produced by any fragment")).map((line) => line.replace(/^.*? failed: /, ""));
     return { status: "unrecognised", detail: `${lines.join("; ")}; move them into changelog.d/ fragments or delete them` };
@@ -145,16 +180,30 @@ function classify(error: unknown): ChangelogSync | undefined {
 }
 
 /**
- * Regenerate CHANGELOG.md from changelog.d/ when the changelog is generated here, adopting the file first if
- * needed. Compare-and-swap, edit-back and the "unrecognised line" rule live in the builder; this decides when it
- * runs and how its outcome is reported. Returns `adopted` alongside the sync when adoption just happened.
+ * Regenerate CHANGELOG.md from changelog.d/ when the changelog is generated here. Only an explicit opt-in
+ * (`"changelog": true`, which /drift-changelog on writes) adopts the file; a committed adoption is only
+ * regenerated, so Drift never adds markers, attributes or a README to a repository on its own. Compare-and-swap,
+ * hand-edit detection and the "unrecognised line" rule live in the builder; this decides when it runs and how its outcome is
+ * reported. Returns `adopted` alongside the sync when adoption just happened.
  */
 export async function syncChangelog(repo: string): Promise<ChangelogSync & { adopted?: string[] }> {
   const state = await changelogState(repo);
   if (!state.enabled) return { status: "disabled", detail: state.reason };
   if (await mergeInProgress(repo)) return { status: "skipped", detail: "a merge or rebase is in progress" };
+  const optedIn = (await driftConfig(repo)).changelog.mode === "on";
   return withLock(await changelogLock(repo), async () => {
-    const adopted = await ensureChangelog(repo);
+    // Adoption writes CHANGELOG.md and .gitattributes; fragments the builder would reject must stop it before either.
+    const changelog = join(repo, "CHANGELOG.md");
+    const text = await exists(changelog) ? await fs.readFile(changelog, "utf8") : "";
+    if (optedIn && !(text.includes(START) && text.includes(END))) {
+      try { await run(await python(), ["-I", builder, repo, "--stdout"], repo); }
+      catch (error) {
+        const known = classify(error);
+        if (known) return { ...known, detail: `${known.detail}. CHANGELOG.md was not adopted; nothing was written` };
+        throw error;
+      }
+    }
+    const adopted = optedIn ? await ensureChangelog(repo) : [];
     try {
       const out = await run(await python(), ["-I", builder, repo], repo);
       const sync: ChangelogSync = out.includes("wrote ") ? { status: "written", detail: out.trim() } : { status: "unchanged" };
