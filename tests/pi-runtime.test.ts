@@ -154,7 +154,7 @@ async function fixture(t: any, broken = false) {
     const adoptCall = { name: "drift_worktree", arguments: { action: "adopt", path: (worktree?.[2] ?? autoThenAdopt?.[1])?.trim() } };
     const publishCall = { name: "drift_publish", arguments: args };
     const calls = autoThenAdopt ? (rounds === 0 ? [publishCall] : rounds === 1 ? [adoptCall] : []) : !worktree ? (publish ? [publishCall] : []) :
-      worktree[1] === "STATUS" ? (rounds === 0 ? [{ name: "drift_worktree", arguments: { action: "status" } }] : []) :
+      worktree[1] === "STATUS" ? (rounds === 0 ? [{ name: "drift_worktree", arguments: { action: "status", path: "" } }] : []) :
       worktree[1] === "ADOPT" ? (rounds === 0 ? [adoptCall] : []) :
       worktree[1] === "ADOPT_PUBLISH" ? (rounds === 0 ? [adoptCall, publishCall] : []) :
       rounds === 0 ? [adoptCall] : rounds === 1 ? [publishCall] : [];

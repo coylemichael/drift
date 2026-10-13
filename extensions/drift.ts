@@ -245,7 +245,7 @@ export default function drift(pi: ExtensionAPI) {
       changed = await records.adopt(resolve(ctx.cwd, path.trim()), (repo) => refreshIndex(repo, ctx));
       await records.engage("worktree adoption");
       scopeReported = undefined;
-    } else if (path !== undefined) throw new Error("status takes no path; use action: adopt to change Drift's worktree");
+    } else if (path !== undefined && path.trim() !== "") throw new Error("status takes no path; omit it (an empty string is treated as omitted), or use action: adopt with a worktree root to change Drift's worktree");
     return `${action === "adopt" ? (changed ? "Adopted worktree; earlier measurements preserved, fresh interval measured. No handoff was published.\n" : "Already using this worktree; no interval changed.\n") : ""}${await worktreeStatus(records, ctx)}`;
   }
 
@@ -520,7 +520,7 @@ export default function drift(pi: ExtensionAPI) {
     promptSnippet: "Explicitly adopt an assigned worker worktree without restarting Pi; status reports measured and publication roots",
     parameters: Type.Object({
       action: StringEnum(["status", "adopt"] as const),
-      path: Type.Optional(Type.String({ description: "Existing exact worktree root for adopt; absolute or relative to Pi's fixed cwd. Omit for status." })),
+      path: Type.Optional(Type.String({ description: "Existing exact worktree root for adopt; absolute or relative to Pi's fixed cwd. Omit or pass an empty string for status." })),
     }, { additionalProperties: false }),
     async execute(_id, params, signal, _update, ctx) {
       return exclusive(async () => {
