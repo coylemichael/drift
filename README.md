@@ -239,7 +239,9 @@ pick-up rule from `SKILL.md` when you ask to "pick up" without naming an artifac
   behind a minimal note until a deterministic signal — existing artifacts,
   `.drift.json`, another engaged session, work landing in the tree, or explicit
   Drift use — engages the full lifecycle context. An unchanged context keeps its
-  place in the conversation instead of re-arriving every turn.
+  place in the conversation instead of re-arriving every turn. Observed behavior
+  from live sessions is transcribed in
+  [docs/field-observations.md](docs/field-observations.md).
 - `drift_publish`, which validates artifact paths, writes measured frontmatter,
   allocates numbers, rebuilds the index, and retains retryable receipts.
 
