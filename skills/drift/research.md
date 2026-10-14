@@ -18,7 +18,7 @@ description: Use when researching or documenting how the codebase works - answer
   - All artifacts for the feature live directly under `drift/<feature>/`; do not create `research/`, `plans/`, or `handoffs/` subfolders for new artifacts.
 - Treat each artifact file as a new step in the feature narrative. If the user starts related research later, create a new numbered `research` file rather than modifying an older artifact.
 - Check `drift/<feature>/` for existing research files on the topic.
-- If the new research replaces an older research artifact (same question, fresher answer), flip that older file's frontmatter `status` to `superseded` after writing the new one. Change nothing else in the old file.
+- If the new research replaces an older research artifact (same question, fresher answer), supersede that older file only after the new research has been published successfully (after any pending retry): set its frontmatter `status` to `superseded` and add `superseded_by: "drift/<feature>/<new research>.md"` with the exact path of the new file in this feature folder. Change nothing else in the old file; see "Artifact Status" in `SKILL.md`.
 
 ## Output Format
 
@@ -57,7 +57,7 @@ Save research documents to disk by default. Skip saving only if the user explici
 - Before creating `drift/` or writing the artifact, apply **Artifact Git Policy** in `SKILL.md`: repository-root `.drift.json` explicitly opts into tracked artifacts; missing/false uses the ignored default. With a host publisher, let it enforce the policy.
 - Create `drift/<feature>/` at the repository root if it doesn't exist.
 - Use the output format above.
-- After writing the artifact, append a row for it to `drift/INDEX.md` — the repo-wide chronological index. Create the index if it doesn't exist, and rebuild it from frontmatter if it has fallen out of sync with the folders. See the "Root Index" section of `SKILL.md` for the format, ordering, and rebuild rules.
+- Where the human-readable `drift/INDEX.md` view is maintained, update it after writing the artifact; a host publisher owns that update where available. The view is not required for pickup or recent navigation. See the "Root Index" section of `SKILL.md` for the format, ordering, and rebuild rules.
 
 ### Path verification
 
@@ -85,6 +85,6 @@ status: complete
 ---
 ```
 
-Research is finished the moment it is written, so it always starts at `status: complete`. The only later transition is to `superseded`, applied when newer research replaces it. See "Artifact Status" in `SKILL.md`.
+Research is finished the moment it is written, so it always starts at `status: complete`. Complete research may still be planned. The only later transition is to `superseded` (with `superseded_by` naming the replacement), applied when newer research replaces it. See "Artifact Status" in `SKILL.md`.
 
 Take `date` from the system clock, never from an estimate or from a previous artifact's value — `date -Iseconds`, or `python3 -c 'import datetime; print(datetime.datetime.now().astimezone().isoformat(timespec="seconds"))'` where portability matters. Both print the required form with the machine's real offset. A guessed timestamp reads as measured and silently corrupts the index ordering; see "Timestamps" in `SKILL.md`.

@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { artifactPathPattern, artifactStore, exists, safePath } from "./state.ts";
+import { artifactLifecycle, artifactPathPattern, artifactStore, exists, safePath, supersessionNote } from "./state.ts";
 
 export const profilePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -104,6 +104,16 @@ export async function readHandoffRoute(repo: string, artifact: string): Promise<
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
   if (!match) throw new Error(`Drift handoff has no generated frontmatter: ${artifact}`);
   if (frontmatterString(match[1], "type") !== "handoff") throw new Error(`Drift artifact is not a handoff: ${artifact}`);
+  // A closed handoff has no open work: refuse before any profile/model resolution, and never retarget a successor.
+  const lifecycle = artifactLifecycle(text);
+  const reopen = `Nothing was continued and the model is unchanged. To inspect it, use /drift ${artifact} and confirm reopening explicitly; Drift does not follow a replacement automatically.`;
+  if (lifecycle.status === "complete") {
+    throw new Error(`Drift handoff ${artifact} is complete: its work is finished and there is no open work to continue. ${reopen}`);
+  }
+  if (lifecycle.status === "superseded") {
+    const note = await supersessionNote(root, artifact, lifecycle.superseded_by);
+    throw new Error(`Drift handoff ${artifact} is superseded, so it has no open work to continue: ${note} ${reopen}`);
+  }
   const selected = frontmatterString(match[1], "next_session_profile");
   if (!selected) throw new Error(`Drift handoff has no next_session_profile: ${artifact}. Resume it manually or publish a profiled handoff.`);
   if (!profilePattern.test(selected)) throw new Error(`Drift handoff has an invalid next_session_profile: ${artifact}`);

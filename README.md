@@ -59,7 +59,7 @@ command (or `status`) only reports.
 
 | Command | What it does |
 | --- | --- |
-| `/drift [artifact \| request]` | The entry point: picks up the newest artifact in `drift/INDEX.md`, the one you name, or passes any other request to the Drift skill. |
+| `/drift [artifact \| request]` | The entry point: picks up the newest artifact from the raw files, the one you name, or passes any other request to the Drift skill. |
 | `drift-continue <handoff>` | Continues a published handoff, switching to its declared `next_session_profile` before inference. Bare on purpose — no leading slash — so hosts that reserve `/` pass it through; run it in a fresh thread. ([details](docs/continuation.md)) |
 | `/drift-worktree [status \| <path>]` | Shows the launch repo, active Drift root and record, or adopts an existing linked worktree of the same repository. ([details](docs/worktrees.md)) |
 | `/drift-track-artifacts on\|off\|status` | Whether this repo's `drift/` artifacts are committed to Git or stay private (ignored). ([details](docs/artifact-git-policy.md)) |
@@ -90,7 +90,9 @@ drift/
     003-handoff-progress.md
 ```
 
-`INDEX.md` is the repository-wide chronological timeline.
+`INDEX.md` is a generated, repository-wide chronological view for people. Pickup
+and recent-context navigation query the raw artifacts through the same parser;
+they do not need the view to exist or be writable.
 
 Each artifact's frontmatter also carries a `status` — `pending`, `in-progress`,
 `complete` or `superseded` — so you can see which plans have run and which
@@ -102,9 +104,18 @@ grep -r "^status:" drift/
 
 Plans start `pending` and execution flips them to `in-progress`, then
 `complete`; handoffs are written `in-progress` or `complete` and become
-`superseded` when a later handoff resumes them; research is `complete` on write.
-Flipping `status` is the one in-place edit Drift makes to an existing artifact.
-It is not an index column, because index rows never change.
+`superseded` when a later handoff resumes them; research is `complete` on write
+and can still be planned. A `complete` plan or handoff has no open work.
+
+When an artifact is actually replaced, it gets `status: superseded` plus
+`superseded_by: "drift/<feature>/<successor>.md"` — the exact path of the
+successor in the same feature folder, written only after the successor has been
+published. Drift never guesses or backfills a successor and never follows the
+link on its own; it reports `<old> superseded by <new>`, and an older
+`superseded` artifact without the field still reads fine as "replacement not
+recorded". Those two lifecycle lines are the only in-place edits Drift makes to
+an existing artifact. Lifecycle state stays out of index columns, because index
+rows never change.
 
 ![A repository tree showing drift/INDEX.md, numbered feature artifacts with status chips, changelog.d fragments and a generated CHANGELOG.md, annotated with callouts for the timeline, measured metadata with graded citations, and conflict-free changelogs.](assets/what-lands-in-repo.svg)
 
@@ -138,8 +149,12 @@ An artifact's `path:line` references rot as the code moves on. At publication
 every citation is anchored — range, content hash, search needle — and when an
 artifact is picked up each one is graded in a single note: `fresh` (proven by
 hash), `moved` (forwarded to its new location), `changed`, `gone` or
-`uncertain`. The check is a report, never a gate: it blocks nothing and writes
-nothing to the repository. Grading rules, the standalone checker and the local
+`uncertain`. Every new publisher snapshot also records anchor capture coverage:
+`not-applicable` (no eligible numeric references), `complete`, or `partial`, with
+counts and skipped reasons. Legacy absence is `not-recorded`, not an inferred
+success; capture completeness is separate from citation freshness or claim truth.
+Symbol-only handoffs remain valid. The check is a report, never a gate: it blocks
+nothing and writes nothing to the repository. Grading rules, the standalone checker and the local
 metrics ledger: [docs/citation-anchors.md](docs/citation-anchors.md).
 
 ### Landing (per repository)
@@ -213,11 +228,17 @@ On Pi, `/drift` is the one entry point:
 
 | You type | Drift does |
 | --- | --- |
-| `/drift` | Picks the newest artifact in `drift/INDEX.md`: resumes an `in-progress` handoff, executes a `pending` plan, plans from research. If it is already `complete`, it says so and asks rather than reopening it. |
-| `/drift <link, path or file name>` | Picks up that artifact; anything else you write is passed on as your note. Zed `@` mentions and Windows paths work. |
+| `/drift` | Queries the raw artifacts and picks the newest by its recorded date: resumes an `in-progress` handoff, executes a `pending` plan, plans from research. If it is a `complete` plan or handoff or is `superseded`, it says so and asks rather than reopening it. |
+| `/drift <link, path or file name>` | Picks up that artifact; if it is closed (`complete` plan/handoff or `superseded`), it reports that and asks before reopening it or switching to its successor. Anything else you write is passed on as your note. Zed `@` mentions and Windows paths work. |
 | `/drift <anything else>` | An ordinary Drift request, like `/skill:drift`. |
 
 The choice is made in code, not by the model, and is announced ("Drift: picking up …").
+A missing, stale, conflicting or unwritable `INDEX.md` cannot determine the choice:
+the shared parser reads the actual artifacts without updating the view. Raw-file
+read failures are reported rather than hidden behind a stale index; undated-only
+stores ask you to name an artifact instead of guessing. For a read-only catalog in
+other hosts, run `python3 -I scripts/build-index.py /path/to/project/drift --json`
+from the Drift checkout (`py -3` on Windows).
 It keeps the current model; `drift-continue <handoff>` is the variant that switches
 to the handoff's `next_session_profile`. In Zed, `/drift` appears in the `/` menu
 as a Pi prompt command and needs no adapter patch. Other hosts follow the same
@@ -229,9 +250,12 @@ pick-up rule from `SKILL.md` when you ask to "pick up" without naming an artifac
   explicitly adopted worktree as the active Drift root (`/drift-worktree`).
 - `/drift`, which picks up the newest artifact (or the one you name) and
   routes it to the right workflow.
-- A current `drift/INDEX.md` at session start: when the repo already holds
-  artifacts (for example, written by Claude or Zed's native agent) and the
-  index is missing or stale, it is rebuilt before the record's baseline is taken.
+- Raw-artifact pickup and a bounded recent-artifact list, using the shared
+  parser rather than reading `INDEX.md`. Navigation neither writes the view nor
+  waits for its publication lock.
+- A human-readable `drift/INDEX.md` view refreshed at session start and
+  publication for compatibility. A failed view refresh does not make existing
+  artifacts undiscoverable.
 - Measured start metadata and dirty-file fingerprints that survive reload,
   resume, and compaction.
 - Bounded Drift context on normal model requests and checkpoints after settled

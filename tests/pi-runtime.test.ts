@@ -143,7 +143,11 @@ async function fixture(t: any, broken = false) {
     const publish = (/^PUBLISH_(RESEARCH|HANDOFF|AUTO_HANDOFF)/.test(marker) || (chainStep > 0 && chainStep <= 3)) && !messages.slice(user + 1).some((message: any) => message.role === "tool");
     const kind = marker.startsWith("PUBLISH_RESEARCH") ? "research" : "handoff";
     // Real models may fill optional string fields with "" rather than omit them.
-    const args = { feature: "runtime", kind, slug: chainStep ? "chain" : "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: chainArtifact ? `drift/runtime/${chainArtifact[1]}-handoff-chain.md` : "", related_artifacts: [], ...(/^PUBLISH_AUTO_(HANDOFF|THEN_ADOPT)/.test(marker) || (chainStep > 0 && chainStep < 3) ? { next_session_profile: "architecture" } : {}), ...(/^PUBLISH_(AUTO_)?HANDOFF_CHANGELOG/.test(marker) ? { changelog: { section: "Changed", text: "Fixture change." } } : {}) };
+    const changelog = /^PUBLISH_(AUTO_)?(RESEARCH|HANDOFF)_CHANGELOG/.test(marker) ? { section: "Changed", text: "Fixture change." }
+      : marker === "PUBLISH_RESEARCH_NULL_CHANGELOG" ? null
+      : /^PUBLISH_RESEARCH_(EMPTY|SPACE)_CHANGELOG/.test(marker) ? { section: "Changed", text: marker.includes("SPACE") ? " \t\n " : "" }
+      : undefined;
+    const args = { feature: "runtime", kind, slug: chainStep ? "chain" : "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: chainArtifact ? `drift/runtime/${chainArtifact[1]}-handoff-chain.md` : "", related_artifacts: [], ...(/^PUBLISH_AUTO_(HANDOFF|THEN_ADOPT)/.test(marker) || (chainStep > 0 && chainStep < 3) ? { next_session_profile: "architecture" } : {}), ...(changelog !== undefined ? { changelog } : {}), ...(/^PUBLISH_AUTO_HANDOFF_COMPLETE(?:_REPLAY)?$/.test(marker.trim()) ? { status: "complete" } : {}) };
     // Tool rounds already answered since the marker; each marker scripts a bounded number of rounds, never a loop.
     const rounds = messages.slice(user + 1).filter((message: any) => message.role === "assistant" && message.tool_calls?.length).length;
     // WORKTREE_ADOPT <path>, WORKTREE_STATUS, WORKTREE_ADOPT_PUBLISH <path> (one batch: adopt beside a publication),
@@ -151,9 +155,15 @@ async function fixture(t: any, broken = false) {
     // PUBLISH_AUTO_THEN_ADOPT <path> (publish a profiled handoff, then adopt alone in the next round, before settling).
     const worktree = /^WORKTREE_(ADOPT_PUBLISH|ADOPT_THEN_PUBLISH|ADOPT|STATUS)(?:[ \t]+([^\n]+))?$/.exec(marker.trim());
     const autoThenAdopt = /^PUBLISH_AUTO_THEN_ADOPT[ \t]+([^\n]+)$/.exec(marker.trim());
+    // Bounded recovery in one user turn: reject a real entry, then retry with null or the observed blank object.
+    const recoverChangelog = /^PUBLISH_RESEARCH_RECOVER_(NULL|EMPTY)$/.exec(marker.trim());
+    const replayComplete = marker.trim() === "PUBLISH_AUTO_HANDOFF_COMPLETE_REPLAY";
     const adoptCall = { name: "drift_worktree", arguments: { action: "adopt", path: (worktree?.[2] ?? autoThenAdopt?.[1])?.trim() } };
-    const publishCall = { name: "drift_publish", arguments: args };
-    const calls = autoThenAdopt ? (rounds === 0 ? [publishCall] : rounds === 1 ? [adoptCall] : []) : !worktree ? (publish ? [publishCall] : []) :
+    const publishCall = { name: "drift_publish", arguments: recoverChangelog ? { ...args,
+      slug: recoverChangelog[1] === "NULL" ? "recover-null" : "recover-empty", changelog: rounds === 0
+        ? { section: "Changed", text: "Fixture change." }
+        : recoverChangelog[1] === "NULL" ? null : { section: "Changed", text: "" } } : args };
+    const calls = recoverChangelog || replayComplete ? (rounds < 2 ? [publishCall] : []) : autoThenAdopt ? (rounds === 0 ? [publishCall] : rounds === 1 ? [adoptCall] : []) : !worktree ? (publish ? [publishCall] : []) :
       worktree[1] === "STATUS" ? (rounds === 0 ? [{ name: "drift_worktree", arguments: { action: "status", path: "" } }] : []) :
       worktree[1] === "ADOPT" ? (rounds === 0 ? [adoptCall] : []) :
       worktree[1] === "ADOPT_PUBLISH" ? (rounds === 0 ? [adoptCall, publishCall] : []) :
@@ -306,6 +316,8 @@ test("actual Pi publishes repo-opted-in tracked artifacts without changing ignor
   const visible = await git(f.repo, ["ls-files", "--others", "--exclude-standard"]);
   assert.ok(visible.includes(record.completed.path));
   assert.ok(visible.includes("drift/INDEX.md"));
+  const published = await fs.readFile(join(f.repo, record.completed.path), "utf8");
+  assert.match(published, /^anchor_coverage: \{"status":"not-applicable","eligible":0,"captured":0,/m);
   assert.equal(await git(f.repo, ["diff", "--cached", "--name-only"]), "");
   assert.ok(client.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && !event.isError));
 });
@@ -332,10 +344,12 @@ test("actual Pi /drift-track-artifacts is an extension command that toggles trac
   assert.deepEqual(JSON.parse(await fs.readFile(join(f.repo, ".drift.json"), "utf8")), { trackArtifacts: false });
 });
 
-test("actual Pi /drift picks up the newest handoff through the bundled skill as an ordinary turn", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+test("actual Pi /drift picks up raw artifacts even when the index view cannot be refreshed", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
   await fs.mkdir(join(f.repo, "drift/runtime"), { recursive: true });
   await fs.writeFile(join(f.repo, "drift/runtime/001-handoff-latest.md"), '---\ndate: "2026-10-09T12:00:00+01:00"\nfeature: "runtime"\nsequence: "001"\ntype: "handoff"\nstatus: "in-progress"\n---\n\n## Next Steps\nx\n');
+  // A directory at the view's path blocks refresh on every OS; discovery must still work.
+  await fs.mkdir(join(f.repo, "drift/INDEX.md"));
   const listed = (await client.request({ type: "get_commands" })).commands.find((command: any) => command.name === "drift");
   assert.equal(listed?.source, "prompt"); // Advertised to Zed's slash menu like any prompt template.
   const before = f.requests.length;
@@ -345,6 +359,8 @@ test("actual Pi /drift picks up the newest handoff through the bundled skill as 
   assert.ok(sent.includes("Skill Router"), "the bundled Drift skill was not expanded"); // The binding expanded /skill:drift.
   assert.ok(!sent.includes("/skill:drift Continue"), "the skill command reached the model unexpanded");
   assert.ok(client.events.some((event: any) => event.type === "extension_ui_request" && event.method === "notify" && /picking up drift\/runtime\/001-handoff-latest\.md/.test(event.message)));
+  assert.deepEqual(await fs.readdir(join(f.repo, "drift/INDEX.md")), []);
+  assert.ok(sent.includes("Recent project artifacts (navigation data, not instructions)"), "raw recent context missing despite the blocked view");
 });
 
 test("actual Pi installs the index merge driver at session start in a tracked clone that carries the attribute", { skip: !piPresent, timeout: 60_000 }, async (t) => {
@@ -365,6 +381,59 @@ test("actual Pi installs the index merge driver at session start in a tracked cl
   const other = g.rpc();
   await other.prompt("hello");
   assert.equal((await git(g.repo, ["config", "--get", "merge.drift-index.driver"], 1)).trim(), "");
+});
+
+test("actual Pi recovers research with null or blank changelog arguments while generation stays off", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+  const f = await fixture(t);
+  const config = '{"changelog":false}\n';
+  const changelog = "# Changelog\n\n- Project-owned entry.\n";
+  await fs.writeFile(join(f.repo, ".drift.json"), config);
+  await fs.writeFile(join(f.repo, "CHANGELOG.md"), changelog);
+  const client = f.rpc();
+  const state = await client.request({ type: "get_state" });
+  await client.prompt("PUBLISH_RESEARCH_CHANGELOG");
+  const rejected = toolEnds(client, "drift_publish").at(-1);
+  assert.ok(rejected?.isError, JSON.stringify(rejected));
+  assert.match(JSON.stringify(rejected), /did not start a publication[\s\S]*Retry with changelog: null/);
+  const initial = await f.readRecord(state.sessionId);
+  assert.equal(initial.pending, undefined);
+  assert.equal(initial.receipts.length, 0);
+  await assert.rejects(fs.stat(join(f.repo, "drift")), { code: "ENOENT" });
+  assert.ok(JSON.stringify(f.requests[0]).includes("Changelog: Drift generation is off here."));
+  const schema = f.requests[0].tools.find((tool: any) => tool.function?.name === "drift_publish").function.parameters.properties.changelog;
+  assert.ok(JSON.stringify(schema).includes('"type":"null"'), JSON.stringify(schema));
+
+  for (const marker of ["PUBLISH_RESEARCH_NULL_CHANGELOG", "PUBLISH_RESEARCH_EMPTY_CHANGELOG", "PUBLISH_RESEARCH_SPACE_CHANGELOG", "PUBLISH_RESEARCH"]) {
+    const start = client.events.length;
+    await client.prompt(marker);
+    const results = toolEnds(client, "drift_publish", start);
+    assert.equal(results.length, 1, JSON.stringify(results));
+    assert.equal(results[0].isError, false, JSON.stringify(results[0]));
+    const record = await f.readRecord(state.sessionId);
+    assert.equal(record.receipts.length, 1); // All no-entry forms return the same receipt.
+    assert.equal(record.receipts[0].path, "drift/runtime/001-research-fixture.md");
+    assert.equal(record.receipts[0].fragment, undefined);
+    assert.equal(record.completed, undefined);
+    assert.equal(record.pending, undefined);
+  }
+  for (const [index, marker] of ["PUBLISH_RESEARCH_RECOVER_NULL", "PUBLISH_RESEARCH_RECOVER_EMPTY"].entries()) {
+    const start = client.events.length;
+    await client.prompt(marker);
+    const results = toolEnds(client, "drift_publish", start);
+    assert.equal(results.length, 2, JSON.stringify(results));
+    assert.equal(results[0].isError, true, JSON.stringify(results[0]));
+    assert.equal(results[1].isError, false, JSON.stringify(results[1]));
+    const record = await f.readRecord(state.sessionId);
+    assert.equal(record.receipts.length, index + 2); // Exactly one fresh artifact per recovered request.
+    assert.equal(record.pending, undefined);
+    assert.equal(record.receipts.at(-1).fragment, undefined);
+  }
+  const names = ["001-research-fixture.md", "002-research-recover-null.md", "003-research-recover-empty.md"];
+  assert.deepEqual((await fs.readdir(join(f.repo, "drift/runtime"))).sort(), names);
+  for (const name of names) assert.ok((await fs.readFile(join(f.repo, "drift/runtime", name), "utf8")).endsWith(researchBody.trim() + "\n"));
+  assert.equal(await fs.readFile(join(f.repo, ".drift.json"), "utf8"), config);
+  assert.equal(await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8"), changelog);
+  for (const path of ["changelog.d", ".gitattributes"]) await assert.rejects(fs.stat(join(f.repo, path)), { code: "ENOENT" });
 });
 
 test("actual Pi: /drift-changelog on, a publication carrying a changelog entry, regeneration, and the driver at the next session start", { skip: !piPresent, timeout: 90_000 }, async (t) => {
@@ -521,6 +590,63 @@ test("actual Pi leaves a profiled handoff manual by default and still honours dr
   const requestsBefore = f.requests.length;
   await client.request({ type: "prompt", message: `drift-continue ${artifact}` });
   await until(() => f.requests.slice(requestsBefore).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + artifact + "`")), "manual drift-continue did not send the profiled continuation prompt");
+});
+
+test("actual Pi never continues a complete handoff, and drift-continue refuses complete and superseded handoffs without following a replacement", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+  const f = await fixture(t); const client = f.rpc();
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"autoContinue":true}\n');
+  const state = await client.request({ type: "get_state" });
+  const model = JSON.stringify(state.model ?? null);
+  const requestsBefore = f.requests.length;
+  // Two identical tool calls in one turn replay the completed receipt within the same interval.
+  await client.prompt("PUBLISH_AUTO_HANDOFF_COMPLETE_REPLAY");
+  const completed = await f.readRecord(state.sessionId);
+  const artifact = completed.completed!.path;
+  const replayed = toolEnds(client, "drift_publish");
+  assert.equal(replayed.length, 2);
+  assert.ok(replayed.every((event: any) => !event.isError && JSON.stringify(event).includes(`Published ${artifact}`)));
+  assert.ok(replayed.every((event: any) => JSON.stringify(event).includes("Nothing is queued")));
+  assert.equal(completed.receipts.length, 1);
+  assert.deepEqual(await fs.readdir(join(f.repo, "drift/runtime")), ["001-handoff-fixture.md"]);
+  const text = await fs.readFile(join(f.repo, artifact), "utf8");
+  assert.ok(text.includes('next_session_profile: "architecture"') && text.includes('status: "complete"'), text);
+  const published = JSON.stringify(toolEnds(client, "drift_publish").at(-1));
+  assert.match(published, /Handoff complete: there is no open work to continue\. Nothing is queued/);
+  assert.match(published, /Current work interval completed; its receipt is retained/);
+  assert.ok(!published.includes("queued automatically") && !published.includes(`drift-continue ${artifact}`), published);
+  // A subsequent prompt starts a new interval/publication, and that complete handoff stays unqueued too.
+  await client.prompt("PUBLISH_AUTO_HANDOFF_COMPLETE");
+  const later = await f.readRecord(state.sessionId);
+  assert.notEqual(later.intervalId, completed.intervalId);
+  assert.equal(later.completed!.path, "drift/runtime/002-handoff-fixture.md");
+  const retried = JSON.stringify(toolEnds(client, "drift_publish").at(-1));
+  assert.match(retried, /Handoff complete: there is no open work to continue\. Nothing is queued/);
+  assert.ok(!retried.includes("queued automatically") && !retried.includes("drift-continue drift/"), retried);
+  await delay(1000); // agent_settled has run by now; nothing may have queued a compaction or continuation.
+  assert.ok(!(await client.request({ type: "get_entries" })).entries.some((entry: any) => entry.type === "compaction"), "a complete handoff compacted to a fresh context window");
+  const continuationRequest = (from: number) => f.requests.slice(from).find((request) => request.model === "architecture" || JSON.stringify(request).includes("Continue the work recorded"));
+  assert.equal(continuationRequest(requestsBefore), undefined);
+  assert.equal(JSON.stringify((await client.request({ type: "get_state" })).model ?? null), model);
+  // Manual continuation refuses closed handoffs before any model change or inference.
+  await fs.writeFile(join(f.repo, "drift/runtime/097-handoff-open.md"), '---\ntype: "handoff"\nstatus: "in-progress"\nnext_session_profile: "architecture"\n---\n');
+  await fs.writeFile(join(f.repo, "drift/runtime/098-handoff-replaced.md"), '---\ntype: "handoff"\nstatus: "superseded"\nsuperseded_by: "drift/runtime/097-handoff-open.md"\nnext_session_profile: "architecture"\n---\n');
+  await fs.writeFile(join(f.repo, "drift/runtime/099-handoff-orphaned.md"), '---\ntype: "handoff"\nstatus: "superseded"\nnext_session_profile: "architecture"\n---\n');
+  const cases: [string, RegExp][] = [
+    [artifact, /is complete: its work is finished and there is no open work to continue/],
+    ["drift/runtime/098-handoff-replaced.md", /superseded by `drift\/runtime\/097-handoff-open\.md`/],
+    ["drift/runtime/099-handoff-orphaned.md", /replacement not recorded/],
+  ];
+  for (const [path, reason] of cases) {
+    const requests = f.requests.length; const events = client.events.length;
+    await client.request({ type: "prompt", message: `drift-continue ${path}` });
+    const notice = await until(() => notices(client, events).find((event: any) => event.notifyType === "error" || /no open work/.test(event.message)), `drift-continue ${path} did not refuse visibly`);
+    assert.match(notice.message, reason);
+    assert.ok(notice.message.includes(`/drift ${path}`) && /confirm reopening/.test(notice.message), notice.message);
+    await delay(300);
+    assert.equal(f.requests.length, requests, `drift-continue ${path} started inference`);
+    assert.ok(!notices(client, events).some((event: any) => /Drift profile architecture/.test(event.message)), `drift-continue ${path} changed the model`);
+    assert.equal(JSON.stringify((await client.request({ type: "get_state" })).model ?? null), model);
+  }
 });
 
 /** A linked worktree of the fixture repo on its own branch; same common dir, its own canonical root. */

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import { join } from "node:path";
-import { exists, git } from "./state.ts";
+import { git, ManagedPathError, safePath } from "./state.ts";
 
 /**
  * Citation anchors: what the cited code said when an artifact was published, so a later
@@ -35,61 +35,100 @@ export const normalize = (text: string): string => text.replace(/\r\n/g, "\n").s
 /** SHA-256 hex of normalized cited text. Must stay identical to _driftmeta.anchor_hash. */
 export const anchorHash = (text: string): string => createHash("sha256").update(normalize(text), "utf8").digest("hex");
 
-type Citation = { position: number; path: string; start: number; end: number };
+type Citation = { position: number; path: string; start: number; end: number; reference: string };
 
-/** Ordered, deduplicated citations; a backticked bare `:N` continues the most recent cited path. */
-export function extractCitations(body: string): Citation[] {
+function cited(position: number, path: string, first: string, last = first): Citation {
+  // Reference-string dedup must match Python's (path, int, int) keys, even beyond JS's safe integer range.
+  const start = first.replace(/^0+(?=\d)/, ""), end = last.replace(/^0+(?=\d)/, "");
+  return { position, path, start: Number(start), end: Number(end), reference: `${path}:${start}${end === start ? "" : `-${end}`}` };
+}
+
+/** Ordered, deduplicated citations; optionally retain invalid ranges for capture accounting. */
+export function extractCitations(body: string, includeInvalid = false): Citation[] {
   const found: Citation[] = [];
   for (const match of body.matchAll(citation)) {
     if (body.slice(Math.max(0, match.index - 8), match.index).includes("://")) continue; // URL, not a file.
-    const start = Number(match[2]);
-    found.push({ position: match.index, path: match[1].replaceAll("\\", "/").replace(/^(\.\/)+/, ""), start, end: Number(match[3] ?? match[2]) });
+    found.push(cited(match.index, match[1].replaceAll("\\", "/").replace(/^(\.\/)+/, ""), match[2], match[3]));
   }
   for (const span of body.matchAll(codeSpan)) {
     const ref = bare.exec(span[1].trim());
     if (!ref) continue;
-    const earlier = found.filter((f) => f.position < span.index).at(-1);
+    const earlier = found.filter((f) => f.position < span.index).sort((a, b) => a.position - b.position).at(-1);
     if (!earlier) continue; // A bare ref before any pathed one has nothing to continue.
-    const start = Number(ref[1]);
-    found.push({ position: span.index, path: earlier.path, start, end: Number(ref[2] ?? ref[1]) });
+    found.push(cited(span.index, earlier.path, ref[1], ref[2]));
   }
   found.sort((a, b) => a.position - b.position);
   const seen = new Set<string>();
   return found.filter((f) => {
-    const key = `${f.path}:${f.start}:${f.end}`;
-    if (f.end < f.start || seen.has(key)) return false;
-    seen.add(key);
+    if ((!includeInvalid && f.end < f.start) || seen.has(f.reference)) return false;
+    seen.add(f.reference);
     return true;
   });
 }
 
-/**
- * Anchors for every citation in `body` that resolves to a readable file in `repo`, capped so
- * frontmatter stays bounded. Citations that do not resolve get no anchor and fall back to the
- * checker's heuristic mode, which uses the artifact's recorded commit.
- */
-export async function extractAnchors(repo: string, body: string, cap = 100): Promise<Anchor[]> {
+export const anchorSkipReasons = ["unsafe-path", "file-not-found", "not-a-file", "file-too-large", "invalid-range", "read-error", "cap-reached"] as const;
+export type AnchorSkipReason = typeof anchorSkipReasons[number];
+export interface AnchorSkip { reference: string; reason: AnchorSkipReason; reference_truncated?: true }
+export interface AnchorCoverage {
+  status: "not-applicable" | "complete" | "partial";
+  /** Unique recognized numeric references, including invalid ranges that cannot be captured. */
+  eligible: number;
+  captured: number;
+  skipped_count: number;
+  skipped_by_reason: Partial<Record<AnchorSkipReason, number>>;
+  /** First 25 skipped references; totals above include all skipped references. */
+  skipped: AnchorSkip[];
+}
+export interface AnchorCapture { anchors: Anchor[]; coverage: AnchorCoverage }
+
+/** Capture with deterministic accounting; completeness describes capture, not trust or freshness. */
+export async function captureAnchors(repo: string, body: string, cap = 100): Promise<AnchorCapture> {
+  if (!Number.isSafeInteger(cap) || cap < 0) throw new Error("Anchor cap must be a nonnegative integer");
+  const citations = extractCitations(body, true);
   const anchors: Anchor[] = [];
+  const coverage: AnchorCoverage = { status: "not-applicable", eligible: citations.length, captured: 0, skipped_count: 0, skipped_by_reason: {}, skipped: [] };
+  const skip = (cite: Citation, reason: AnchorSkipReason) => {
+    coverage.skipped_count++;
+    coverage.skipped_by_reason[reason] = (coverage.skipped_by_reason[reason] ?? 0) + 1;
+    if (coverage.skipped.length < 25) coverage.skipped.push({ reference: cite.reference.slice(0, 512), reason, ...(cite.reference.length > 512 ? { reference_truncated: true as const } : {}) });
+  };
   const dirtyByPath = new Map<string, boolean>();
-  for (const cite of extractCitations(body)) {
-    if (anchors.length >= cap) break;
-    if (cite.path.split("/").some((part) => part === ".." || part === "" || part === ".")) continue;
-    const file = join(repo, cite.path);
-    if (!(await exists(file))) continue;
-    const stat = await fs.stat(file);
-    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) continue;
-    const lines = normalize(await fs.readFile(file, "utf8")).split("\n");
-    if (cite.start < 1 || cite.start > lines.length) continue;
-    const slice = lines.slice(cite.start - 1, Math.min(cite.end, lines.length));
-    const text = slice.join("\n");
+  for (const cite of citations) {
+    if (!Number.isSafeInteger(cite.start) || !Number.isSafeInteger(cite.end) || cite.start < 1 || cite.end < cite.start) {
+      skip(cite, "invalid-range"); continue;
+    }
+    if (cite.path.split("/").some((part) => part === ".." || part === "" || part === ".")) {
+      skip(cite, "unsafe-path"); continue;
+    }
+    if (anchors.length >= cap) { skip(cite, "cap-reached"); continue; }
+    let lines: string[];
+    try {
+      const file = await safePath(repo, join(repo, cite.path));
+      const stat = await fs.stat(file);
+      if (!stat.isFile()) { skip(cite, "not-a-file"); continue; }
+      if (stat.size > 2 * 1024 * 1024) { skip(cite, "file-too-large"); continue; }
+      lines = normalize(await fs.readFile(file, "utf8")).split("\n");
+    } catch (error: any) {
+      if (error instanceof ManagedPathError) skip(cite, "unsafe-path");
+      else if (error.code === "ENOENT" || error.code === "ENOTDIR") skip(cite, "file-not-found");
+      else if (typeof error.code === "string") skip(cite, "read-error");
+      else throw error; // Do not disguise implementation errors as ordinary skipped references.
+      continue;
+    }
+    if (cite.start > lines.length || cite.end > lines.length) { skip(cite, "invalid-range"); continue; }
+    const slice = lines.slice(cite.start - 1, cite.end);
     if (!dirtyByPath.has(cite.path)) {
       dirtyByPath.set(cite.path, Boolean((await git(repo, ["status", "--porcelain", "--", cite.path], true)).trim()));
     }
-    anchors.push({
-      path: cite.path, start: cite.start, end: cite.end, sha256: anchorHash(text),
-      context: [slice[0] ?? "", slice.at(-1) ?? ""],
-      ...(dirtyByPath.get(cite.path) ? { dirty: true } : {}),
-    });
+    anchors.push({ path: cite.path, start: cite.start, end: cite.end, sha256: anchorHash(slice.join("\n")),
+      context: [slice[0] ?? "", slice.at(-1) ?? ""], ...(dirtyByPath.get(cite.path) ? { dirty: true } : {}) });
   }
-  return anchors;
+  coverage.captured = anchors.length;
+  coverage.status = !coverage.eligible ? "not-applicable" : coverage.skipped_count ? "partial" : "complete";
+  return { anchors, coverage };
+}
+
+/** Compatibility wrapper for callers that need only the anchor payload. */
+export async function extractAnchors(repo: string, body: string, cap = 100): Promise<Anchor[]> {
+  return (await captureAnchors(repo, body, cap)).anchors;
 }

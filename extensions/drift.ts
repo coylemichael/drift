@@ -132,7 +132,7 @@ export default function drift(pi: ExtensionAPI) {
     void (async () => { await (await store(ctx))?.engage(reason); })().catch(() => {});
   }
 
-  /** A stale index degrades navigation only; it never blocks the record or the session. */
+  /** Refresh the readable view separately; pickup and recent context query raw artifacts. */
   async function refreshIndex(repo: string, ctx: ExtensionContext) {
     try {
       // Where drift/ lives is also stated in every turn's context; the notice is for the first sight of an odd layout.
@@ -142,7 +142,7 @@ export default function drift(pi: ExtensionAPI) {
       if (await syncIndex(repo)) ctx.ui.notify("Drift rebuilt drift/INDEX.md from the repository's artifacts", "info");
       await installIndexDriver(repo, ctx);
     } catch (error) {
-      const content = `Drift could not refresh drift/INDEX.md: ${errorText(error)}\nRecording continues; the index is rebuilt on the next publication or session.`;
+      const content = `Drift could not refresh drift/INDEX.md: ${errorText(error)}\nRecording continues; pickup and recent navigation read raw artifacts, not this view. The view is rebuilt on the next publication or session.`;
       pi.sendMessage({ customType: "drift-index", content, display: true });
       if (ctx.mode === "rpc") ctx.ui.notify(content, "warning");
     }
@@ -275,7 +275,7 @@ export default function drift(pi: ExtensionAPI) {
       continuationQueued = false;
       // The same citation grading /drift gets: what to re-check before relying on the handoff.
       const note = await citationNote(repo, (await artifactStore(repo)).root, route.path, citationLedger()).catch(() => undefined);
-      await pi.sendUserMessage(`Continue the work recorded in the Drift handoff at \`${route.path}\`. Follow the handoff workflow: read this handoff and its referenced source documents, inspect the recent project artifact index, then continue from its Next Steps. Do not re-research completed work.${note ? `\n\n${note}` : ""}`);
+      await pi.sendUserMessage(`Continue the work recorded in the Drift handoff at \`${route.path}\`. Follow the handoff workflow: read this handoff and its referenced source documents, inspect the recent raw-artifact list, then continue from its Next Steps. Do not re-research completed work.${note ? `\n\n${note}` : ""}`);
     } catch (error) {
       pendingContinuationPath = undefined;
       continuationQueued = false;
@@ -422,6 +422,7 @@ export default function drift(pi: ExtensionAPI) {
           try {
             const repo = await records.effectiveRepo();
             if ((await changelogState(repo)).enabled) content += "\nChangelog: CHANGELOG.md is generated from changelog.d/ here. Pass changelog: { section, text } to drift_publish for a user-visible change; never edit the generated region of CHANGELOG.md.";
+            else content += "\nChangelog: Drift generation is off here. For drift_publish, use changelog: null (or omit it); an object with blank text also means no entry. Leave the repository's changelog policy unchanged unless the user chooses adoption.";
           } catch (error) {
             if (!(error instanceof WorktreeScopeError)) throw error;
             content += "\nPublication and measurement are blocked, not independent investigation. Use drift_worktree status/adopt for explicit recovery; no fallback to main.";
@@ -533,8 +534,8 @@ export default function drift(pi: ExtensionAPI) {
   pi.registerTool({
     name: "drift_publish",
     label: "Publish Drift artifact",
-    description: "Publish a research, plan or handoff artifact in Drift's active worktree (Pi's launch checkout unless explicitly adopted with drift_worktree; private artifacts may use a shared store). Supply the portable skill's Markdown body, without frontmatter. Drift supplies measured metadata, numbering, atomic file writes and a canonical index. A handoff completes only the current work interval; no session log is deleted. Correct argument validation errors before retrying; if a pending publication exists, retry identical input to recover it. Maximum body: 256 KiB.",
-    promptSnippet: "Publish Drift artifacts with measured metadata and an indexed, session-owned handoff",
+    description: "Publish a research, plan or handoff artifact in Drift's active worktree (Pi's launch checkout unless explicitly adopted with drift_worktree; private artifacts may use a shared store). Supply the portable skill's Markdown body, without frontmatter. Drift supplies measured metadata, numbering, atomic file writes and a generated readable index. A handoff completes only the current work interval; no session log is deleted. Correct argument validation errors before retrying; if a pending publication exists, retry identical input to recover it. Maximum body: 256 KiB.",
+    promptSnippet: "Publish Drift artifacts with measured metadata and a session-owned handoff",
     promptGuidelines: ["Use drift_publish for Drift research/plan/handoff files instead of writing their frontmatter or INDEX.md yourself. Read the Drift skill and relevant workflow first. New handoffs should supply a portable next_session_profile. By default publication only records the handoff: report the drift-continue command from the tool result and stop; the user decides when and where it continues. Where the repo opted in with /drift-auto-continue on, Pi compacts to the next fresh context window automatically; then do not ask the user to copy/paste a continuation command unless automatic continuation fails. Never delete Drift records or Pi session logs."],
     parameters: Type.Object({
       feature: Type.String({ description: "Confirmed project-local feature ID" }),
@@ -546,10 +547,13 @@ export default function drift(pi: ExtensionAPI) {
       previous_handoff: Type.Optional(Type.String({ description: "Existing repository-relative drift/...md path; omit or use an empty string when none" })),
       related_artifacts: Type.Optional(Type.Array(Type.String(), { description: "Existing drift/...md paths; use [] when none. Blank entries are ignored." })),
       next_session_profile: Type.Optional(Type.String({ description: "Portable lowercase-hyphenated model profile for the receiving session; handoffs only." })),
-      changelog: Type.Optional(Type.Object({
-        section: StringEnum(sections),
-        text: Type.String({ description: "Text of one changelog bullet; the renderer adds the leading '- '. Further lines continue the same bullet; no blank lines", maxLength: 4096 }),
-      }, { additionalProperties: false, description: "The change's changelog entry, written as a changelog.d/ fragment beside the artifact. Only when context says the changelog is generated here; omit otherwise." })),
+      changelog: Type.Optional(Type.Union([
+        Type.Object({
+          section: StringEnum(sections),
+          text: Type.String({ description: "Text of one changelog bullet; the renderer adds the leading '- '. Further lines continue the same bullet; no blank lines. Empty or whitespace-only text means no entry is requested", maxLength: 4096 }),
+        }, { additionalProperties: false }),
+        Type.Null(),
+      ], { description: "The change's changelog entry, written as a changelog.d/ fragment beside the artifact only when context says generation is on. Omit, pass null, or use blank text for no entry; a non-empty entry is rejected when generation is off." })),
     }, { additionalProperties: false }),
     async execute(_id, params, signal, _update, ctx) {
       return exclusive(async () => {
@@ -576,14 +580,17 @@ export default function drift(pi: ExtensionAPI) {
           try { landed = `\n${describeLanding(await land(repo, { records, message: `drift: publish ${receipt.path}` }))}`; }
           catch (error) {
             held = true;
-            landed = `\nNot landed: ${errorText(error)}\nThe handoff is published. ${config.autoContinue ? "Automatic continuation is held; fix" : "Fix"} the cause, then /drift-land.`;
+            landed = `\nNot landed: ${errorText(error)}\nThe handoff is published. ${config.autoContinue && params.status !== "complete" ? "Automatic continuation is held; fix" : "Fix"} the cause, then /drift-land.`;
             ctx.ui.notify(`Drift did not land the interval: ${errorText(error)}`, "error");
           }
         }
         const profiled = params.kind === "handoff" && Boolean(params.next_session_profile);
-        const autoContinue = profiled && !held && config?.autoContinue === true;
+        // A complete handoff closes the work: never queue or propose a continuation, even when profiled.
+        const closed = params.kind === "handoff" && params.status === "complete";
+        const autoContinue = profiled && !closed && !held && config?.autoContinue === true;
         if (autoContinue) pendingContinuationPath = receipt.path;
-        const continuation = autoContinue ? "\nA fresh profiled context window is queued automatically."
+        const continuation = closed ? "\nHandoff complete: there is no open work to continue. Nothing is queued and no drift-continue command applies."
+          : autoContinue ? "\nA fresh profiled context window is queued automatically."
           : profiled && !held ? `\nAutomatic continuation is off (the default; /drift-auto-continue on enables it). Nothing is queued; the user decides when and where to continue with: drift-continue ${receipt.path}` : "";
         return {
           content: [{ type: "text" as const, text: `Published ${receipt.path}\nIndex: drift/INDEX.md${changelog}${landed}\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${continuation}` }],

@@ -26,6 +26,23 @@ If automatic continuation cannot validate the artifact/profile/model, it leaves
 the published handoff intact and reports the error. Recover manually in a fresh
 Pi thread with `drift-continue drift/<feature>/<NNN>-handoff-<description>.md`.
 
+## Closed handoffs
+
+Continuation is for open work only. Publishing a handoff with `status:
+complete` records that its work is finished: the result says the handoff is
+complete with no open work, nothing is queued, and no `drift-continue` command
+is proposed — even when it declares a `next_session_profile` and automatic
+continuation is on. Landing and the interval receipt are unchanged, and
+retrying the same completed publication stays unqueued.
+
+`drift-continue` refuses a handoff whose status is `complete` or `superseded`
+before resolving any profile or model, so the current model is unchanged. A
+superseded refusal reports the recorded `superseded_by` replacement (or that
+none is recorded, or that the reference is invalid or missing) but never
+continues the replacement automatically; continue that artifact explicitly if
+it is the right one. To revisit a closed handoff, use `/drift <path>` and
+confirm reopening. Legacy handoffs with no status still continue as before.
+
 ## Model profiles
 
 Configure defaults at `~/.pi/agent/drift-model-profiles.json` (or Pi's configured

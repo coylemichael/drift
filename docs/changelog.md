@@ -27,7 +27,19 @@ where generation is on,
 unions entries by id on rebase and three-way merges the hand-written parts.
 
 `drift_publish` takes an optional `changelog: { section, text }` and writes the
-fragment beside the artifact in the same transaction:
+fragment beside the artifact in the same transaction. When no entry is requested,
+omit `changelog` or pass `null`; an object with a supported `section` and empty or
+whitespace-only `text` also means no entry. These forms normalise identically before
+retry matching and create no fragment, whether generation is on or off.
+
+A non-empty entry still requires generation to be on. If rejected before publication
+starts, retry with `changelog: null` instead of repeating the rejected arguments or
+rewriting the artifact body. Do not adopt a changelog just to unblock publication:
+that is the user's policy choice. If an earlier publication is already pending,
+preserve its original input and resolve the blocker; removing a real changelog entry
+cannot bypass pending-publication protection.
+
+A requested entry produces a fragment such as:
 
 ```text
 changelog.d/cards-pass-043-ledger-recut.md

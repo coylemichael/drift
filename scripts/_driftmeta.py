@@ -30,7 +30,7 @@ FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?", re.DOTALL)
 
 def scalar(block, key):
     """Read a flat `key: value` scalar out of a frontmatter block."""
-    match = re.search(rf"^{key}:\s*(.+?)\s*$", block, re.MULTILINE)
+    match = re.search(rf"^{key}:[ \t]*(.*?)[ \t]*$", block, re.MULTILINE)
     if not match:
         return None
     value = match.group(1).strip().strip('"').strip("'")

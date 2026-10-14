@@ -22,8 +22,12 @@ Verdicts per citation:
 Modes:
     exact      the frontmatter carries `anchors` written by the publisher (content
                hashes per citation): grading is a proof, not a guess.
-    heuristic  older artifacts without anchors: the expectation is reconstructed
-               from `git show <git_commit>:<path>`, resolving paths by unique suffix.
+    heuristic  citations without anchors: expectation reconstructed from the recorded commit
+    mixed      some citations have anchors and others use heuristic/unverified evidence
+
+Anchor capture coverage is reported separately from these freshness modes. New publishers
+record complete/partial/not-applicable accounting; absence on older artifacts is not-recorded,
+never inferred complete. Invalid coverage metadata is advisory and does not block checking.
 
 This is a report, not a gate: it never writes anything, and it exits 0 whenever the
 report was produced regardless of verdicts (1 is a usage or IO error). Similarity uses
@@ -45,12 +49,12 @@ from _driftmeta import FRONTMATTER, anchor_hash, git, normalize_lines, scalar
 # timestamps (2026-10-10T18:33) and URL ports out; the lookbehind keeps scheme tails out.
 CITATION = re.compile(
     r"(?<![\w:/\\])(?P<path>[A-Za-z0-9_][A-Za-z0-9_.\-]*(?:[\\/][A-Za-z0-9_.\-]+)*\.[A-Za-z][A-Za-z0-9]{0,7})"
-    r":(?P<start>\d+)(?:-(?P<end>\d+))?")
-BARE = re.compile(r"\A:(?P<start>\d+)(?:-(?P<end>\d+))?\Z")
+    r":(?P<start>\d+)(?:-(?P<end>\d+))?", re.ASCII)
+BARE = re.compile(r"\A:(?P<start>\d+)(?:-(?P<end>\d+))?\Z", re.ASCII)
 CODE_SPAN = re.compile(r"`([^`\n]+)`")
 
 
-def extract_citations(body):
+def extract_citations(body, include_invalid=False):
     """Ordered, deduplicated citations: (path, start, end). Backticked bare `:N` refs
     continue the most recent cited path, the way this repo's research artifacts write them."""
     found = []  # (position, path, start, end)
@@ -65,17 +69,17 @@ def extract_citations(body):
         bare = BARE.match(span.group(1).strip())
         if not bare:
             continue
-        earlier = [f for f in found if f[0] < span.start()]
-        if not earlier:
+        earlier = max((f for f in found if f[0] < span.start()), key=lambda f: f[0], default=None)
+        if earlier is None:
             continue  # A bare ref before any pathed one has nothing to continue.
         start = int(bare.group("start"))
         end = int(bare.group("end") or start)
-        found.append((span.start(), earlier[-1][1], start, end))
+        found.append((span.start(), earlier[1], start, end))
     found.sort()
     seen, citations = set(), []
     for _, path, start, end in found:
         key = (path, start, end)
-        if key not in seen and end >= start:
+        if key not in seen and (include_invalid or end >= start):
             seen.add(key)
             citations.append({"path": path, "start": start, "end": end})
     return citations
@@ -168,6 +172,82 @@ def grade(repo, names, citation, expected_text, expected_hash, resolved):
     return {"verdict": "gone"}
 
 
+SKIP_REASONS = {"unsafe-path", "file-not-found", "not-a-file", "file-too-large", "invalid-range", "read-error", "cap-reached"}
+
+
+def capture_coverage(block, anchors, body):
+    """Validate publication accounting without confusing capture with freshness or trust."""
+    present = re.search(r"^anchor_coverage:", block, re.MULTILINE)
+    if not present:
+        return {"status": "not-recorded"}
+    line = re.search(r"^anchor_coverage:[ \t]*(\{.*\})[ \t]*$", block, re.MULTILINE)
+    invalid = {"status": "invalid", "detail": "malformed or inconsistent anchor capture metadata"}
+    if not line:
+        return invalid
+    try:
+        coverage = json.loads(line.group(1))
+    except ValueError:
+        return invalid
+    if not isinstance(coverage, dict):
+        return invalid
+    eligible, captured, skipped_count = (coverage.get(key) for key in ("eligible", "captured", "skipped_count"))
+    reasons, skipped = coverage.get("skipped_by_reason"), coverage.get("skipped")
+    if (any(type(value) is not int or value < 0 for value in (eligible, captured, skipped_count))
+            or not isinstance(reasons, dict) or not isinstance(skipped, list)
+            or eligible != captured + skipped_count
+            or len(skipped) != min(skipped_count, 25)
+            or any(reason not in SKIP_REASONS or type(count) is not int or count < 1 for reason, count in reasons.items())
+            or sum(reasons.values()) != skipped_count):
+        return invalid
+    expected_status = "not-applicable" if not eligible else "partial" if skipped_count else "complete"
+    if coverage.get("status") != expected_status:
+        return invalid
+    sample_counts = {}
+    for sample in skipped:
+        if (not isinstance(sample, dict) or not isinstance(sample.get("reference"), str)
+                or not 0 < len(sample["reference"]) <= 512 or not isinstance(sample.get("reason"), str)
+                or sample["reason"] not in reasons
+                or ("reference_truncated" in sample and sample["reference_truncated"] is not True)):
+            return invalid
+        reason = sample["reason"]
+        sample_counts[reason] = sample_counts.get(reason, 0) + 1
+    if any(count > reasons[reason] for reason, count in sample_counts.items()):
+        return invalid
+    candidates = extract_citations(body, include_invalid=True)
+    candidate_keys = {(c["path"], c["start"], c["end"]) for c in candidates}
+    anchor_keys = set()
+    for anchor in anchors:
+        if (not isinstance(anchor, dict) or not isinstance(anchor.get("path"), str)
+                or type(anchor.get("start")) is not int or type(anchor.get("end")) is not int
+                or anchor["start"] < 1 or anchor["end"] < anchor["start"]
+                or not isinstance(anchor.get("sha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", anchor["sha256"])):
+            return invalid
+        key = (anchor["path"], anchor["start"], anchor["end"])
+        if key not in candidate_keys or key in anchor_keys:
+            return invalid
+        anchor_keys.add(key)
+    if len(candidates) != eligible:
+        return {"status": "invalid", "detail": "recorded eligibility disagrees with the current body; body edits or reference-grammar differences may be responsible"}
+    if len(anchor_keys) != captured:
+        return {"status": "invalid", "detail": "recorded capture count disagrees with the anchor payload"}
+    return coverage
+
+
+def coverage_summary(coverage):
+    status = coverage.get("status")
+    if status == "not-recorded":
+        return "not recorded (older/manual publisher; do not infer complete capture)"
+    if status == "invalid":
+        return f"invalid ({coverage.get('detail', 'malformed metadata')}; capture coverage is unknown)"
+    if status == "not-applicable":
+        return "not applicable (0 eligible numeric references)"
+    summary = f"{status} ({coverage['captured']}/{coverage['eligible']} captured)"
+    if coverage["skipped_count"]:
+        reasons = ", ".join(f"{count} {reason}" for reason, count in sorted(coverage["skipped_by_reason"].items()))
+        summary += f"; {coverage['skipped_count']} skipped: {reasons}"
+    return summary
+
+
 def check(artifact, repo):
     text = artifact.read_text(encoding="utf-8", errors="replace")
     match = FRONTMATTER.match(text.replace("\r\n", "\n"))
@@ -181,7 +261,14 @@ def check(artifact, repo):
             anchors = json.loads(anchor_line.group(1))
         except ValueError:
             anchors = []
-    by_range = {(a.get("path"), a.get("start"), a.get("end")): a for a in anchors if isinstance(a, dict)}
+    if not isinstance(anchors, list):
+        anchors = []
+    coverage = capture_coverage(block, anchors, body)
+    # Bad anchor payloads cannot make advisory coverage validation crash on unhashable keys.
+    by_range = {(a["path"], a["start"], a["end"]): a for a in anchors
+                if isinstance(a, dict) and isinstance(a.get("path"), str)
+                and type(a.get("start")) is int and type(a.get("end")) is int
+                and isinstance(a.get("sha256"), str) and re.fullmatch(r"[a-f0-9]{64}", a["sha256"])}
     citations = extract_citations(body)
     names = set((git(repo, "ls-files") or "").splitlines())
     pinned = commit_exists(repo, commit)
@@ -204,7 +291,10 @@ def check(artifact, repo):
         else:
             why = "no recorded commit" if not commit else ("recorded commit not in this repository" if not pinned else "cited path not in the recorded commit")
             results.append({**citation, "verdict": "uncertain", "detail": why})
-    return {"artifact": artifact.as_posix(), "mode": "exact" if anchors else "heuristic",
+    anchored = sum(bool(by_range.get((c["path"], c["start"], c["end"]), {}).get("sha256")) for c in citations)
+    mode = "mixed" if 0 < anchored < len(citations) else "exact" if anchored else "heuristic"
+    return {"artifact": artifact.as_posix(), "mode": mode, "anchor_coverage": coverage,
+            "anchor_coverage_summary": coverage_summary(coverage),
             "commit": commit, "date": scalar(block, "date"), "citations": results,
             "counts": {v: sum(1 for r in results if r["verdict"] == v) for v in ("fresh", "moved", "changed", "gone", "uncertain")}}
 
@@ -215,7 +305,15 @@ def reference(result):
 
 
 def render(report):
-    lines = [f"{report['artifact']} — {len(report['citations'])} citation(s), {report['mode']} mode"]
+    lines = [f"{report['artifact']} — {len(report['citations'])} citation(s), {report['mode']} mode",
+             "anchor capture: " + coverage_summary(report["anchor_coverage"])]
+    coverage = report["anchor_coverage"]
+    for sample in coverage.get("skipped", []):
+        suffix = " (reference truncated)" if sample.get("reference_truncated") else ""
+        lines.append(f"  capture skipped: {sample['reference']}{suffix} — {sample['reason']}")
+    omitted = coverage.get("skipped_count", 0) - len(coverage.get("skipped", []))
+    if omitted:
+        lines.append(f"  {omitted} additional skipped reference(s); totals include them all")
     for result in report["citations"]:
         extra = ""
         if result["verdict"] == "moved":

@@ -2,13 +2,15 @@
 """Rebuild drift/INDEX.md — the chronological running order of Drift artifacts.
 
 Usage:
-    build-index.py [<drift-dir>] [--check | --stdout]
+    build-index.py [<drift-dir>] [--check | --stdout | --json]
     build-index.py --merge <base> <ours> <theirs>
 
     <drift-dir>  Path to a project's drift/ directory. Defaults to ./drift.
     --check      Report whether the index is out of sync and exit non-zero
                  instead of writing. Nothing is modified.
     --stdout     Print the rendered index without writing (used by the Pi publisher).
+    --json       Query the raw artifacts in the same order, without reading or writing
+                 INDEX.md. Returns dated/undated metadata; an empty tree is successful.
     --merge      Git merge driver (%O %A %B): union the rows of two index
                  versions by artifact path, reorder by date, renumber, and
                  write the result over <ours>. Two threads that each appended a
@@ -31,6 +33,8 @@ Requires only the Python standard library (3.7+).
 """
 import datetime as dt
 import io
+import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -73,6 +77,8 @@ def parse_artifact(path, root):
         "feature": scalar(block, "feature") or (relative.parts[0] if len(relative.parts) > 1 else "-"),
         "sequence": scalar(block, "sequence") or (name_prefix.group(1) if name_prefix else "---"),
         "kind": scalar(block, "type") or (name_kind.group(1) if name_kind else "-"),
+        "status": scalar(block, "status"),
+        "superseded_by": scalar(block, "superseded_by"),
         "when": parse_date(raw_date) if raw_date else None,
         "approximate": approximate,
     }
@@ -168,6 +174,49 @@ def merge(paths):
     return 0
 
 
+def index_row(number, row):
+    """The same bounded-navigation display row used by the Markdown view and catalog."""
+    return (f"| {number:03d} | {format_date(row)} | {row['feature']} | {row['kind']} "
+            f"| [{row['title']}]({row['path']}) |")
+
+
+def catalog(dated, undated):
+    """Structured discovery from raw artifacts; never consult the persisted view."""
+    def entry(row, number=None):
+        return {
+            **{key: row[key] for key in ("path", "title", "feature", "sequence", "kind", "status", "superseded_by", "approximate")},
+            "date": row["when"].isoformat() if row["when"] else None,
+            "row": index_row(number, row) if number is not None else None,
+        }
+    return {"dated": [entry(row, number) for number, row in enumerate(dated, 1)],
+            "undated": [entry(row) for row in undated]}
+
+
+def artifact_rows(root):
+    """Read primary records without glob's silent permission-error skips or symlink traversal."""
+    paths = []
+
+    def visit(directory):
+        # iterdir raises on unreadable directories; rglob can silently omit them.
+        for path in sorted(directory.iterdir()):
+            if path.name == "INDEX.md":
+                continue
+            if path.is_symlink():
+                raise ValueError(f"Managed artifact path is a symlink: {path}")
+            if path.is_dir():
+                # Windows junctions are not is_symlink() on every supported Python.
+                if path.resolve() != path:
+                    raise ValueError(f"Managed artifact directory traverses a symlink or junction: {path}")
+                if path.suffix == ".md":
+                    raise ValueError(f"Managed artifact is not a file: {path}")
+                visit(path)
+            elif path.suffix == ".md":
+                paths.append(path)
+
+    visit(root)
+    return [parse_artifact(path, root) for path in sorted(paths)]
+
+
 def render(dated, undated):
     lines = [
         "# Drift Index",
@@ -188,11 +237,7 @@ def render(dated, undated):
         "| # | Date | Feature | Type | Artifact |",
         "|---|---|---|---|---|",
     ]
-    for number, row in enumerate(dated, 1):
-        lines.append(
-            f"| {number:03d} | {format_date(row)} | {row['feature']} | {row['kind']} "
-            f"| [{row['title']}]({row['path']}) |"
-        )
+    lines.extend(index_row(number, row) for number, row in enumerate(dated, 1))
 
     if undated:
         lines += [
@@ -224,25 +269,36 @@ def main(argv):
     if flags & {"-h", "--help"}:
         print((__doc__ or "").strip())
         return 0
-    modes = flags & {"--check", "--stdout", "--merge"}
+    modes = flags & {"--check", "--stdout", "--json", "--merge"}
     if flags - modes or len(modes) > 1 or ("--merge" in flags) != (len(args) == 3):
         print((__doc__ or "").strip(), file=sys.stderr)
         return 2
     if "--merge" in flags:
         return merge(args)
 
-    root = Path(args[0] if args else "drift").resolve()
+    raw_root = Path(os.path.abspath(args[0] if args else "drift"))
+    root = raw_root.resolve()
+    if "--json" in flags and root != raw_root:
+        print(f"error: managed artifact root traverses a symlink or junction: {raw_root}", file=sys.stderr)
+        return 1
     if not root.is_dir():
         print(f"error: not a directory: {root}", file=sys.stderr)
         return 1
 
     index_path = root / "INDEX.md"
-    rows = [parse_artifact(p, root) for p in sorted(root.rglob("*.md")) if p.name != "INDEX.md"]
+    try:
+        rows = artifact_rows(root)
+    except (OSError, ValueError) as error:
+        print(f"error: could not read Drift artifacts: {error}", file=sys.stderr)
+        return 1
+    dated, undated = ordered(rows)
+    if "--json" in flags:
+        print(json.dumps(catalog(dated, undated), ensure_ascii=False))
+        return 0
     if not rows:
         print(f"error: no Drift artifacts found under {root}", file=sys.stderr)
         return 1
 
-    dated, undated = ordered(rows)
     content = render(dated, undated)
 
     if "--stdout" in flags:

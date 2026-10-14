@@ -16,10 +16,10 @@ You are the **orchestrator** of an implementation session driven by an existing 
 ## Before Executing
 
 - Identify the **feature** from the source path (`drift/<feature>/NNN-plan-...`, `drift/<feature>/NNN-handoff-...`, or a legacy path such as `drift/<feature>/handoffs/...`). All new artifacts for this feature live directly inside that `<feature>` folder.
-- Read the plan or handoff you were pointed at.
+- Read the plan or handoff you were pointed at. If it is a `complete` plan or handoff or is `superseded`, it has no open work: report it (`<old> superseded by <new>`, or replacement not recorded) and get explicit confirmation before reopening it or executing its successor instead.
 - Read the source research document it references.
 - If the input is a handoff, also skim the previous handoff (if any) — most recent is enough; do not walk the whole chain.
-- Skim the tail of `drift/INDEX.md` for artifacts written after the plan or handoff you are executing. Work in another feature may have moved the ground under this plan; if it looks like it has, note it and adapt rather than halting.
+- Skim the recent raw-artifact list for work written after the plan or handoff you are executing (use the host's supplied list or the shared `build-index.py --json` catalog described in `SKILL.md`). Do not depend on `INDEX.md` being current or writable. Work in another feature may have moved the ground under this plan; if it looks like it has, note it and adapt rather than halting.
 - Skim the Key Files it lists to confirm they still match what's described. If a file has changed significantly, note it and adapt — do not halt.
 - Build a **step queue** from the input:
   - From a plan artifact (`NNN-plan-...`) → the Implementation Sequence
@@ -119,7 +119,7 @@ Do not push past a stopping point just to finish "one more step." A clean handof
 
 ## Writing the Final Handoff
 
-Follow `handoff.md` for format, path allocation (`NNN-handoff-<description>.md`), frontmatter (including `feature`, `sequence`, `related_artifacts`), gitignore rules, and appending the new artifact to `drift/INDEX.md`. Writing the index row is the orchestrator's job, like the handoff itself — do not delegate it, and do not let a sub-agent write one. The orchestrator's working notes should map directly onto handoff sections:
+Follow `handoff.md` for format, path allocation (`NNN-handoff-<description>.md`), frontmatter (including `feature`, `sequence`, `related_artifacts`), gitignore rules, and updating the human-readable index view where maintained. That view update belongs to the host publisher or orchestrator, like the handoff itself — do not delegate it, and do not let a sub-agent write one. The orchestrator's working notes should map directly onto handoff sections:
 
 - Completed / In progress / Not started → **Status**
 - Files changed across all steps (including sub-agent reports) → **What Changed**
@@ -136,7 +136,7 @@ After writing the handoff, update frontmatter `status` lines (and nothing else) 
 
 - **Sequence complete, all steps verified** → flip the source plan to `complete`. The new handoff carries `status: complete`.
 - **Stopping mid-sequence** (context, blocker, or bad plan) → leave the plan at `in-progress`. The new handoff carries `status: in-progress`.
-- **Input was a prior handoff** → flip that resumed handoff to `superseded`; the new handoff now represents the current state.
+- **Input was a prior handoff** → once the new handoff's publication has succeeded (after any pending retry), set the resumed handoff's `status` to `superseded` and add `superseded_by: "drift/<feature>/<new handoff>.md"` with the new handoff's exact path; it now represents the current state.
 
 ## Guidelines
 

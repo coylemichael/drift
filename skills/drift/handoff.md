@@ -72,7 +72,7 @@ Before creating `drift/` or writing the artifact, apply **Artifact Git Policy** 
 
 Create `drift/<feature>/` if it doesn't exist.
 
-After writing the artifact, append a row for it to `drift/INDEX.md` — the repo-wide chronological index. Create the index if it doesn't exist, and rebuild it from frontmatter if it has fallen out of sync with the folders. See the "Root Index" section of `SKILL.md` for the format, ordering, and rebuild rules.
+Where the human-readable `drift/INDEX.md` view is maintained, update it after writing the artifact; a host publisher owns that update where available. The view is not required for pickup or recent navigation. See the "Root Index" section of `SKILL.md` for the format, ordering, and rebuild rules.
 
 ### Path verification
 
@@ -103,9 +103,9 @@ If a session record exists, add `session_started: [the record's started value]` 
 
 ### Status updates
 
-After writing the handoff, update frontmatter `status` lines (and nothing else) on earlier artifacts in the chain — see "Artifact Status" in `SKILL.md`:
+After writing the handoff, update frontmatter lifecycle lines — `status`, plus `superseded_by` on actual supersession — and nothing else on earlier artifacts in the chain — see "Artifact Status" in `SKILL.md`:
 
-- If this handoff continues from a `previous_handoff`, flip that older handoff to `superseded` — this handoff now represents current state.
+- If this handoff continues from a `previous_handoff`, then once this handoff's publication has succeeded (after any pending retry), set that older handoff's `status` to `superseded` and add `superseded_by: "drift/<feature>/<this handoff>.md"` with this handoff's exact path — this handoff now represents current state.
 - If this session finished the work described in a plan, flip that plan to `complete`. If work remains, leave the plan at `in-progress` (flip it from `pending` if execution actually started this session).
 - Do not rename files or encode status words such as `complete` into the filename slug — status lives in frontmatter only.
 
@@ -128,6 +128,7 @@ Leave other threads' and historical records untouched. An explicitly owned legac
 ## Guidelines
 
 - **File references over prose.** `src/db/schema.py:84` beats "the schema file." But match the anchor to the tree state: a handoff is routinely written over uncommitted changes, where line numbers are wrong the moment the work is committed or rebased. For code you did not just commit, prefer symbol-shaped references — `lib/changelog.ts: syncChangelog()` — and keep `path:line` for committed state you verified this session.
+- A host publisher records anchor capture coverage: no eligible numeric references, all captured, or partial capture with skipped reasons. Symbol-shaped references are not numeric candidates; no anchors is expected in that case. Do not invent line numbers merely to get anchors, and do not treat complete capture as proof of freshness or behavioral verification. Missing legacy coverage is not-recorded, not inferred complete.
 - Be honest about state. If something is half-done or broken, say so. The next session needs the truth, not a clean narrative.
 - Keep "Codebase Context" factual. "The extraction module uses X pattern, follow it" — good. "The extraction module should be refactored" — out of scope.
 - Don't repeat the research doc. Reference it, don't restate it. The next session will read both documents.
@@ -138,12 +139,12 @@ Leave other threads' and historical records untouched. An explicitly owned legac
 
 A host overlay may continue a profiled handoff automatically; see "Host overlays" in `SKILL.md`. Otherwise, if you are pointed at an existing handoff document to **continue** work:
 
-1. Read the handoff document
+1. Read the handoff document. If it is `complete` or `superseded`, it has no open work: report it (`<old> superseded by <new>`, or replacement not recorded) and get explicit confirmation before reopening it or continuing from its successor
 2. Read the source research document it references, if any
 3. If the handoff references a previous handoff, read that too — but focus on the most recent one
 4. Infer the feature folder from the handoff path, including legacy paths such as `drift/<feature>/handoffs/...`
-5. Skim the tail of `drift/INDEX.md` to see what happened elsewhere in the repo since that handoff was written — other features may have landed changes it does not know about
+5. Skim the recent raw-artifact list (supplied by the host or queried with the shared `build-index.py --json` helper in `SKILL.md`) to see what happened elsewhere in the repo since that handoff was written — other features may have landed changes it does not know about. Do not trust a stale `INDEX.md` view
 6. Pick up at the **Next Steps** section of the handoff
 7. Do not re-investigate the codebase or re-research. Trust the handoff's description of current state
 8. If a file reference in the handoff no longer matches what's on disk, note the discrepancy and adapt — don't halt. A host may attach a citation report grading each reference (fresh / moved / changed / gone / uncertain); when one is supplied, use it to decide what to re-check instead of trusting blindly or re-verifying everything
-9. When you finish or need to stop, write a new handoff using the format above, referencing the one you resumed from as `previous_handoff` and using the next flat numbered artifact file in the same feature folder. Then flip the resumed handoff's frontmatter `status` to `superseded` per Status updates above
+9. When you finish or need to stop, write a new handoff using the format above, referencing the one you resumed from as `previous_handoff` and using the next flat numbered artifact file in the same feature folder. After it is published, supersede the resumed handoff (`status` plus `superseded_by`) per Status updates above

@@ -19,7 +19,7 @@ You are tasked with turning a research document into an actionable handoff for a
 - Read the research document provided.
 - Read any critical files it references (schemas, existing extraction code, prompts, etc.) to confirm they still match what the research describes. If a referenced file has changed significantly, note the discrepancy in Open Questions — do not re-research, but flag it so the implementation session can assess.
 - Check `drift/<feature>/` for any existing plan or handoff files on this feature.
-- If this plan replaces an earlier plan for the same work (re-planning after a failed or abandoned run), flip that older plan's frontmatter `status` to `superseded` after writing the new one. Change nothing else in the old file.
+- If this plan replaces an earlier plan for the same work (re-planning after a failed or abandoned run), supersede that older plan only after the new plan has been published successfully (after any pending retry): set its frontmatter `status` to `superseded` and add `superseded_by: "drift/<feature>/<new plan>.md"` with the exact path of the new file in this feature folder. Change nothing else in the old file; see "Artifact Status" in `SKILL.md`. If the user named a `complete` or `superseded` plan, get explicit confirmation before replanning or reopening it.
 - The current source research document convention is `drift/<feature>/NNN-research-<topic>.md`.
 
 ## Output Format
@@ -65,7 +65,7 @@ Before creating `drift/` or writing the artifact, apply **Artifact Git Policy** 
 
 Create `drift/<feature>/` if it doesn't exist.
 
-After writing the artifact, append a row for it to `drift/INDEX.md` — the repo-wide chronological index. Create the index if it doesn't exist, and rebuild it from frontmatter if it has fallen out of sync with the folders. See the "Root Index" section of `SKILL.md` for the format, ordering, and rebuild rules.
+Where the human-readable `drift/INDEX.md` view is maintained, update it after writing the artifact; a host publisher owns that update where available. The view is not required for pickup or recent navigation. See the "Root Index" section of `SKILL.md` for the format, ordering, and rebuild rules.
 
 ### Path verification
 
@@ -87,7 +87,7 @@ status: pending
 ---
 ```
 
-New plans always start at `status: pending`. The executing session (see `execute.md`) flips it to `in-progress` when execution starts and `complete` when every step is verified; it becomes `superseded` only if a newer plan replaces it. See "Artifact Status" in `SKILL.md`.
+New plans always start at `status: pending`. The executing session (see `execute.md`) flips it to `in-progress` when execution starts and `complete` when every step is verified; it becomes `superseded` (with `superseded_by` naming the replacement) only if a newer plan replaces it. See "Artifact Status" in `SKILL.md`.
 
 Take `date` from the system clock, never from an estimate or from a previous artifact's value — `date -Iseconds`, or `python3 -c 'import datetime; print(datetime.datetime.now().astimezone().isoformat(timespec="seconds"))'` where portability matters. Both print the required form with the machine's real offset. A guessed timestamp reads as measured and silently corrupts the index ordering; see "Timestamps" in `SKILL.md`.
 
