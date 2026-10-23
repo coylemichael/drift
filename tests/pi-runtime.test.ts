@@ -552,7 +552,7 @@ test("actual Pi lands a shared, tracked repository's handoff with its artifact, 
   assert.equal((await git(f.repo, ["status", "--porcelain", "--untracked-files=no"])).trim(), "");
 });
 
-test("actual Pi automatically continues a profiled handoff after a fresh context compaction where the repo opts in", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+test("actual Pi automatically continues a profiled handoff from a handoff-only context boundary where the repo opts in", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
   await fs.writeFile(join(f.repo, ".drift.json"), '{"autoContinue":true}\n');
   const state = await client.request({ type: "get_state" });
@@ -561,10 +561,27 @@ test("actual Pi automatically continues a profiled handoff after a fresh context
   const completed = await f.readRecord(state.sessionId);
   const artifact = completed.completed!.path;
   assert.ok((await fs.readFile(join(f.repo, artifact), "utf8")).includes('next_session_profile: "architecture"'));
+  // The result says a fresh window is queued and names the exact profile, model and profile file it will use.
+  const published = JSON.stringify(toolEnds(client, "drift_publish").at(-1));
+  assert.match(published, /A fresh context window is queued from this handoff alone; no summary of this conversation is carried/);
+  assert.ok(published.includes("Next model: profile architecture → drift-fixture/architecture (high), from ") && published.includes("drift-model-profiles.json"), published);
+  assert.ok(!published.includes("drift-continue"), published);
   const current = await client.request({ type: "get_state" });
   assert.equal(current.sessionId, state.sessionId);
-  await until(async () => (await client.request({ type: "get_entries" })).entries.some((entry: any) => entry.type === "compaction"), "profiled handoff did not compact to a fresh context window");
-  await until(() => f.requests.slice(requestsBeforeHandoff + 1).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + artifact + "`")), "fresh context did not send the profiled continuation prompt");
+  const boundary = await until(async () => (await client.request({ type: "get_entries" })).entries.find((entry: any) => entry.type === "compaction"), "profiled handoff did not start a fresh context window");
+  // Retain-none and extension-supplied: nothing of the old transcript is kept and no summarizer ran.
+  assert.equal(boundary.firstKeptEntryId, boundary.id);
+  assert.equal(boundary.fromHook, true);
+  assert.ok(boundary.summary.includes(artifact) && /not carried into this context window/.test(boundary.summary), boundary.summary);
+  assert.deepEqual(boundary.details, { drift: "handoff-boundary", artifact });
+  const continuation = await until(() => f.requests.slice(requestsBeforeHandoff + 1).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + artifact + "`")), "fresh context did not send the profiled continuation prompt");
+  // The publishing run made exactly two requests (tool call, then its answer); no summarization request followed.
+  assert.equal(f.requests.indexOf(continuation) - requestsBeforeHandoff, 2, "a summarizer request ran between publication and continuation");
+  // Only the system prompt, the boundary note, Drift's lifecycle context and the continuation prompt remain.
+  const conversation = (continuation.messages ?? []).filter((message: any) => message.role !== "system");
+  const context = JSON.stringify(conversation);
+  assert.ok(!context.includes("PUBLISH_AUTO_HANDOFF") && !conversation.some((message: any) => message.role === "tool" || message.tool_calls?.length), `the old transcript reached the fresh context window: ${context.slice(0, 2000)}`);
+  assert.ok(context.includes("Drift handoff boundary"), context);
   await fs.mkdir(join(f.repo, "drift/runtime"), { recursive: true });
   await fs.writeFile(join(f.repo, "drift/runtime/099-handoff-unprofiled.md"), '---\ntype: "handoff"\n---\n');
   const requestsBeforeFailure = f.requests.length;
@@ -573,7 +590,7 @@ test("actual Pi automatically continues a profiled handoff after a fresh context
   assert.equal(f.requests.length, requestsBeforeFailure);
 });
 
-test("actual Pi leaves a profiled handoff manual by default and still honours drift-continue later", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+test("actual Pi leaves a profiled handoff manual by default, and /drift picks it up on the selected model", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
   const state = await client.request({ type: "get_state" });
   await client.prompt("PUBLISH_AUTO_HANDOFF");
@@ -582,14 +599,16 @@ test("actual Pi leaves a profiled handoff manual by default and still honours dr
   assert.ok((await fs.readFile(join(f.repo, artifact), "utf8")).includes('next_session_profile: "architecture"'));
   const published = JSON.stringify(toolEnds(client, "drift_publish").at(-1));
   assert.match(published, /Automatic continuation is off \(the default/);
-  assert.ok(published.includes(`drift-continue ${artifact}`), published);
-  assert.ok(!published.includes("queued automatically"), published);
-  await delay(1000); // agent_settled has run by now; nothing may have queued a compaction.
-  assert.ok(!(await client.request({ type: "get_entries" })).entries.some((entry: any) => entry.type === "compaction"), "the manual default still compacted to a fresh context window");
-  // The published handoff stays manually continuable, with the profile honoured.
+  assert.ok(published.includes(`The user runs /drift to pick up the latest work, or /drift ${artifact}, on the model they have selected`), published);
+  assert.ok(!published.includes("drift-continue") && !published.includes("queued\\n") && !published.includes("fresh context window is queued"), published);
+  await delay(1000); // agent_settled has run by now; nothing may have started a fresh context window.
+  assert.ok(!(await client.request({ type: "get_entries" })).entries.some((entry: any) => entry.type === "compaction"), "the manual default still started a fresh context window");
+  // /drift picks up the newest artifact (this handoff) and keeps the selected model; profiles are automatic-only.
   const requestsBefore = f.requests.length;
-  await client.request({ type: "prompt", message: `drift-continue ${artifact}` });
-  await until(() => f.requests.slice(requestsBefore).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + artifact + "`")), "manual drift-continue did not send the profiled continuation prompt");
+  await client.request({ type: "prompt", message: "/drift" });
+  const pickup = await until(() => f.requests.slice(requestsBefore).find((request) => JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + artifact + "`")), "/drift did not pick up the published handoff");
+  assert.equal(pickup.model, "fixture");
+  assert.ok(!f.requests.slice(requestsBefore).some((request) => request.model === "architecture"), "/drift switched to the handoff's profile model");
 });
 
 test("actual Pi never continues a complete handoff, and drift-continue refuses complete and superseded handoffs without following a replacement", { skip: !piPresent, timeout: 90_000 }, async (t) => {
@@ -1031,7 +1050,7 @@ test("actual Pi refuses adoption while a profiled continuation is queued, keeps 
   const initial = await f.readRecord(state.sessionId);
   const requestsBefore = f.requests.length;
   const mark = client.events.length;
-  // Publish a profiled handoff, then adopt in the next tool round, before agent_settled queues compaction.
+  // Publish a profiled handoff, then adopt in the next tool round, before the run settles and its fresh window starts.
   await client.prompt("PUBLISH_AUTO_THEN_ADOPT ../worker");
   const [published] = toolEnds(client, "drift_publish", mark);
   assert.ok(published && !published.isError, JSON.stringify(published));
@@ -1184,7 +1203,9 @@ test("actual Pi repeats handoff continuation with a stale skill and stops on the
   assert.equal(record.receipts.length, 1); // Receipts belong to the current work interval.
   assert.deepEqual((await fs.readdir(join(f.repo, "drift/runtime"))).sort(), ["001-handoff-chain.md", "002-handoff-chain.md", "003-handoff-chain.md"]);
   const entries = await client.request({ type: "get_entries" });
-  assert.equal(entries.entries.filter((entry: any) => entry.type === "compaction").length, 2);
+  const boundaries = entries.entries.filter((entry: any) => entry.type === "compaction");
+  assert.equal(boundaries.length, 2);
+  assert.ok(boundaries.every((entry: any) => entry.firstKeptEntryId === entry.id && entry.fromHook === true), "a continuation kept part of the old transcript");
   const continuations = f.requests.filter((request) => request.model === "architecture" && systemText(request).includes("available_skills"));
   assert.ok(continuations.length >= 2);
   for (const request of continuations) {

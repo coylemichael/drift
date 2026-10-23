@@ -12,7 +12,7 @@ import { pickup } from "../lib/pickup.ts";
 import { attributeFor, hasAttribute, indexDriverCommand, installDriver } from "../lib/git-drivers.ts";
 import { ensureIndexAttribute, hasArtifacts, publish, setArtifactTracking, syncIndex } from "../lib/artifacts.ts";
 import type { ArtifactInput } from "../lib/artifacts.ts";
-import { loadModelProfiles, readHandoffRoute } from "../lib/routing.ts";
+import { describeProfile, loadModelProfiles, modelProfileSources, readHandoffRoute } from "../lib/routing.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const sections = ["Objective", "Source Documents", "Status", "What Changed", "Codebase Context", "What Deviated from Plan", "Open Questions", "Next Steps"];
@@ -401,6 +401,15 @@ test("model profile configuration and handoff route parsing stay local and path-
   assert.deepEqual(await loadModelProfiles(repo, agent, false), {
     implementation: { provider: "global", model: "global-model", thinkingLevel: "medium" },
   });
+  // What automatic continuation reports: the files it reads (project overrides by name) and what each profile selects.
+  const sources = await modelProfileSources(repo, agent, true);
+  assert.deepEqual(sources.files, [join(agent, "drift-model-profiles.json"), join(repo, ".pi/drift-model-profiles.json")]);
+  assert.deepEqual(sources.profiles, trusted);
+  assert.deepEqual((await modelProfileSources(repo, agent, false)).files, [join(agent, "drift-model-profiles.json")]);
+  assert.equal(describeProfile("implementation", trusted.implementation), "implementation → project/project-model (high)");
+  assert.equal(describeProfile("architecture", trusted.architecture), "architecture → project/architecture-model");
+  const empty = await fs.mkdtemp(join(agent, "..", "no-profiles-"));
+  assert.deepEqual(await modelProfileSources(repo, empty, false), { files: [], defaultFile: join(empty, "drift-model-profiles.json"), profiles: {} });
   const handoff = "drift/routing/001-handoff-fixture.md";
   await fs.mkdir(join(repo, "drift/routing"), { recursive: true });
   await fs.writeFile(join(repo, handoff), '---\ntype: "handoff"\nnext_session_profile: "architecture"\n---\n\n## Next Steps\nResume.\n');
@@ -816,7 +825,10 @@ test("Drift configuration accepts trackArtifacts, changelog, autoContinue and la
   assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { changelog: true, autoContinue: false, land: { check: "pytest -q" } });
   assert.match(await setAutoContinue(repo, "off"), /already off; nothing needed changing/);
   assert.match(await setAutoContinue(repo, "status"), /off \(the default\)/);
-  assert.match(await setAutoContinue(repo, "on"), /now on: set autoContinue to true in \.drift\.json/);
+  assert.match(await setAutoContinue(repo, "status"), /Run \/drift to pick up the latest work, or \/drift <file>, on the model you have selected/);
+  assert.doesNotMatch(await setAutoContinue(repo, "status"), /drift-continue|compact/);
+  assert.match(await setAutoContinue(repo, "on"), /now on: set autoContinue to true in \.drift\.json\. The next profiled handoff starts a fresh context window from the handoff alone/);
+  assert.match(await setAutoContinue(repo, "status"), /no summary of the previous conversation/);
   assert.equal((await driftConfig(repo)).autoContinue, true);
   for (const text of ['{"changelog":"yes"}', '{"land":{"auto":"yes"}}', '{"land":{"check":1}}', '{"changelog":{"tag":"v*"}}', '{"changelog":{"tags":""}}', '{"land":"auto"}', '{"autoContinue":"yes"}', '{"other":1}']) {
     await fs.writeFile(join(repo, ".drift.json"), text);

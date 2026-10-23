@@ -75,6 +75,20 @@ export async function loadModelProfiles(repo: string, agentDir: string, projectT
   return { ...global, ...local };
 }
 
+/** The profile files automatic continuation reads, in precedence order (a trusted project file overrides by name), and their merged profiles. */
+export async function modelProfileSources(repo: string, agentDir: string, projectTrusted: boolean, projectConfigDir = ".pi"): Promise<{ files: string[]; defaultFile: string; profiles: Record<string, ModelProfile> }> {
+  const defaultFile = join(agentDir, configName);
+  const candidates = [defaultFile, ...(projectTrusted ? [join(repo, projectConfigDir, configName)] : [])];
+  const files: string[] = [];
+  for (const file of candidates) if (await exists(file)) files.push(file);
+  return { files, defaultFile, profiles: await loadModelProfiles(repo, agentDir, projectTrusted, projectConfigDir) };
+}
+
+/** `implementation → github-copilot/claude-opus-5.5 (high)`: what a profile selects, as the user configured it. */
+export function describeProfile(name: string, profile: ModelProfile): string {
+  return `${name} → ${profile.provider}/${profile.model}${profile.thinkingLevel ? ` (${profile.thinkingLevel})` : ""}`;
+}
+
 function frontmatterString(frontmatter: string, name: string): string | undefined {
   const line = frontmatter.split(/\r?\n/).find((candidate) => candidate.startsWith(`${name}:`));
   if (!line) return undefined;

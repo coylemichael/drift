@@ -59,17 +59,16 @@ command (or `status`) only reports.
 
 | Command | What it does |
 | --- | --- |
-| `/drift [artifact \| request]` | The entry point: picks up the newest artifact from the raw files, the one you name, or passes any other request to the Drift skill. |
-| `drift-continue <handoff>` | Continues a published handoff, switching to its declared `next_session_profile` before inference. Bare on purpose — no leading slash — so hosts that reserve `/` pass it through; run it in a fresh thread. ([details](docs/continuation.md)) |
+| `/drift [artifact \| request]` | The entry point: picks up the newest artifact from the raw files, the one you name, or passes any other request to the Drift skill, on the model you have selected. |
 | `/drift-worktree [status \| <path>]` | Shows the launch repo, active Drift root and record, or adopts an existing linked worktree of the same repository. ([details](docs/worktrees.md)) |
 | `/drift-track-artifacts on\|off\|status` | Whether this repo's `drift/` artifacts are committed to Git or stay private (ignored). ([details](docs/artifact-git-policy.md)) |
 | `/drift-changelog on\|off\|status` | Whether `CHANGELOG.md` is generated from `changelog.d/` fragments (never automatic: on where a committed `CHANGELOG.md` carries Drift's markers or `.drift.json` turns it on). ([details](docs/changelog.md)) |
-| `/drift-auto-continue on\|off\|status` | Whether publishing a profiled handoff automatically compacts and continues in a fresh context window. Off by default: you decide if a handoff goes into a new thread. ([details](docs/continuation.md)) |
+| `/drift-auto-continue on\|off\|status` | Whether each profiled handoff automatically starts a fresh context window from the handoff alone, on the model your profile map assigns. Off by default: you pick up with `/drift`. ([details](docs/continuation.md)) |
 | `/drift-land` | Lands the current branch on origin's default branch: fetch, rebase, verify, check, push; never squash or force. ([details](docs/landing.md)) |
 
 ## Workflow
 
-![Four Drift modes — research, plan, execute, handoff — each landing as a numbered artifact, with drift-continue looping a fresh session back to pick up the handoff.](assets/workflow-loop.svg)
+![Four Drift modes — research, plan, execute, handoff — each landing as a numbered artifact, with the next session picking up the handoff.](assets/workflow-loop.svg)
 
 | Mode | Use |
 | --- | --- |
@@ -202,15 +201,24 @@ A handoff may declare the next task's portable profile: `research`, `planning`,
 or `implementation`. The model that performed the work writes its own handoff;
 the profile selects the model for the **next** independent task.
 
-By default the chain stops at publication: nothing is queued, the tool result
-names the `drift-continue` command, and you decide if, when and in which thread
-the work continues. `/drift-auto-continue on` opts a repository in: publishing
-a profiled handoff then compacts to a fresh context window, resolves the
-profile through your model map (`~/.pi/agent/drift-model-profiles.json`), and
-continues the recorded work with minimal durable context rather than the old
-transcript. Validation failures leave the handoff intact and name the manual
-recovery. The profile file format, trusted-project overrides and the current
-starting policy: [docs/continuation.md](docs/continuation.md).
+Continuation has exactly two modes. With auto-continue off (the default), a
+published handoff is only recorded: you run `/drift` to pick up the latest work,
+or `/drift <file name, path or link>` to pick up that artifact, in whatever
+thread you choose. `/drift` always uses the model you have selected; it never
+switches models or profiles.
+
+`/drift-auto-continue on` (stored as `"autoContinue": true` in the repo's
+`.drift.json`) turns on the automatic chain: after each profiled handoff whose
+work remains, Drift starts a fresh context window from the handoff alone — no
+summary of the previous conversation and no transcript tail; the raw history
+stays in the Pi session file — on the model that the handoff's
+`next_session_profile` maps to in your profile map
+(`~/.pi/agent/drift-model-profiles.json`, optionally overridden by a trusted
+project's `.pi/drift-model-profiles.json`). If the profile, model or
+authentication fails, the automatic step stops visibly and you can run
+`/drift <handoff>` to pick it up on your selected model. A `complete` handoff
+never continues. The profile file format, what `on`/`status` show and the
+current starting policy: [docs/continuation.md](docs/continuation.md).
 
 ## User decision checkpoints
 
@@ -239,8 +247,8 @@ read failures are reported rather than hidden behind a stale index; undated-only
 stores ask you to name an artifact instead of guessing. For a read-only catalog in
 other hosts, run `python3 -I scripts/build-index.py /path/to/project/drift --json`
 from the Drift checkout (`py -3` on Windows).
-It keeps the current model; `drift-continue <handoff>` is the variant that switches
-to the handoff's `next_session_profile`. In Zed, `/drift` appears in the `/` menu
+`/drift` always keeps the model you have selected; profiles apply only to automatic
+continuation. In Zed, `/drift` appears in the `/` menu
 as a Pi prompt command and needs no adapter patch. Other hosts follow the same
 pick-up rule from `SKILL.md` when you ask to "pick up" without naming an artifact.
 

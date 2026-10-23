@@ -59,7 +59,7 @@ If the adopted worktree is removed or its Git directory is recreated, Drift
 operations fail and name it; there is no silent fallback to the launch repo.
 `status` and `adopt` still work: explicitly adopt another root, or the recreated
 worktree, to take a fresh baseline. If a queued continuation stalls, status names
-the artifact to recover with `drift-continue`; reload clears the in-memory queue
+the artifact to pick up with `/drift <file>`; reload clears the in-memory queue
 without removing the artifact.
 
 Workers should adopt their assigned worktree before any substantive work; the

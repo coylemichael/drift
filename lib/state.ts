@@ -177,7 +177,7 @@ export interface DriftConfig {
   trackArtifacts: boolean;
   /** `auto`: on only where the committed CHANGELOG.md carries Drift's markers; never adopts. `on`/`off`: the repo's explicit override. */
   changelog: { mode: "auto" | "on" | "off"; tags: string };
-  /** Whether publishing a profiled handoff compacts and continues in a fresh context window itself. Off unless the repo opts in. */
+  /** Whether a profiled handoff starts a fresh context window from the handoff alone, on its profile's model. Off unless the repo opts in; then /drift picks up on the selected model. */
   autoContinue: boolean;
   land: { auto: boolean; check: string[] } | undefined;
 }
@@ -244,14 +244,14 @@ export type AutoContinueRequest = "on" | "off" | "status";
 export async function setAutoContinue(repo: string, request: AutoContinueRequest): Promise<string> {
   const current = (await driftConfig(repo)).autoContinue;
   if (request === "status") return current
-    ? "Drift automatic continuation is on for this repo: publishing a profiled handoff compacts to a fresh context window and continues there. /drift-auto-continue off returns to the manual default."
-    : "Drift automatic continuation is off (the default): a profiled handoff is only published; continue it when you choose with drift-continue drift/<feature>/<NNN>-handoff-<description>.md. /drift-auto-continue on enables the automatic chain.";
+    ? "Drift automatic continuation is on for this repo: each profiled handoff starts a fresh context window from the handoff alone (no summary of the previous conversation), on the model its profile maps to. /drift-auto-continue off returns to manual pickup with /drift."
+    : "Drift automatic continuation is off (the default): a handoff is only published. Run /drift to pick up the latest work, or /drift <file>, on the model you have selected. /drift-auto-continue on starts each profiled handoff's next context window automatically.";
   const enable = request === "on";
   if (enable === current) return `Drift automatic continuation is already ${request}; nothing needed changing.`;
   await updateConfig(repo, { autoContinue: enable });
   return enable
-    ? "Drift automatic continuation is now on: set autoContinue to true in .drift.json. The next profiled handoff compacts and continues itself."
-    : "Drift automatic continuation is now off: set autoContinue to false in .drift.json. A profiled handoff is only published (and landed where land.auto is set); continue when ready with drift-continue <handoff path>.";
+    ? "Drift automatic continuation is now on: set autoContinue to true in .drift.json. The next profiled handoff starts a fresh context window from the handoff alone, on the model its profile maps to."
+    : "Drift automatic continuation is now off: set autoContinue to false in .drift.json. A handoff is only published (and landed where land.auto is set); run /drift to pick it up on the model you have selected.";
 }
 
 /** Host-neutral, repo-local opt-in. Never infer consent from tracked history. */

@@ -5,53 +5,73 @@ model for the next independent task.
 
 A handoff may declare the next task's portable profile: `research`, `planning`,
 or `implementation`. The model that performed the work writes its own handoff;
-the profile selects the model for the **next** independent task.
+the profile selects the model for the **next** independent task, but only when
+automatic continuation is on. Continuation has exactly two modes.
 
-By default the chain stops at publication: the profiled handoff is recorded —
-and still lands itself where `land.auto` is set (see [landing.md](landing.md)) —
-nothing is queued, and the
-tool result names the `drift-continue` command; you decide if and when the
-work continues, and in which thread.
+## Manual pickup (default)
 
-`/drift-auto-continue on` opts a repository in, recording `"autoContinue":
-true` in `.drift.json`. Then, after publishing a profiled handoff, Drift
-automatically compacts to a fresh context window. It then validates the
-repository-local handoff, resolves its profile through the local model map,
-selects the model and optional thinking level, and continues the recorded
-work. Each profiled handoff therefore starts the next independent task with
-minimal durable context rather than the old transcript. `/drift-auto-continue
-off` returns to the manual default; the bare command reports status.
+With auto-continue off, publishing a handoff only records it — it still lands
+itself where `land.auto` is set (see [landing.md](landing.md)) — and nothing is
+queued. You decide if and when the work continues, and in which thread: run
+`/drift` to pick up the latest work, or `/drift <file name, path or link>` to
+pick up that artifact. `/drift` always uses the model you have selected; it
+never switches models or profiles, and it continues in whatever thread you run
+it in.
 
-If automatic continuation cannot validate the artifact/profile/model, it leaves
-the published handoff intact and reports the error. Recover manually in a fresh
-Pi thread with `drift-continue drift/<feature>/<NNN>-handoff-<description>.md`.
+## Automatic continuation
+
+`/drift-auto-continue on` turns the automatic chain on for the repository,
+recording `"autoContinue": true` in `.drift.json`; it is your toggle.
+`/drift-auto-continue off` returns to the manual default, and the bare command
+(or `status`) only reports.
+
+When it is on, each profiled handoff (one with a `next_session_profile`) whose
+work remains starts a fresh context window from the handoff alone. No summary
+of the previous conversation and no retained transcript tail is carried: the
+raw history stays in the Pi session file, it is just not sent to the model.
+The next window runs on the model that the handoff's `next_session_profile`
+maps to in your profile map (see [Model profiles](#model-profiles)) and
+follows the handoff's Next Steps. Internally the chain uses a `drift-continue`
+step that validates the handoff and selects the mapped model and thinking level
+before any inference; it is not a command you type.
+
+`/drift-auto-continue on` and `/drift-auto-continue status` show which profile
+file is used and list each profile as `name → provider/model (thinking)`. The
+`drift_publish` result names the queued profile and model.
+
+If the profile is missing or invalid, the model is unavailable or
+authentication fails, the automatic step stops visibly without inference and
+leaves the published handoff intact. Run `/drift <handoff>` to pick it up on
+the model you have selected.
 
 ## Closed handoffs
 
 Continuation is for open work only. Publishing a handoff with `status:
 complete` records that its work is finished: the result says the handoff is
-complete with no open work, nothing is queued, and no `drift-continue` command
-is proposed — even when it declares a `next_session_profile` and automatic
-continuation is on. Landing and the interval receipt are unchanged, and
-retrying the same completed publication stays unqueued.
+complete with no open work and nothing is queued — even when it declares a
+`next_session_profile` and automatic continuation is on. Landing and the
+interval receipt are unchanged, and retrying the same completed publication
+stays unqueued.
 
-`drift-continue` refuses a handoff whose status is `complete` or `superseded`
-before resolving any profile or model, so the current model is unchanged. A
-superseded refusal reports the recorded `superseded_by` replacement (or that
-none is recorded, or that the reference is invalid or missing) but never
-continues the replacement automatically; continue that artifact explicitly if
-it is the right one. To revisit a closed handoff, use `/drift <path>` and
-confirm reopening. Legacy handoffs with no status still continue as before.
+The automatic step (the internal `drift-continue`) refuses a handoff whose
+status is `complete` or `superseded` before resolving any profile or model, so
+the current model is unchanged. A superseded refusal reports the recorded
+`superseded_by` replacement (or that none is recorded, or that the reference
+is invalid or missing) but never continues the replacement automatically; pick
+that artifact up with `/drift <path>` if it is the right one. To revisit a
+closed handoff, use `/drift <path>` and confirm reopening. Legacy handoffs with
+no status still continue as before.
 
 ## Model profiles
 
 Configure defaults at `~/.pi/agent/drift-model-profiles.json` (or Pi's configured
-agent directory). A trusted project may override profiles at
+agent directory). A trusted project may override profiles by name at
 `.pi/drift-model-profiles.json` (the launch project; see
 [worktrees.md](worktrees.md)). Use Pi's **model IDs** from `pi --list-models`,
 not picker labels such as `Claude Opus 5`.
 
-The current GitHub Copilot starting policy is:
+The current GitHub Copilot starting policy is below; the models, including the
+implementation model, are only examples — map each profile to any model you have:
 
 ```json
 {
