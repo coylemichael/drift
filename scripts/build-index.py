@@ -1,33 +1,18 @@
 #!/usr/bin/env python3
-"""Rebuild drift/INDEX.md — the chronological running order of Drift artifacts.
+"""List Drift artifacts in chronological running order, from their frontmatter.
 
 Usage:
-    build-index.py [<drift-dir>] [--check | --stdout | --json]
-    build-index.py --merge <base> <ours> <theirs>
+    build-index.py [<drift-dir>] [--json]
 
     <drift-dir>  Path to a project's drift/ directory. Defaults to ./drift.
-    --check      Report whether the index is out of sync and exit non-zero
-                 instead of writing. Nothing is modified.
-    --stdout     Print the rendered index without writing (used by the Pi publisher).
-    --json       Query the raw artifacts in the same order, without reading or writing
-                 INDEX.md. Returns dated/undated metadata; an empty tree is successful.
-    --merge      Git merge driver (%O %A %B): union the rows of two index
-                 versions by artifact path, reorder by date, renumber, and
-                 write the result over <ours>. Two threads that each appended a
-                 row then rebase without a conflict. Rows removed on one side
-                 stay removed; a path with different text on both sides takes
-                 <theirs>, since the next rebuild from frontmatter is final.
+    (default)    Print the timeline table to stdout. Nothing is written.
+    --json       Print the raw-artifact catalog (dated/undated metadata, each dated
+                 entry with its display row) for the Pi extension and other hosts.
+                 An empty tree is successful.
 
-The index is a derived view: every row comes from an artifact's frontmatter, so
-this can be re-run at any time, including against a project that has Drift
-artifacts but no index yet. See the "Root Index" section of SKILL.md for the
-specification this implements.
-
-To install the merge driver in a clone (the Pi extension does this itself):
-    git config merge.drift-index.name "Drift index row merge"
-    git config merge.drift-index.driver "python3 -I /path/to/build-index.py --merge %O %A %B"
-with `drift/INDEX.md merge=drift-index` in .gitattributes. Use forward slashes
-in the path on Windows; git runs drivers through `sh -c`.
+Every row comes from an artifact's frontmatter, read fresh on each run; no view
+file is kept. `--stdout` is accepted as an alias of the default for callers that
+predate this (it used to select print-only over writing a file).
 
 Requires only the Python standard library (3.7+).
 """
@@ -45,10 +30,6 @@ from _driftmeta import FRONTMATTER, parse_date, scalar
 NAME_PREFIX = re.compile(r"(\d{3})-")
 NAME_KIND = re.compile(r"\d{3}-(research|plan|handoff)-")
 BODY_DATE = re.compile(r"^\*\*Date:\*\*\s*(\S+)", re.MULTILINE)
-# The rows this script renders, read back for --merge. Everything a row needs is in the row.
-INDEX_HEADER = "| # | Date | Feature | Type | Artifact |"
-INDEX_ROW = re.compile(r"^\| \d+ \| (?P<date>.+?) \| (?P<feature>.+?) \| (?P<kind>.+?) \| \[(?P<title>.+?)\]\((?P<path>.+?)\) \|$")
-INDEX_UNDATED = re.compile(r"^- (?P<feature>.+?) / \[(?P<title>.+?)\]\((?P<path>.+?)\)$")
 
 
 def parse_artifact(path, root):
@@ -93,60 +74,6 @@ def format_date(row):
     return f"{when:%Y-%m-%d %H:%M} {offset[:3]}:{offset[3:]}"
 
 
-def parse_index(text):
-    """Rows of a rendered index keyed by artifact path.
-
-    Returns None when the text is not a Drift index at all. An empty file is an
-    empty index: git hands the driver an empty base when the file is new on both
-    sides.
-    """
-    lines = text.replace("\r\n", "\n").split("\n")
-    if INDEX_HEADER not in lines:
-        return {} if not text.strip() else None
-    rows = {}
-    for line in lines:
-        match = INDEX_ROW.match(line)
-        if match:
-            raw = match.group("date")
-            approximate = raw.endswith(" (approx)")
-            try:
-                when = (parse_date(raw[: -len(" (approx)")]) if approximate
-                        else dt.datetime.strptime(raw, "%Y-%m-%d %H:%M %z"))
-            except ValueError:
-                when = None
-            rows[match.group("path")] = row_from_index(match, when, approximate or when is None)
-            continue
-        match = INDEX_UNDATED.match(line)
-        if match:
-            rows[match.group("path")] = row_from_index(match, None, True)
-    return rows
-
-
-def row_from_index(match, when, approximate):
-    title = match.group("title")
-    prefix = NAME_PREFIX.match(title)
-    kind_match = NAME_KIND.match(title)
-    kind = match.groupdict().get("kind") or (kind_match.group(1) if kind_match else "-")
-    return {
-        "path": match.group("path"),
-        "title": title,
-        "feature": match.group("feature"),
-        "sequence": prefix.group(1) if prefix else "---",
-        "kind": kind,
-        "when": when,
-        "approximate": approximate,
-    }
-
-
-def merge_rows(base, ours, theirs):
-    """Union by path. A row one side removed and the other left alone stays removed."""
-    rows = {**ours, **theirs}
-    for path in base:
-        if path not in ours or path not in theirs:
-            rows.pop(path, None)
-    return rows
-
-
 def ordered(rows):
     """Split and sort rows the way the index lists them."""
     dated = [r for r in rows if r["when"]]
@@ -157,25 +84,8 @@ def ordered(rows):
     return dated, undated
 
 
-def write_index(path, content):
-    # Explicit newline: the Pi publisher and the merge driver must produce identical bytes.
-    with open(path, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(content)
-
-
-def merge(paths):
-    texts = [Path(p).read_text(encoding="utf-8", errors="replace") for p in paths]
-    base, ours, theirs = (parse_index(t) for t in texts)
-    if ours is None or theirs is None:
-        print("error: --merge inputs are not Drift index files", file=sys.stderr)
-        return 1
-    dated, undated = ordered(merge_rows(base or {}, ours, theirs).values())
-    write_index(paths[1], render(dated, undated))
-    return 0
-
-
 def index_row(number, row):
-    """The same bounded-navigation display row used by the Markdown view and catalog."""
+    """The display row shared by the printed timeline and the catalog."""
     return (f"| {number:03d} | {format_date(row)} | {row['feature']} | {row['kind']} "
             f"| [{row['title']}]({row['path']}) |")
 
@@ -199,7 +109,7 @@ def artifact_rows(root):
     def visit(directory):
         # iterdir raises on unreadable directories; rglob can silently omit them.
         for path in sorted(directory.iterdir()):
-            if path.name == "INDEX.md":
+            if path.name == "INDEX.md":  # A retired generated view, never an artifact.
                 continue
             if path.is_symlink():
                 raise ValueError(f"Managed artifact path is a symlink: {path}")
@@ -219,20 +129,11 @@ def artifact_rows(root):
 
 def render(dated, undated):
     lines = [
-        "# Drift Index",
+        "# Drift artifacts",
         "",
-        "Chronological running order of every Drift artifact in this repository, oldest",
-        "first. The feature folders hold each feature's own narrative; this index holds",
-        "the cross-feature timeline, so `#` is a global running number and does **not**",
-        "match a folder's `NNN` sequence.",
-        "",
-        "Rows are sorted by the true instant of each artifact's frontmatter `date`, with",
-        "timezone offsets normalized to UTC before comparing. The Date column shows the",
-        "local wall-clock time and offset as recorded, so an artifact written in another",
-        "timezone can show an earlier wall-clock time in a later row.",
-        "",
-        "Maintained by the Drift skill: appended to whenever a new artifact is written,",
-        "and rebuildable from frontmatter at any time.",
+        "Oldest first, by the true instant of each artifact's frontmatter `date`. `#` is a",
+        "global running number, not a folder's `NNN` sequence; the Date column shows the",
+        "local wall-clock time and offset as recorded.",
         "",
         "| # | Date | Feature | Type | Artifact |",
         "|---|---|---|---|---|",
@@ -244,7 +145,7 @@ def render(dated, undated):
             "",
             "## Undated",
             "",
-            "Artifacts with no parsable `date`. Add one and rebuild to place them in order.",
+            "Artifacts with no parsable `date`. Add one to place them in order.",
             "",
         ]
         lines += [f"- {row['feature']} / [{row['title']}]({row['path']})" for row in undated]
@@ -259,8 +160,8 @@ def render(dated, undated):
 
 
 def main(argv):
-    # --stdout feeds the Pi publisher byte for byte: UTF-8 and LF everywhere, never the console
-    # code page (a cp1252 console crashes on non-cp1252 artifact titles) or text-mode translation.
+    # UTF-8 and LF everywhere, never the console code page (a cp1252 console crashes on
+    # non-cp1252 artifact titles) or text-mode translation.
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, io.TextIOWrapper):
             stream.reconfigure(encoding="utf-8", newline="\n")
@@ -269,12 +170,10 @@ def main(argv):
     if flags & {"-h", "--help"}:
         print((__doc__ or "").strip())
         return 0
-    modes = flags & {"--check", "--stdout", "--json", "--merge"}
-    if flags - modes or len(modes) > 1 or ("--merge" in flags) != (len(args) == 3):
+    # --stdout: alias of the default print mode, kept for publishers still loaded from before.
+    if flags - {"--json", "--stdout"} or len(flags) > 1 or len(args) > 1:
         print((__doc__ or "").strip(), file=sys.stderr)
         return 2
-    if "--merge" in flags:
-        return merge(args)
 
     raw_root = Path(os.path.abspath(args[0] if args else "drift"))
     root = raw_root.resolve()
@@ -285,7 +184,6 @@ def main(argv):
         print(f"error: not a directory: {root}", file=sys.stderr)
         return 1
 
-    index_path = root / "INDEX.md"
     try:
         rows = artifact_rows(root)
     except (OSError, ValueError) as error:
@@ -298,28 +196,8 @@ def main(argv):
     if not rows:
         print(f"error: no Drift artifacts found under {root}", file=sys.stderr)
         return 1
-
-    content = render(dated, undated)
-
-    if "--stdout" in flags:
-        print(content, end="")
-        return 0
-
-    if "--check" in flags:
-        current = index_path.read_text(encoding="utf-8") if index_path.exists() else None
-        if current == content:
-            print(f"{index_path}: up to date ({len(dated)} artifacts)")
-            return 0
-        print(f"{index_path}: " + ("out of date" if current else "missing"), file=sys.stderr)
-        return 1
-
-    write_index(index_path, content)
-    print(f"wrote {index_path}: {len(dated)} dated, {len(undated)} undated")
-    for row in rows:
-        if row["approximate"] and row["when"]:
-            print(f"  approximate date (no frontmatter): {row['path']}")
+    print(render(dated, undated), end="")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))

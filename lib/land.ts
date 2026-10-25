@@ -1,16 +1,10 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { changelogState } from "./changelog.ts";
-import { changelogAttributeLine, indexAttributeLine } from "./git-drivers.ts";
-import { artifactStore, driftConfig, exists, git, mergeInProgress, python, run, withLock, type DriftConfig, type Records } from "./state.ts";
-
-const indexBuilder = fileURLToPath(new URL("../scripts/build-index.py", import.meta.url));
-const changelogBuilder = fileURLToPath(new URL("../scripts/build-changelog.py", import.meta.url));
+import { driftConfig, git, mergeInProgress, withLock, type Records } from "./state.ts";
 
 /** A landing that stopped on purpose. `stage` names the step; the message says what to do. The branch is left as it was. */
-export type LandStage = "branch" | "tree" | "remote" | "conflict" | "derived" | "guard" | "check" | "push";
+export type LandStage = "branch" | "tree" | "remote" | "conflict" | "guard" | "check" | "push";
 export class LandHalt extends Error {
   readonly stage: LandStage;
   constructor(stage: LandStage, message: string) {
@@ -21,8 +15,8 @@ export class LandHalt extends Error {
 
 export interface LandOutcome { branch: string; target: string; pushed: string; attempts: number; checks: number; committed: string[]; note?: string }
 
-// Lines Drift itself puts in the two Git policy files; a diff made of nothing else is Drift's to commit.
-const knownLines = new Set(["/drift/", indexAttributeLine, changelogAttributeLine]);
+// The line Drift itself puts in .gitignore; a diff made of nothing else is Drift's to commit.
+const knownLines = new Set(["/drift/"]);
 
 async function onlyKnownLines(repo: string, file: string, untracked: boolean): Promise<boolean> {
   const lines = untracked
@@ -34,17 +28,16 @@ async function onlyKnownLines(repo: string, file: string, untracked: boolean): P
 }
 
 /**
- * A publication leaves its outputs in the tree: the artifact and index when tracked, the fragment, the regenerated
- * changelog, Drift's own policy lines. They come from the same action and hold nothing the agent decided, so the
- * landing commits them; anything else dirty is the agent's and stops the landing. Returns what was committed.
+ * A publication leaves its outputs in the tree: the artifact when tracked and Drift's own ignore line. They come
+ * from the same action and hold nothing the agent decided, so the landing commits them; anything else dirty is the agent's and stops the landing. Returns what was committed.
  */
 async function commitDriftOutputs(repo: string, message: string): Promise<string[]> {
   const entries = (await git(repo, ["status", "--porcelain", "--untracked-files=all"])).split("\n").filter(Boolean)
     .map((line) => ({ code: line.slice(0, 2), file: line.slice(3).replace(/^"(.*)"$/, "$1") }));
   const owned: string[] = [];
   for (const { code, file } of entries) {
-    if (file.startsWith("drift/") || file.startsWith("changelog.d/") || file === "CHANGELOG.md") owned.push(file);
-    else if ((file === ".gitignore" || file === ".gitattributes") && await onlyKnownLines(repo, file, code === "??")) owned.push(file);
+    if (file.startsWith("drift/")) owned.push(file);
+    else if (file === ".gitignore" && await onlyKnownLines(repo, file, code === "??")) owned.push(file);
   }
   if (!owned.length) return [];
   await git(repo, ["add", "--", ...owned]);
@@ -91,30 +84,8 @@ function shell(command: string, cwd: string): Promise<{ code: number; output: st
   });
 }
 
-/** Derived files are verified, never rewritten here: a mismatch after the rebase is something to look at, not paper over. */
-async function verifyDerived(repo: string, config: DriftConfig): Promise<void> {
-  const { root } = await artifactStore(repo, config.trackArtifacts);
-  if (config.trackArtifacts && await exists(join(root, "drift"))) {
-    try { await run(await python(), ["-I", indexBuilder, join(root, "drift"), "--check"], repo); }
-    catch (error) {
-      if (!String(error).includes("no Drift artifacts")) {
-        throw new LandHalt("derived", `drift/INDEX.md is out of sync with the artifacts after the rebase (${String(error).replace(/^.*?failed: /, "").trim()}). Rebuild it (any Drift publication or session start does), commit, and land again. Nothing was pushed.`);
-      }
-    }
-  }
-  if ((await changelogState(repo)).enabled) {
-    try { await run(await python(), ["-I", changelogBuilder, repo, "--check"], repo); }
-    catch (error) {
-      const text = String(error).replace(/^.*?failed: /, "").trim();
-      const fix = text.includes("not produced by any fragment") ? "Move those lines into changelog.d/ fragments or delete them" : "Regenerate it (a Drift publication or session start does), commit";
-      throw new LandHalt("derived", `CHANGELOG.md is out of sync after the rebase (${text}). ${fix}, and land again. Nothing was pushed.`);
-    }
-  }
-}
-
 /**
- * Land the current branch on origin's default branch: fetch, rebase (the merge drivers resolve the derived files),
- * verify derived files, guard, run the repo's checks, push, retry when the tip moved. Never squashes, never
+ * Land the current branch on origin's default branch: fetch, rebase, guard, run the repo's checks, push, retry when the tip moved. Never squashes, never
  * force-pushes, never resets against a moving ref, never commits. Serialised across this repository's worktrees.
  */
 export async function land(repo: string, options: LandOptions = {}): Promise<LandOutcome> {
@@ -123,7 +94,7 @@ export async function land(repo: string, options: LandOptions = {}): Promise<Lan
   if (!branch) throw new LandHalt("branch", "Not on a branch (detached HEAD); check out the branch to land first.");
   if (await mergeInProgress(repo)) throw new LandHalt("branch", "A merge or rebase is already in progress; finish or abort it first.");
   const dirty = (await git(repo, ["status", "--porcelain", "--untracked-files=no"])).split("\n").filter(Boolean)
-    .filter((line) => { const file = line.slice(3); return !(file.startsWith("drift/") || file.startsWith("changelog.d/") || file === "CHANGELOG.md" || file === ".gitignore" || file === ".gitattributes"); });
+    .filter((line) => { const file = line.slice(3); return !(file.startsWith("drift/") || file === ".gitignore"); });
   if (dirty.length) throw new LandHalt("tree", `Uncommitted changes to tracked files; commit or stash them first (landing never decides what to commit):\n${dirty.join("\n")}`);
   const committed = await commitDriftOutputs(repo, options.message ?? "drift: record publication outputs");
   const remaining = (await git(repo, ["status", "--porcelain", "--untracked-files=no"])).split("\n").filter(Boolean);
@@ -141,7 +112,6 @@ export async function land(repo: string, options: LandOptions = {}): Promise<Lan
         await git(repo, ["rebase", "--abort"], true);
         throw new LandHalt("conflict", `Rebase onto ${upstream} conflicts in ${conflicted.length ? conflicted.join(", ") : "the tree"}; the rebase was aborted and ${branch} is unchanged. Resolve it, then land again.${conflicted.length ? "" : `\n${String(error)}`}`);
       }
-      await verifyDerived(repo, config);
       const foreign = await landingGuard(repo, upstream);
       if (foreign.length) {
         throw new LandHalt("guard", `After the rebase, ${branch} changes files none of its own commits touch, which is how a bad squash or a stale index reverts other threads' work:\n${foreign.join("\n")}\nNothing was pushed. Inspect git diff ${upstream} -- <file> before landing.`);

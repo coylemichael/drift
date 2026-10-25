@@ -18,7 +18,7 @@ This skill is the single entrypoint for Drift. Do not split Drift into separate 
 
 If the user invokes Drift but the mode is unclear, ask whether they want research, planning, execution, or handoff/resume.
 
-If the user asks to pick up or continue without naming an artifact, query the raw artifacts through the shared read-only catalog (see "At Session Start") and take the last dated entry, never the tail of `drift/INDEX.md`. Route it by kind: an `in-progress` handoff resumes through `handoff.md`, a `pending` or `in-progress` plan runs through `execute.md`, and research goes to `plan.md`. If that newest artifact is a `complete` handoff or plan, or is `superseded`, there is no open work: say so, show the recent raw-artifact list and ask what to pick up. Do not reach back for an older open artifact. Complete research is different: it may still be planned. A named artifact always wins over the default, but if it is a `complete` plan or handoff or is `superseded`, say so (`<old> superseded by <new>`, or replacement not recorded) and get explicit confirmation before reopening it or working from its successor; never silently retarget it. If only undated artifacts exist, ask the user to name one; if discovery fails, report the failure rather than claiming there are no artifacts or trusting a stale view.
+If the user asks to pick up or continue without naming an artifact, query the raw artifacts through the shared read-only catalog (see "At Session Start") and take the last dated entry. Route it by kind: an `in-progress` handoff resumes through `handoff.md`, a `pending` or `in-progress` plan runs through `execute.md`, and research goes to `plan.md`. If that newest artifact is a `complete` handoff or plan, or is `superseded`, there is no open work: say so, show the recent raw-artifact list and ask what to pick up. Do not reach back for an older open artifact. Complete research is different: it may still be planned. A named artifact always wins over the default, but if it is a `complete` plan or handoff or is `superseded`, say so (`<old> superseded by <new>`, or replacement not recorded) and get explicit confirmation before reopening it or working from its successor; never silently retarget it. If only undated artifacts exist, ask the user to name one; if discovery fails, report the failure rather than claiming there are no artifacts or trusting a stale view.
 
 When routing to a prompt file:
 
@@ -74,7 +74,7 @@ The core of this skill is the manual baseline: it works in any agent that can re
 
 - The `drift_publish` tool is available → read `hosts/pi.md`.
 - The Drift plugin is present (agents named `drift:drift-orchestrator`, `drift:drift-research`, `drift:drift-planning`, `drift:drift-implementation` exist) → read `hosts/claude.md`.
-- Neither → follow the manual disk-writing, indexing and session-record instructions in this file and the workflow files.
+- Neither → follow the manual disk-writing and session-record instructions in this file and the workflow files.
 
 An overlay says only what it replaces. Everything it does not mention still applies.
 
@@ -92,7 +92,6 @@ Use this project-local structure for new artifacts:
 
 ```text
 drift/
-  INDEX.md
   <feature>/
     001-research-<topic>.md
     002-plan-<description>.md
@@ -120,13 +119,13 @@ When creating a new artifact file:
 4. Do not split new artifacts into `research/`, `plans/`, or `handoffs/` subfolders.
 5. If the user points to an existing Drift artifact or legacy subfolder path, infer the feature from that path and continue in the same feature folder. Preserve the existing path only when explicitly writing a follow-up for a legacy chain; otherwise write the next flat numbered file in `drift/<feature>/`.
 
-Do not maintain per-feature navigation files such as `drift/<feature>/CURRENT.md`, and do not move feature folders between status directories such as `active/` and `done/`. Within a feature, navigation comes from the numbered artifact filenames. Across features, query the raw catalog; `drift/INDEX.md` is a generated human-readable view — see below. Work state comes from each artifact's `status` frontmatter field — see Artifact Status below — never from filenames or directory moves. Do not encode status words such as `complete` into artifact filename slugs.
+Do not maintain per-feature navigation files such as `drift/<feature>/CURRENT.md`, and do not move feature folders between status directories such as `active/` and `done/`. Within a feature, navigation comes from the numbered artifact filenames. Across features, query the raw catalog — see Cross-Feature Navigation below. Work state comes from each artifact's `status` frontmatter field — see Artifact Status below — never from filenames or directory moves. Do not encode status words such as `complete` into artifact filename slugs.
 
 If later work is related to the same feature, create another numbered artifact in that feature folder rather than modifying an older artifact. If the work is a distinct feature, create a new feature folder.
 
 If the target project root is unclear, ask the user before writing any Drift artifact.
 
-"Repository root" in this skill means the checkout this session's Drift work belongs to (its **Drift root**), not necessarily the directory the agent was launched in. A worker assigned a linked worktree uses that worktree's root. A host overlay may bind it explicitly (on Pi, `drift_worktree`); changing a shell's directory does not. Verify the intended root once before publishing. If it is wrong or its policy check fails, report once that publication is blocked, do not hand-write managed artifacts, index, policy or host records to bypass the host, continue independent work, and recheck only after a relevant change or when the user asks.
+"Repository root" in this skill means the checkout this session's Drift work belongs to (its **Drift root**), not necessarily the directory the agent was launched in. A worker assigned a linked worktree uses that worktree's root. A host overlay may bind it explicitly (on Pi, `drift_worktree`); changing a shell's directory does not. Verify the intended root once before publishing. If it is wrong or its policy check fails, report once that publication is blocked, do not hand-write managed artifacts, policy or host records to bypass the host, continue independent work, and recheck only after a relevant change or when the user asks.
 
 ## Artifact Status
 
@@ -156,104 +155,48 @@ The transitions are owned by the workflow files:
 - `execute.md` — flips the source plan to `in-progress` when execution starts, and to `complete` once every step is verified.
 - `handoff.md` — writes handoffs as `in-progress` (work remains) or `complete` (work finished); supersedes the resumed handoff (status plus `superseded_by`) once its successor is published.
 
-Status is deliberately **not** an index column. `drift/INDEX.md` is an append-only timeline whose existing rows never change, while status changes over an artifact's life. To see current state, read the frontmatter: `grep -r "^status:" drift/`.
+Status is deliberately **not** a column of the recent rows. The raw catalog reports each artifact's current `status` beside its dated row, and the frontmatter stays the source of truth: `grep -r "^status:" drift/`.
 
-## The Root Index
+## Cross-Feature Navigation
 
-Feature folders answer "what happened in this feature." Their `NNN` sequences are local, so work interleaves across features in a way the file tree does not show. The shared raw-artifact catalog provides that cross-feature chronology; `drift/INDEX.md` is its human-readable timeline view.
+Feature folders answer "what happened in this feature." Their `NNN` sequences are local, so work interleaves across features in a way the file tree does not show. The shared raw-artifact catalog provides that cross-feature chronology by reading the artifacts' frontmatter directly. Drift keeps no persisted index file.
 
-If a human-readable timeline is maintained, use exactly one view, at `drift/INDEX.md`. It lists every Drift artifact in the repository in chronological order, oldest first. It is optional for navigation: pickup and recent-context discovery read the actual artifacts, not this file. Pi continues generating the view at publication and session start for compatibility; no existing view or merge driver is removed.
+Ordering rules, shared by the catalog, pickup and the recent rows:
 
-### Format
-
-A short header explaining what the index is, then one Markdown table. One row per artifact:
-
-```markdown
-| # | Date | Feature | Type | Artifact |
-|---|---|---|---|---|
-| 001 | 2026-08-28 20:30 +01:00 | auth-refactor | research | [001-research-auth-flow](auth-refactor/001-research-auth-flow.md) |
-| 002 | 2026-08-28 20:35 +01:00 | auth-refactor | plan | [002-plan-implementation](auth-refactor/002-plan-implementation.md) |
-| 003 | 2026-08-29 09:10 +01:00 | PROJ-1234 | research | [001-research-policy-flow](PROJ-1234/001-research-policy-flow.md) |
-```
-
-Column rules:
-
-- `#` — a zero-padded global running number, assigned by position in the index. It is the repo-wide running order and is **independent of** the folder-local `NNN` sequence. Do not expect them to match, and never renumber a feature folder to make them match.
-- `Date` — the artifact's frontmatter `date`, shown as local wall-clock time plus offset. Display it as recorded; do not rewrite it into another timezone.
-- `Feature` — the feature folder name.
-- `Type` — `research`, `plan`, or `handoff`, from frontmatter `type`.
-- `Artifact` — a relative link from `drift/` to the artifact, with the filename (minus `.md`) as the link text.
-
-Ordering rules:
-
-- Sort by the **true instant** of `date`, normalizing offsets to UTC before comparing. Artifacts written in different timezones are the common case in a repo with more than one machine, and a plain string sort gets them wrong: `2026-08-31T00:00:00Z` is one hour *after* `2026-08-31T00:00:00+01:00`, not before it. Because the Date column shows local time, a correctly sorted index can legitimately show an earlier wall-clock time in a later row.
-- Break ties on equal instants by feature name, then folder sequence, so the order is stable across rebuilds.
-- Oldest first, newest last. New rows append to the bottom.
-
-### Updating the Index
-
-Where the index view is maintained, update it after writing any `NNN-research-`, `NNN-plan-`, or `NNN-handoff-` file. This is view maintenance, not a discovery prerequisite; a host publisher owns it where available:
-
-1. Read `drift/INDEX.md`. Create it if missing, using the format above.
-2. Append one row for the artifact you just wrote, using the same `date` you put in its frontmatter.
-3. Set `#` to one more than the last row's number.
-4. Leave every existing row untouched.
-
-A new artifact is almost always the newest, so a plain append is correct. If you are backfilling an artifact with an older `date`, insert it in the right position instead and renumber the `#` column from that row down.
+- Sort by the **true instant** of `date`, normalizing offsets to UTC before comparing. Artifacts written in different timezones are the common case in a repo with more than one machine, and a plain string sort gets them wrong: `2026-08-31T00:00:00Z` is one hour *after* `2026-08-31T00:00:00+01:00`, not before it. Rows show local wall-clock time plus offset as recorded, so a correctly sorted listing can legitimately show an earlier wall-clock time in a later row.
+- Break ties on equal instants by feature name, then folder sequence, so the order is stable.
+- Oldest first, newest last. The `#` in each row is a repo-wide running number assigned by that position; it is **independent of** the folder-local `NNN`, and no feature folder is ever renumbered to match it.
+- An artifact with no parsable `date` is listed as undated rather than guessed. Do not backfill frontmatter into an existing artifact to fix this unless the user asks. Artifacts in legacy layouts such as `drift/<feature>/handoffs/...` still belong in the catalog under their path's feature.
 
 ### At Session Start
 
-Navigation is a read of the raw artifacts. Another host, machine or hand-written artifact may never have reached the persisted view, so do not repair or trust `INDEX.md` before choosing work.
+Navigation is a read of the raw artifacts.
 
-1. If the target repo has no `drift/` directory, do nothing. Do not create `drift/` or an empty view.
-2. Otherwise run `python3 -I <drift-checkout>/scripts/build-index.py <repo>/drift --json` (`py -3` on Windows). The script is `../../scripts/build-index.py` relative to this `SKILL.md`; resolve that path from the skill location, not the target project's cwd. It writes nothing and returns `dated` entries oldest first plus `undated` entries ordered by feature/path, with paths relative to `drift/`, kind, status, optional successor metadata (`superseded_by`, null for legacy artifacts), date and display rows (`date` and `row` are null for undated entries). Use the last dated entry for default pickup and a bounded tail (eight entries on Pi) for recent navigation. UTC ordering and tie-breaks are the same as the Markdown renderer. If a host has only the copied skill and no bundled script, manually enumerate and order the raw artifact frontmatter by the rules below; do not substitute `INDEX.md` as authority.
-3. An empty catalog means no artifacts. An undated-only catalog means chronology is unknown: ask for a named artifact. A read/parser failure is not empty work: report it, do not fall back to a stale index, and do not silently pick an older item.
+1. If the target repo has no `drift/` directory, do nothing. Do not create `drift/`.
+2. Otherwise run `python3 -I <drift-checkout>/scripts/build-index.py <repo>/drift --json` (`py -3` on Windows). The script is `../../scripts/build-index.py` relative to this `SKILL.md`; resolve that path from the skill location, not the target project's cwd. It writes nothing and returns `dated` entries oldest first plus `undated` entries ordered by feature/path, with paths relative to `drift/`, kind, status, optional successor metadata (`superseded_by`, null for legacy artifacts), date and display rows (`date` and `row` are null for undated entries). Use the last dated entry for default pickup and a bounded tail (eight entries on Pi) for recent navigation. Without `--json` the same script prints the whole cross-feature timeline as a Markdown table to stdout for a person to read; it writes no file. If a host has only the copied skill and no bundled script, manually enumerate and order the raw artifact frontmatter by the rules above.
+3. An empty catalog means no artifacts. An undated-only catalog means chronology is unknown: ask for a named artifact. A read/parser failure is not empty work: report it and do not silently pick an older item.
 
-A host may separately refresh the human-readable view. Before writing it, check Artifact Git Policy; on a mismatch leave `.gitignore` and the view alone. View maintenance writes no artifact, changes no `status`, and never stages or commits. A missing, stale, conflicting or unwritable view does not block raw-artifact navigation. Managed artifact paths must not traverse symlinks, including links to another path inside the store; discovery reports these rather than following them. Pi queries the raw catalog on each engaged context request as well as pickup, so a working Python installation and fresh filesystem scan are required—there is no index fallback or freshness cache.
-
-### Derived Files Under Many Agents
-
-The index is derived: when it disagrees with the folders, rebuild it; never edit a row, a number or the footer by hand, and never resolve a merge conflict in it by choosing a side. Two threads that each appended a row have both appended correctly; the right result is the union, reordered by date and renumbered. `python3 -I scripts/build-index.py --merge <base> <ours> <theirs>` computes exactly that and works as a git merge driver: with `drift/INDEX.md merge=drift-index` in `.gitattributes` (written by Drift when artifacts are tracked) and `merge.drift-index.driver` configured in the clone, a rebase never stops on the index. Without the driver, take either side and rebuild.
+Managed artifact paths must not traverse symlinks, including links to another path inside the store; discovery reports these rather than following them. Pi queries the raw catalog on each engaged context request as well as pickup, so a working Python installation and fresh filesystem scan are required—there is no fallback or freshness cache.
 
 **Linked worktrees.** Artifacts that are ignored never travel through git, so in a linked worktree of a repository that keeps artifacts private, Drift uses the **main worktree's** `drift/` for the whole repository: publish there, query the raw artifacts there, and treat `drift/...` paths as relative to it. The linked worktree holds no `drift/` of its own, and nothing is linked (a junction is deleted through by `git worktree remove`). A host that supplies session context says where the store is. Tracked repositories keep a `drift/` per worktree, because those artifacts commit with the branch.
 
-### Changelog Fragments
+## Landing
 
-When the repository has a `changelog.d/` folder and `CHANGELOG.md` carries the `drift:changelog` marker comments, the changelog is generated and **you never edit its generated region by hand**. Generation is adopted only by the project's explicit choice, committed; never add the markers, the `.gitattributes` line or `changelog.d/README.md` to a repository that has not chosen it. Record a user-visible change as one new file, `changelog.d/<feature>-<NNN>-<slug>.md`, named after the artifact it belongs to:
+When many threads push to one branch, land in this order and no other: commit your work; fetch; rebase onto the fresh upstream (keep both sides of any conflict in a shared file); confirm `git diff origin/<default> --name-only` lists only files your own commits touch; run the project's checks; push; if the push is rejected because the tip moved, start again from the fetch. Never squash with `git reset --soft origin/<default>` or any other moving ref, never force-push, never resolve a conflict by taking one side whole. A host may run this sequence for you after a completed handoff when the repository has opted in (`land.auto` in `.drift.json`); a halt there is a real conflict or a guard failure, and is the user's to resolve.
 
-```markdown
----
-date: "2026-10-09T16:29:21+01:00"
-section: "Changed"
-artifact: "drift/<feature>/<NNN>-handoff-<slug>.md"
----
-One Markdown bullet. Further lines continue the same bullet; no blank lines.
-```
+## Project history
 
-`section` is one of Added, Changed, Deprecated, Removed, Fixed or Security; `date` is the artifact's measured date. Two agents adding files never conflict; two agents editing one section always do. A host publisher writes the fragment for you when given a `changelog` input. The file itself is regenerated by `python3 -I scripts/build-changelog.py <repo>` in this skill repo (at publication and session start where a host automates it): entries are grouped by the first version tag whose tree contains the fragment, or by day when the repository has no version tags, so a release needs no step of its own.
+Drift maintains no changelog or index file. A project's history lives in three places:
 
-Two rules about the generated region: it is a one-way view of `changelog.d/` — to change a bullet, edit its fragment and regenerate; a bullet edited directly in the region, or a line added there without an id, is reported and left alone, and regeneration stops until the text is moved into its fragment or deleted. Text outside the markers is the project's own and is never touched. If the repository already keeps fragments another way (changesets, towncrier, or its own `changelog.d/` files without Drift's frontmatter), follow that convention instead; Drift detects these and leaves `CHANGELOG.md` alone.
+- **Commit messages.** Each states what changed and why, and names the Drift artifact path(s) it implements, such as `drift/<feature>/006-plan-<description>.md`.
+- **Handoffs.** They record what each interval did, what remains and why.
+- **The recent-artifact list.** The catalog's newest rows, supplied by the host or queried as in "At Session Start".
 
-### Landing
-
-When many threads push to one branch, land in this order and no other: commit your work; fetch; rebase onto the fresh upstream (keep both sides of any conflict in a derived or shared file, or let the merge drivers do it); confirm `git diff origin/<default> --name-only` lists only files your own commits touch; run the project's checks; push; if the push is rejected because the tip moved, start again from the fetch. Never squash with `git reset --soft origin/<default>` or any other moving ref, never force-push, never resolve a conflict by taking one side whole. A host may run this sequence for you after a completed handoff when the repository has opted in (`land.auto` in `.drift.json`); a halt there is a real conflict or a guard failure, and is the user's to resolve.
-
-### Rebuilding the Index
-
-Rebuild from scratch when the index is missing, when it has drifted out of sync with the folders, or when adopting the index in a repo that already has Drift artifacts. Frontmatter is the source of truth — the index is a derived view and can always be regenerated.
-
-To rebuild: scan `drift/**/*.md` excluding `INDEX.md`, read `date`, `feature`, `type`, and `sequence` from each artifact's frontmatter, sort by UTC-normalized instant per the ordering rules, and write the table with `#` renumbered from `001`.
-
-Two cases to handle explicitly rather than silently dropping:
-
-- **No parsable `date`.** Older artifacts may predate the frontmatter convention. Fall back to a date in the body (such as a `**Date:**` line), mark the row as approximate, and place it by that date. If there is no date at all, list the artifact under an `## Undated` heading below the table rather than guessing. Do not backfill frontmatter into an existing artifact to fix this unless the user asks.
-- **Legacy subfolder paths.** Artifacts in legacy layouts such as `drift/<feature>/handoffs/...` still belong in the index. Use the path's feature and link the real location.
-
-If a shell is available, `python3 -I scripts/build-index.py` in this skill repo does the rebuild — run it with the target repo's `drift/` directory as its argument. It is a convenience, not a dependency; the procedure above is the specification.
+To learn what a project has done, read `git log`, the recent handoffs and the recent-artifact list.
 
 ## Timestamps
 
-Every artifact's frontmatter `date` orders the index, so it has to be a real reading of the clock. **Read it from the system. Never estimate, infer, or extrapolate it.**
+Every artifact's frontmatter `date` orders the catalog and pickup, so it has to be a real reading of the clock. **Read it from the system. Never estimate, infer, or extrapolate it.**
 
 ```sh
 date -Iseconds                                                    # GNU/Linux
@@ -272,8 +215,8 @@ These are not hypothetical. Audited against git, a real repo's 86 artifacts cont
 
 Two further rules:
 
-- **Use the machine's real offset**, as the commands above do. Do not normalize to `Z` by hand. An agent running in a UTC container and one running locally will otherwise write the same moment two different ways, and the index has to reconcile them.
-- **If you genuinely cannot read a clock**, record the date at day precision and say so in the artifact rather than fabricating a time. Honest coarseness beats false precision — the index has an `(approx)` display and an `## Undated` section for exactly this.
+- **Use the machine's real offset**, as the commands above do. Do not normalize to `Z` by hand. An agent running in a UTC container and one running locally will otherwise write the same moment two different ways, and the catalog has to reconcile them.
+- **If you genuinely cannot read a clock**, record the date at day precision and say so in the artifact rather than fabricating a time. Honest coarseness beats false precision — the catalog lists an artifact without a parsable date as undated for exactly this.
 
 ## Session Records
 
@@ -289,9 +232,9 @@ Drift artifacts are local agent context and are ignored **by default**. A projec
 { "trackArtifacts": true }
 ```
 
-Read this before creating `drift/` or writing an artifact. Missing config, `{}` or `{"trackArtifacts": false}` selects the ignored default. The file must be a regular, non-symlink JSON object of at most 64 KiB, whose fields are all optional: boolean `trackArtifacts`, plus `changelog` (boolean, or an object with a `tags` glob), boolean `autoContinue` and `land` (an object with boolean `auto` and a `check` command or list of commands). Those last three configure host automation; a session without that automation leaves them alone and must not treat them as an error. Stop on malformed config or any other field rather than guessing. Do not infer opt-in from tracked history, ignore exceptions or another repo's settings. Create/change the flag only after the user chooses the policy; commit it when the repo should share that choice. When the user asks to switch to tracked artifacts: write the flag, remove only the root `drift/` ignore rule from `.gitignore`, verify with `git check-ignore --no-index` that `drift/INDEX.md` and an artifact path are no longer ignored (restoring both files and naming the rule if they are), and commit only when the user asks. A host overlay may provide this as a command.
+Read this before creating `drift/` or writing an artifact. Missing config, `{}` or `{"trackArtifacts": false}` selects the ignored default. The file must be a regular, non-symlink JSON object of at most 64 KiB, whose fields are all optional: boolean `trackArtifacts`, boolean `autoContinue` and `land` (an object with boolean `auto` and a `check` command or list of commands). Those last three configure host automation; a session without that automation leaves them alone and must not treat them as an error. Stop on malformed config or any other field rather than guessing. Do not infer opt-in from tracked history, ignore exceptions or another repo's settings. Create/change the flag only after the user chooses the policy; commit it when the repo should share that choice. When the user asks to switch to tracked artifacts: write the flag, remove only the root `drift/` ignore rule from `.gitignore`, verify with `git check-ignore --no-index` that an artifact path such as `drift/<feature>/001-research-<topic>.md` is no longer ignored (restoring the file and naming the rule if it is), and commit only when the user asks. A host overlay may provide this as a command.
 
-- **Ignored (default):** ensure repository-root `.gitignore` exists and contains `/drift/`, preserving all other contents. Verify artifact and index paths are ignored. If a negation prevents that, report the conflict; do not silently override an accepted project choice.
-- **Tracked (`true`):** leave `.gitignore` untouched. Verify artifact and index paths are not ignored, and report conflicting rules for explicit resolution. Do not force-add, stage, commit or push automatically. Review handoff contents before committing; trackable does not mean public or credential-safe.
+- **Ignored (default):** ensure repository-root `.gitignore` exists and contains `/drift/`, preserving all other contents. Verify artifact paths are ignored. If a negation prevents that, report the conflict; do not silently override an accepted project choice.
+- **Tracked (`true`):** leave `.gitignore` untouched. Verify artifact paths are not ignored, and report conflicting rules for explicit resolution. Do not force-add, stage, commit or push automatically. Review handoff contents before committing; trackable does not mean public or credential-safe.
 
 With a host publisher, it enforces this policy; do not duplicate its writes. In a linked worktree, `.drift.json` is the worktree's own branch-local copy. Under the manual baseline, perform the checks yourself (`git check-ignore --no-index` returns 0 for ignored, 1 for not ignored; other failures are errors). The setting changes Git visibility only; it never permits secrets in artifacts or deleting records/session logs.

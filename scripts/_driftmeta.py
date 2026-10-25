@@ -1,4 +1,4 @@
-"""Shared helpers for Drift's standard-library scripts (build-index, build-changelog, check-staleness).
+"""Shared helpers for Drift's standard-library scripts (build-index, check-staleness).
 
 Import pattern — every consumer runs under `python -I`, which omits the script directory from
 sys.path on all supported versions, so a bare sibling import fails. Each script must do:

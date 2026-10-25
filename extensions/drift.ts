@@ -2,11 +2,9 @@ import { CONFIG_DIR_NAME, getAgentDir, type ExtensionAPI, type ExtensionContext 
 import { join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { ensureIndexAttribute, hasArtifacts, publish, setArtifactTracking, syncIndex, trackArtifacts, type TrackingRequest } from "../lib/artifacts.ts";
-import { changelogState, sections, setChangelog, syncChangelog, type ChangelogRequest, type ChangelogSync } from "../lib/changelog.ts";
-import { attributeFor, changelogDriver, changelogDriverCommand, indexDriver, indexDriverCommand, installDriver } from "../lib/git-drivers.ts";
+import { hasArtifacts, publish, setArtifactTracking, type TrackingRequest } from "../lib/artifacts.ts";
 import { describeLanding, land } from "../lib/land.ts";
-import { artifactStore, driftConfig, exists, git, hasOrigin, Records, setAutoContinue, WorktreeScopeError, type AutoContinueRequest } from "../lib/state.ts";
+import { artifactStore, driftConfig, exists, git, Records, setAutoContinue, trackArtifacts, WorktreeScopeError, type AutoContinueRequest } from "../lib/state.ts";
 import { citationNote, pickup } from "../lib/pickup.ts";
 
 // The citation usefulness ledger: one JSONL line per checked pickup, in the agent dir, never a repo.
@@ -45,7 +43,7 @@ export default function drift(pi: ExtensionAPI) {
   let continuationQueued = false;
   let boundaryAppended: string | undefined; // The handoff whose fresh-context boundary is already in the session.
   let scopeReported: string | undefined;
-  // Commands and tools can overlap. Keep adoption outside publication's post-write changelog/landing phase too.
+  // Commands and tools can overlap. Keep adoption outside publication's post-write landing phase too.
   let operation: Promise<unknown> = Promise.resolve();
   function exclusive<T>(work: () => Promise<T>): Promise<T> {
     const result = operation.then(work);
@@ -67,15 +65,15 @@ export default function drift(pi: ExtensionAPI) {
       pendingContinuationPath = boundaryAppended = undefined;
       continuationQueued = false;
       const probe: Promise<Records | undefined> = (async () => {
-        // A new record measures after derived-file refresh. On resume refresh ONLY its persisted active root,
+        // A new record measures after session preparation. On resume prepare ONLY its persisted active root,
         // not the launch checkout, which may belong to the orchestrator by now.
         let prepared = false;
         const records = await Records.open(ctx.cwd, ctx.sessionManager.getSessionId(), getAgentDir(), async (repo) => {
-          await refreshIndex(repo, ctx);
+          await prepareSession(repo, ctx);
           prepared = true;
         });
         if (records && !prepared) {
-          try { await refreshIndex(await records.effectiveRepo(), ctx); }
+          try { await prepareSession(await records.effectiveRepo(), ctx); }
           catch (error) {
             if (!(error instanceof WorktreeScopeError)) throw error;
             reportScope(error, ctx);
@@ -136,58 +134,19 @@ export default function drift(pi: ExtensionAPI) {
     void (async () => { await (await store(ctx))?.engage(reason); })().catch(() => {});
   }
 
-  /** Refresh the readable view separately; pickup and recent context query raw artifacts. */
-  async function refreshIndex(repo: string, ctx: ExtensionContext) {
+  /** Session-start preparation for the active root, before the record measures its baseline. Never blocks recording. */
+  async function prepareSession(repo: string, ctx: ExtensionContext) {
     try {
       // Where drift/ lives is also stated in every turn's context; the notice is for the first sight of an odd layout.
       const { state } = await artifactStore(repo);
       if (state === "two-stores" && !storesReported.has(repo)) ctx.ui.notify("Drift found artifacts in this worktree's own drift/ as well as the repository's shared store in its main worktree; both are kept and this worktree keeps using its own. Move the folder's contents into the main worktree's drift/ to share them.", "warning");
       storesReported.add(repo);
-      if (await syncIndex(repo)) ctx.ui.notify("Drift rebuilt drift/INDEX.md from the repository's artifacts", "info");
-      await installIndexDriver(repo, ctx);
     } catch (error) {
-      const content = `Drift could not refresh drift/INDEX.md: ${errorText(error)}\nRecording continues; pickup and recent navigation read raw artifacts, not this view. The view is rebuilt on the next publication or session.`;
-      pi.sendMessage({ customType: "drift-index", content, display: true });
-      if (ctx.mode === "rpc") ctx.ui.notify(content, "warning");
-    }
-    // The changelog is a separate derived file; its failure must not read as an index failure.
-    try {
-      const changelog = await syncChangelog(repo);
-      if (changelog.adopted) ctx.ui.notify(`Drift set up CHANGELOG.md generation from changelog.d/ because .drift.json turns it on: ${changelog.adopted.join("; ")}. Nothing was staged or committed.`, "info");
-      if (changelog.status === "written") ctx.ui.notify("Drift regenerated CHANGELOG.md from changelog.d/", "info");
-      else if (changelog.status === "unrecognised") ctx.ui.notify(`Drift did not regenerate CHANGELOG.md: ${changelog.detail}`, "warning");
-      await installChangelogDriver(repo, ctx);
-    } catch (error) {
-      const content = `Drift could not regenerate CHANGELOG.md: ${errorText(error)}\nRecording and the index are unaffected; set "changelog": false in .drift.json if this repository keeps its changelog another way.`;
-      pi.sendMessage({ customType: "drift-changelog", content, display: true });
+      const content = `Drift could not inspect the artifact store: ${errorText(error)}\nRecording continues; pickup and recent navigation read raw artifacts.`;
+      pi.sendMessage({ customType: "drift-store", content, display: true });
       if (ctx.mode === "rpc") ctx.ui.notify(content, "warning");
     }
   }
-
-  /**
-   * A tracked repo commits its index, so two threads' copies meet at rebase. The committed attribute names the
-   * driver; the command cannot be committed, so each clone gets it here. A foreign driver is left alone.
-   */
-  async function installIndexDriver(repo: string, ctx: ExtensionContext) {
-    if (!(await trackArtifacts(repo))) return;
-    // A committed index only meets another copy where there is a shared branch: the remote is the trigger.
-    if (await hasOrigin(repo) && await ensureIndexAttribute(repo)) ctx.ui.notify('Drift added "drift/INDEX.md merge=drift-index" to .gitattributes so tracked index rows merge on rebase; commit it with your next change', "info");
-    if (await attributeFor(repo, indexDriver.path) !== indexDriver.name) return;
-    const result = await installDriver(repo, indexDriver.name, indexDriver.description, await indexDriverCommand());
-    if (result.status === "installed") ctx.ui.notify("Drift installed its drift/INDEX.md merge driver in this clone; other threads' index rows now merge on rebase", "info");
-    if (result.status === "conflict") ctx.ui.notify(`Drift left merge.${indexDriver.name}.driver as already configured (${result.existing}); the bundled driver was not installed`, "warning");
-  }
-
-  async function installChangelogDriver(repo: string, ctx: ExtensionContext) {
-    if (!(await changelogState(repo)).enabled || await attributeFor(repo, changelogDriver.path) !== changelogDriver.name) return;
-    const result = await installDriver(repo, changelogDriver.name, changelogDriver.description, await changelogDriverCommand());
-    if (result.status === "installed") ctx.ui.notify("Drift installed its CHANGELOG.md merge driver in this clone; other threads' entries now merge on rebase", "info");
-    if (result.status === "conflict") ctx.ui.notify(`Drift left merge.${changelogDriver.name}.driver as already configured (${result.existing}); the bundled driver was not installed`, "warning");
-  }
-
-  const describeSync = (sync: ChangelogSync) =>
-    sync.status === "written" ? "CHANGELOG.md regenerated" : sync.status === "unchanged" ? "CHANGELOG.md already current" :
-    sync.status === "unrecognised" ? `CHANGELOG.md not regenerated: ${sync.detail}` : sync.status === "skipped" ? `CHANGELOG.md not regenerated: ${sync.detail}` : `changelog generation is off (${sync.detail})`;
 
   function report(message: string, ctx?: ExtensionContext) {
     const content = `Drift could not establish/update its record: ${message}\nFix the cause and reload/start a fresh Pi thread. No successful recording is claimed.`;
@@ -246,7 +205,7 @@ export default function drift(pi: ExtensionAPI) {
     if (action === "adopt") {
       if (!path?.trim()) throw new Error("Provide the existing worktree root in path; relative paths resolve from Pi's fixed cwd");
       if (pendingContinuationPath) throw new Error(`Continuation queued for ${pendingContinuationPath}; finish it before switching worktrees`);
-      changed = await records.adopt(resolve(ctx.cwd, path.trim()), (repo) => refreshIndex(repo, ctx));
+      changed = await records.adopt(resolve(ctx.cwd, path.trim()), (repo) => prepareSession(repo, ctx));
       await records.engage("worktree adoption");
       scopeReported = undefined;
     } else if (path !== undefined && path.trim() !== "") throw new Error("status takes no path; omit it (an empty string is treated as omitted), or use action: adopt with a worktree root to change Drift's worktree");
@@ -364,27 +323,6 @@ export default function drift(pi: ExtensionAPI) {
     },
   });
 
-  // The user's choice to generate CHANGELOG.md from fragments. A command, never a model turn.
-  const changelogRequests = ["on", "off", "status"] as const;
-  pi.registerCommand("drift-changelog", {
-    description: "Whether CHANGELOG.md is generated from changelog.d/ (never adopted without this or a committed adoption): on, off or status",
-    getArgumentCompletions: (prefix) => changelogRequests.filter((value) => value.startsWith(prefix.trim())).map((value) => ({ value, label: value })),
-    handler: async (args, ctx) => {
-      try {
-        const request = args.trim().toLowerCase() || "status"; // A bare command is safe: it only reports.
-        if (!changelogRequests.includes(request as any)) throw new Error("Usage: /drift-changelog on|off|status (no argument shows status)");
-        engageExplicit(ctx, "user ran /drift-changelog");
-        await exclusive(async () => {
-          const repo = await activeRepo(ctx);
-          if (!repo) throw new Error("/drift-changelog requires an active Drift worktree");
-          ctx.ui.notify(await setChangelog(repo, request as ChangelogRequest), "info");
-        });
-      } catch (error) {
-        ctx.ui.notify(errorText(error), "error");
-      }
-    },
-  });
-
   // The user's choice whether a profiled handoff opens the next fresh context window itself. A command, never a model turn.
   const continueRequests = ["on", "off", "status"] as const;
   pi.registerCommand("drift-auto-continue", {
@@ -459,12 +397,9 @@ export default function drift(pi: ExtensionAPI) {
           content = await records.contextQuiet();
         } else {
           content = await records.context();
-          // The model learns whether to pass a changelog entry from context, not by trying and being refused.
           content += `\nPi working directory (unchanged): ${ctx.cwd}. Before work in an assigned linked worktree, call drift_worktree adopt with its root as a separate tool call. Do not hand-write managed artifacts to bypass a destination or policy mismatch.`;
           try {
-            const repo = await records.effectiveRepo();
-            if ((await changelogState(repo)).enabled) content += "\nChangelog: CHANGELOG.md is generated from changelog.d/ here. Pass changelog: { section, text } to drift_publish for a user-visible change; never edit the generated region of CHANGELOG.md.";
-            else content += "\nChangelog: Drift generation is off here. For drift_publish, use changelog: null (or omit it); an object with blank text also means no entry. Leave the repository's changelog policy unchanged unless the user chooses adoption.";
+            await records.effectiveRepo(); // A scope failure blocks publication; say so here rather than at the tool call.
           } catch (error) {
             if (!(error instanceof WorktreeScopeError)) throw error;
             content += "\nPublication and measurement are blocked, not independent investigation. Use drift_worktree status/adopt for explicit recovery; no fallback to main.";
@@ -585,9 +520,9 @@ export default function drift(pi: ExtensionAPI) {
   pi.registerTool({
     name: "drift_publish",
     label: "Publish Drift artifact",
-    description: "Publish a research, plan or handoff artifact in Drift's active worktree (Pi's launch checkout unless explicitly adopted with drift_worktree; private artifacts may use a shared store). Supply the portable skill's Markdown body, without frontmatter. Drift supplies measured metadata, numbering, atomic file writes and a generated readable index. A handoff completes only the current work interval; no session log is deleted. Correct argument validation errors before retrying; if a pending publication exists, retry identical input to recover it. Maximum body: 256 KiB.",
+    description: "Publish a research, plan or handoff artifact in Drift's active worktree (Pi's launch checkout unless explicitly adopted with drift_worktree; private artifacts may use a shared store). Supply the portable skill's Markdown body, without frontmatter. Drift supplies measured metadata, numbering and atomic file writes. A handoff completes only the current work interval; no session log is deleted. Correct argument validation errors before retrying; if a pending publication exists, retry identical input to recover it. Maximum body: 256 KiB.",
     promptSnippet: "Publish Drift artifacts with measured metadata and a session-owned handoff",
-    promptGuidelines: ["Use drift_publish for Drift research/plan/handoff files instead of writing their frontmatter or INDEX.md yourself. Read the Drift skill and relevant workflow first. New handoffs should supply a portable next_session_profile. By default publication only records the handoff: tell the user to run /drift (or /drift <file>) to pick it up on the model they have selected, then stop. Where the repo opted in with /drift-auto-continue on, a fresh context window starts from the handoff alone on the model the tool result names; then do not ask the user to run anything unless automatic continuation fails. drift-continue is internal; never present it as a user command. Never delete Drift records or Pi session logs."],
+    promptGuidelines: ["Use drift_publish for Drift research/plan/handoff files instead of writing their frontmatter yourself. Read the Drift skill and relevant workflow first. New handoffs should supply a portable next_session_profile. By default publication only records the handoff: tell the user to run /drift (or /drift <file>) to pick it up on the model they have selected, then stop. Where the repo opted in with /drift-auto-continue on, a fresh context window starts from the handoff alone on the model the tool result names; then do not ask the user to run anything unless automatic continuation fails. drift-continue is internal; never present it as a user command. Never delete Drift records or Pi session logs."],
     parameters: Type.Object({
       feature: Type.String({ description: "Confirmed project-local feature ID" }),
       kind: StringEnum(["research", "plan", "handoff"] as const),
@@ -598,13 +533,6 @@ export default function drift(pi: ExtensionAPI) {
       previous_handoff: Type.Optional(Type.String({ description: "Existing repository-relative drift/...md path; omit or use an empty string when none" })),
       related_artifacts: Type.Optional(Type.Array(Type.String(), { description: "Existing drift/...md paths; use [] when none. Blank entries are ignored." })),
       next_session_profile: Type.Optional(Type.String({ description: "Portable lowercase-hyphenated model profile for the receiving session; handoffs only." })),
-      changelog: Type.Optional(Type.Union([
-        Type.Object({
-          section: StringEnum(sections),
-          text: Type.String({ description: "Text of one changelog bullet; the renderer adds the leading '- '. Further lines continue the same bullet; no blank lines. Empty or whitespace-only text means no entry is requested", maxLength: 4096 }),
-        }, { additionalProperties: false }),
-        Type.Null(),
-      ], { description: "The change's changelog entry, written as a changelog.d/ fragment beside the artifact only when context says generation is on. Omit, pass null, or use blank text for no entry; a non-empty entry is rejected when generation is off." })),
     }, { additionalProperties: false }),
     async execute(_id, params, signal, _update, ctx) {
       return exclusive(async () => {
@@ -616,12 +544,6 @@ export default function drift(pi: ExtensionAPI) {
         // Finish an entered publication even if inference is cancelled: leave a receipt or retryable intent.
         const repo = await records.effectiveRepo();
         const receipt = await publish(records, params);
-        let changelog = "";
-        if (receipt.fragment) {
-          // Regeneration failing never undoes a publication; the next publication or session start retries it.
-          try { changelog = `\nFragment: ${receipt.fragment}\nChangelog: ${describeSync(await syncChangelog(repo))}`; }
-          catch (error) { changelog = `\nFragment: ${receipt.fragment}\nChangelog: not regenerated (${errorText(error)}); it is rebuilt on the next publication or session.`; }
-        }
         // A completed interval lands itself where the repo has opted in: handoff -> land -> fresh-context boundary -> continue.
         // A halt keeps the handoff, holds the continuation, and says exactly what blocked.
         let landed = "";
@@ -644,7 +566,7 @@ export default function drift(pi: ExtensionAPI) {
           : autoContinue ? `\nA fresh context window is queued from this handoff alone; no summary of this conversation is carried.\n${await continuationTarget(ctx, repo, records, receipt.path, params.next_session_profile!)}`
           : params.kind === "handoff" && !held ? `\n${config?.autoContinue ? "This handoff names no next_session_profile, so nothing is queued." : "Automatic continuation is off (the default; /drift-auto-continue on enables it). Nothing is queued."} The user runs /drift to pick up the latest work, or /drift ${receipt.path}, on the model they have selected.` : "";
         return {
-          content: [{ type: "text" as const, text: `Published ${receipt.path}\nIndex: drift/INDEX.md${changelog}${landed}\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${continuation}` }],
+          content: [{ type: "text" as const, text: `Published ${receipt.path}${landed}\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${continuation}` }],
           details: receipt,
         };
       });

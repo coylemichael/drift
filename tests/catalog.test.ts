@@ -43,7 +43,7 @@ test("raw catalog reads are empty without artifacts and never create or repair a
   await assert.rejects(fs.stat(join(repo, "drift", ".publish.lock")), { code: "ENOENT" });
 });
 
-test("JSON and Markdown views share UTC/tie/legacy order and metadata without writing", async (t) => {
+test("JSON catalog and printed timeline share UTC/tie/legacy order and metadata, and create no INDEX.md", async (t) => {
   const { repo } = await fixture(t);
   await artifact(repo, "feature/001-handoff-later.md", "date: 2026-09-01T00:00:00Z\ntype: handoff\nstatus: in-progress");
   await artifact(repo, "feature/002-plan-earlier.md", "date: 2026-09-01T00:00:00+01:00\ntype: plan\nstatus: pending");
@@ -67,7 +67,7 @@ test("JSON and Markdown views share UTC/tie/legacy order and metadata without wr
   assert.deepEqual(catalog.undated.map((entry) => entry.path), ["feature/004-handoff-invalid-date.md", "feature/no-date.md"]);
   assert.ok(catalog.undated.every((entry) => entry.date === null && entry.row === null));
 
-  const rendered = await run(await python(), ["-I", builder, join(repo, "drift"), "--stdout"], repo);
+  const rendered = await run(await python(), ["-I", builder, join(repo, "drift")], repo);
   assert.deepEqual(rendered.split("\n").filter((line) => /^\| \d+ \|/.test(line)), catalog.dated.map((entry) => entry.row));
   assert.match(rendered, /漢字/);
   await assert.rejects(fs.stat(join(repo, "drift", "INDEX.md")), { code: "ENOENT" });
@@ -144,7 +144,7 @@ test("recent lifecycle context stays bounded across 500 raw files and ignores an
   await assert.rejects(fs.stat(join(repo, "drift", ".publish.lock")), { code: "ENOENT" });
 });
 
-test("raw read failures surface honestly without a stale-index fallback", async (t) => {
+test("raw read failures surface honestly, never falling back to a leftover INDEX.md, and create no INDEX.md", async (t) => {
   const { repo, agent } = await fixture(t);
   const store = (await Records.open(repo, "catalog-error", agent))!;
   await artifact(repo, "feature/001-plan-older.md", "date: 2026-10-09T10:00:00Z\ntype: plan\nstatus: pending");

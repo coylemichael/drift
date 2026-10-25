@@ -29,10 +29,8 @@
     "lib/",
     "scripts/_driftmeta.py",
     "scripts/build-index.py",
-    "scripts/build-changelog.py",
     "scripts/check-staleness.py",
     "README.md",
-    "CHANGELOG.md",
     "assets/"
   ],
   "peerDependencies": {

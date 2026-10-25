@@ -19,7 +19,7 @@ You are the **orchestrator** of an implementation session driven by an existing 
 - Read the plan or handoff you were pointed at. If it is a `complete` plan or handoff or is `superseded`, it has no open work: report it (`<old> superseded by <new>`, or replacement not recorded) and get explicit confirmation before reopening it or executing its successor instead.
 - Read the source research document it references.
 - If the input is a handoff, also skim the previous handoff (if any) — most recent is enough; do not walk the whole chain.
-- Skim the recent raw-artifact list for work written after the plan or handoff you are executing (use the host's supplied list or the shared `build-index.py --json` catalog described in `SKILL.md`). Do not depend on `INDEX.md` being current or writable. Work in another feature may have moved the ground under this plan; if it looks like it has, note it and adapt rather than halting.
+- Skim the recent raw-artifact list for work written after the plan or handoff you are executing (use the host's supplied list or the shared `build-index.py --json` catalog described in `SKILL.md`). Work in another feature may have moved the ground under this plan; if it looks like it has, note it and adapt rather than halting.
 - Skim the Key Files it lists to confirm they still match what's described. If a file has changed significantly, note it and adapt — do not halt.
 - Build a **step queue** from the input:
   - From a plan artifact (`NNN-plan-...`) → the Implementation Sequence
@@ -44,7 +44,7 @@ For each step in the queue, decide: delegate to a sub-agent, or do it directly?
 **Never:**
 - Delegate a step whose scope you can't clearly describe. If you can't write a self-contained prompt for it, the step needs to be broken down first — flag it in Open Questions and either split it yourself or defer.
 - Delegate multiple steps in parallel if they touch the same files.
-- Ask a sub-agent to write a Drift handoff or touch `drift/INDEX.md`. Both are the orchestrator's job; sub-agents return step-level summaries only.
+- Ask a sub-agent to write a Drift handoff. That is the orchestrator's job; sub-agents return step-level summaries only.
 
 ## Sub-Agent Prompt Skeleton
 
@@ -84,7 +84,7 @@ For parallel delegation, spawn each sub-agent with its own scoped prompt in the 
 2. Decide delegate vs. direct using the heuristics above.
 3. Execute — dispatch the sub-agent(s) or do the work yourself.
 4. Verify the step landed (build/test/lint/read the file — whichever is appropriate).
-5. Record the outcome in your working notes: what changed, deviations, new discoveries.
+5. Record the outcome in your working notes: what changed, deviations, new discoveries. Commits made during execution follow §"Project history" in `SKILL.md`: say what changed and why, and name the Drift artifact path(s) they implement.
 6. If verification fails: try one or two focused fixes yourself. If still failing, stop and either surface to the user or write a handoff describing the blocker.
 7. If a result creates a genuine decision point—material scope/plan deviation, public-contract or data-model change, security/destructive/external-cost risk, or reversal of an accepted decision—ask the user with evidence and bounded options before proceeding.
 8. Move to the next step.

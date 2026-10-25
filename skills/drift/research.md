@@ -57,7 +57,6 @@ Save research documents to disk by default. Skip saving only if the user explici
 - Before creating `drift/` or writing the artifact, apply **Artifact Git Policy** in `SKILL.md`: repository-root `.drift.json` explicitly opts into tracked artifacts; missing/false uses the ignored default. With a host publisher, let it enforce the policy.
 - Create `drift/<feature>/` at the repository root if it doesn't exist.
 - Use the output format above.
-- Where the human-readable `drift/INDEX.md` view is maintained, update it after writing the artifact; a host publisher owns that update where available. The view is not required for pickup or recent navigation. See the "Root Index" section of `SKILL.md` for the format, ordering, and rebuild rules.
 
 ### Path verification
 

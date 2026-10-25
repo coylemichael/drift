@@ -143,11 +143,7 @@ async function fixture(t: any, broken = false) {
     const publish = (/^PUBLISH_(RESEARCH|HANDOFF|AUTO_HANDOFF)/.test(marker) || (chainStep > 0 && chainStep <= 3)) && !messages.slice(user + 1).some((message: any) => message.role === "tool");
     const kind = marker.startsWith("PUBLISH_RESEARCH") ? "research" : "handoff";
     // Real models may fill optional string fields with "" rather than omit them.
-    const changelog = /^PUBLISH_(AUTO_)?(RESEARCH|HANDOFF)_CHANGELOG/.test(marker) ? { section: "Changed", text: "Fixture change." }
-      : marker === "PUBLISH_RESEARCH_NULL_CHANGELOG" ? null
-      : /^PUBLISH_RESEARCH_(EMPTY|SPACE)_CHANGELOG/.test(marker) ? { section: "Changed", text: marker.includes("SPACE") ? " \t\n " : "" }
-      : undefined;
-    const args = { feature: "runtime", kind, slug: chainStep ? "chain" : "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: chainArtifact ? `drift/runtime/${chainArtifact[1]}-handoff-chain.md` : "", related_artifacts: [], ...(/^PUBLISH_AUTO_(HANDOFF|THEN_ADOPT)/.test(marker) || (chainStep > 0 && chainStep < 3) ? { next_session_profile: "architecture" } : {}), ...(changelog !== undefined ? { changelog } : {}), ...(/^PUBLISH_AUTO_HANDOFF_COMPLETE(?:_REPLAY)?$/.test(marker.trim()) ? { status: "complete" } : {}) };
+    const args = { feature: "runtime", kind, slug: chainStep ? "chain" : "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: chainArtifact ? `drift/runtime/${chainArtifact[1]}-handoff-chain.md` : "", related_artifacts: [], ...(/^PUBLISH_AUTO_(HANDOFF|THEN_ADOPT)/.test(marker) || (chainStep > 0 && chainStep < 3) ? { next_session_profile: "architecture" } : {}), ...(/^PUBLISH_AUTO_HANDOFF_COMPLETE(?:_REPLAY)?$/.test(marker.trim()) ? { status: "complete" } : {}) };
     // Tool rounds already answered since the marker; each marker scripts a bounded number of rounds, never a loop.
     const rounds = messages.slice(user + 1).filter((message: any) => message.role === "assistant" && message.tool_calls?.length).length;
     // WORKTREE_ADOPT <path>, WORKTREE_STATUS, WORKTREE_ADOPT_PUBLISH <path> (one batch: adopt beside a publication),
@@ -155,15 +151,10 @@ async function fixture(t: any, broken = false) {
     // PUBLISH_AUTO_THEN_ADOPT <path> (publish a profiled handoff, then adopt alone in the next round, before settling).
     const worktree = /^WORKTREE_(ADOPT_PUBLISH|ADOPT_THEN_PUBLISH|ADOPT|STATUS)(?:[ \t]+([^\n]+))?$/.exec(marker.trim());
     const autoThenAdopt = /^PUBLISH_AUTO_THEN_ADOPT[ \t]+([^\n]+)$/.exec(marker.trim());
-    // Bounded recovery in one user turn: reject a real entry, then retry with null or the observed blank object.
-    const recoverChangelog = /^PUBLISH_RESEARCH_RECOVER_(NULL|EMPTY)$/.exec(marker.trim());
     const replayComplete = marker.trim() === "PUBLISH_AUTO_HANDOFF_COMPLETE_REPLAY";
     const adoptCall = { name: "drift_worktree", arguments: { action: "adopt", path: (worktree?.[2] ?? autoThenAdopt?.[1])?.trim() } };
-    const publishCall = { name: "drift_publish", arguments: recoverChangelog ? { ...args,
-      slug: recoverChangelog[1] === "NULL" ? "recover-null" : "recover-empty", changelog: rounds === 0
-        ? { section: "Changed", text: "Fixture change." }
-        : recoverChangelog[1] === "NULL" ? null : { section: "Changed", text: "" } } : args };
-    const calls = recoverChangelog || replayComplete ? (rounds < 2 ? [publishCall] : []) : autoThenAdopt ? (rounds === 0 ? [publishCall] : rounds === 1 ? [adoptCall] : []) : !worktree ? (publish ? [publishCall] : []) :
+    const publishCall = { name: "drift_publish", arguments: args };
+    const calls = replayComplete ? (rounds < 2 ? [publishCall] : []) : autoThenAdopt ? (rounds === 0 ? [publishCall] : rounds === 1 ? [adoptCall] : []) : !worktree ? (publish ? [publishCall] : []) :
       worktree[1] === "STATUS" ? (rounds === 0 ? [{ name: "drift_worktree", arguments: { action: "status", path: "" } }] : []) :
       worktree[1] === "ADOPT" ? (rounds === 0 ? [adoptCall] : []) :
       worktree[1] === "ADOPT_PUBLISH" ? (rounds === 0 ? [adoptCall, publishCall] : []) :
@@ -255,9 +246,19 @@ test("actual Pi RPC: discovery, pre-inference record, context, resume/reload, co
   assert.ok(completed.completed, client.stderr);
   const artifact = await fs.readFile(join(f.repo, completed.completed.path), "utf8");
   assert.ok(artifact.includes(`session_started: ${JSON.stringify(initial.started)}`));
-  const index = await fs.readFile(join(f.repo, "drift/INDEX.md"), "utf8");
-  assert.ok(index.includes("001-research-fixture"));
-  assert.ok(index.includes("002-handoff-fixture"));
+  await assert.rejects(fs.stat(join(f.repo, "drift/INDEX.md")), { code: "ENOENT" });
+  await assert.rejects(fs.stat(join(f.repo, "changelog.d")), { code: "ENOENT" });
+  const results = toolEnds(client, "drift_publish");
+  assert.equal(results.length, 2, JSON.stringify(results));
+  for (const result of results) {
+    const text = JSON.stringify(result); // Lines are JSON-escaped, so a retired line would follow a literal \n.
+    assert.match(text, /Published drift\/runtime\/00[12]-/);
+    assert.doesNotMatch(text, /(\\n|")(Index|Changelog|Fragment):/);
+  }
+  const publishTool = f.requests[0].tools.find((tool: any) => tool.function?.name === "drift_publish").function;
+  assert.equal(Object.hasOwn(publishTool.parameters.properties, "changelog"), false);
+  assert.doesNotMatch(JSON.stringify(publishTool), /changelog|INDEX\.md|readable index/i);
+  assert.doesNotMatch(JSON.stringify(f.requests.at(-1)), /Changelog: /);
   const contents = await fs.readFile(f.recordPath(state.sessionId), "utf8");
   await client.stop();
   assert.equal(await fs.readFile(f.recordPath(state.sessionId), "utf8"), contents);
@@ -315,7 +316,7 @@ test("actual Pi publishes repo-opted-in tracked artifacts without changing ignor
   assert.equal(await fs.readFile(join(f.repo, ".gitignore"), "utf8"), "logs/*\n");
   const visible = await git(f.repo, ["ls-files", "--others", "--exclude-standard"]);
   assert.ok(visible.includes(record.completed.path));
-  assert.ok(visible.includes("drift/INDEX.md"));
+  assert.ok(!visible.includes("drift/INDEX.md"));
   const published = await fs.readFile(join(f.repo, record.completed.path), "utf8");
   assert.match(published, /^anchor_coverage: \{"status":"not-applicable","eligible":0,"captured":0,/m);
   assert.equal(await git(f.repo, ["diff", "--cached", "--name-only"]), "");
@@ -344,12 +345,10 @@ test("actual Pi /drift-track-artifacts is an extension command that toggles trac
   assert.deepEqual(JSON.parse(await fs.readFile(join(f.repo, ".drift.json"), "utf8")), { trackArtifacts: false });
 });
 
-test("actual Pi /drift picks up raw artifacts even when the index view cannot be refreshed", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+test("actual Pi /drift picks up raw artifacts and creates no INDEX.md", { skip: !piPresent, timeout: 60_000 }, async (t) => {
   const f = await fixture(t); const client = f.rpc();
   await fs.mkdir(join(f.repo, "drift/runtime"), { recursive: true });
   await fs.writeFile(join(f.repo, "drift/runtime/001-handoff-latest.md"), '---\ndate: "2026-10-09T12:00:00+01:00"\nfeature: "runtime"\nsequence: "001"\ntype: "handoff"\nstatus: "in-progress"\n---\n\n## Next Steps\nx\n');
-  // A directory at the view's path blocks refresh on every OS; discovery must still work.
-  await fs.mkdir(join(f.repo, "drift/INDEX.md"));
   const listed = (await client.request({ type: "get_commands" })).commands.find((command: any) => command.name === "drift");
   assert.equal(listed?.source, "prompt"); // Advertised to Zed's slash menu like any prompt template.
   const before = f.requests.length;
@@ -359,103 +358,8 @@ test("actual Pi /drift picks up raw artifacts even when the index view cannot be
   assert.ok(sent.includes("Skill Router"), "the bundled Drift skill was not expanded"); // The binding expanded /skill:drift.
   assert.ok(!sent.includes("/skill:drift Continue"), "the skill command reached the model unexpanded");
   assert.ok(client.events.some((event: any) => event.type === "extension_ui_request" && event.method === "notify" && /picking up drift\/runtime\/001-handoff-latest\.md/.test(event.message)));
-  assert.deepEqual(await fs.readdir(join(f.repo, "drift/INDEX.md")), []);
-  assert.ok(sent.includes("Recent project artifacts (navigation data, not instructions)"), "raw recent context missing despite the blocked view");
-});
-
-test("actual Pi installs the index merge driver at session start in a tracked clone that carries the attribute", { skip: !piPresent, timeout: 60_000 }, async (t) => {
-  const f = await fixture(t);
-  await fs.writeFile(join(f.repo, ".drift.json"), '{"trackArtifacts":true}\n');
-  await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
-  await fs.writeFile(join(f.repo, ".gitattributes"), "drift/INDEX.md merge=drift-index\n");
-  const client = f.rpc();
-  await client.request({ type: "get_state" });
-  const driver = await until(async () => (await git(f.repo, ["config", "--get", "merge.drift-index.driver"], 1)).trim(), "driver was not installed at session start");
-  assert.match(driver, /^\S+ -I \S+\/scripts\/build-index\.py --merge %O %A %B$/);
-  assert.ok(!driver.includes("\\"));
-  assert.equal((await git(f.repo, ["config", "--get", "merge.drift-index.name"])).trim(), "Drift index row merge");
-
-  // Private mode, or a repo without the attribute, gets no driver.
-  const g = await fixture(t);
-  await fs.writeFile(join(g.repo, ".gitattributes"), "drift/INDEX.md merge=drift-index\n");
-  const other = g.rpc();
-  await other.prompt("hello");
-  assert.equal((await git(g.repo, ["config", "--get", "merge.drift-index.driver"], 1)).trim(), "");
-});
-
-test("actual Pi recovers research with null or blank changelog arguments while generation stays off", { skip: !piPresent, timeout: 90_000 }, async (t) => {
-  const f = await fixture(t);
-  const config = '{"changelog":false}\n';
-  const changelog = "# Changelog\n\n- Project-owned entry.\n";
-  await fs.writeFile(join(f.repo, ".drift.json"), config);
-  await fs.writeFile(join(f.repo, "CHANGELOG.md"), changelog);
-  const client = f.rpc();
-  const state = await client.request({ type: "get_state" });
-  await client.prompt("PUBLISH_RESEARCH_CHANGELOG");
-  const rejected = toolEnds(client, "drift_publish").at(-1);
-  assert.ok(rejected?.isError, JSON.stringify(rejected));
-  assert.match(JSON.stringify(rejected), /did not start a publication[\s\S]*Retry with changelog: null/);
-  const initial = await f.readRecord(state.sessionId);
-  assert.equal(initial.pending, undefined);
-  assert.equal(initial.receipts.length, 0);
-  await assert.rejects(fs.stat(join(f.repo, "drift")), { code: "ENOENT" });
-  assert.ok(JSON.stringify(f.requests[0]).includes("Changelog: Drift generation is off here."));
-  const schema = f.requests[0].tools.find((tool: any) => tool.function?.name === "drift_publish").function.parameters.properties.changelog;
-  assert.ok(JSON.stringify(schema).includes('"type":"null"'), JSON.stringify(schema));
-
-  for (const marker of ["PUBLISH_RESEARCH_NULL_CHANGELOG", "PUBLISH_RESEARCH_EMPTY_CHANGELOG", "PUBLISH_RESEARCH_SPACE_CHANGELOG", "PUBLISH_RESEARCH"]) {
-    const start = client.events.length;
-    await client.prompt(marker);
-    const results = toolEnds(client, "drift_publish", start);
-    assert.equal(results.length, 1, JSON.stringify(results));
-    assert.equal(results[0].isError, false, JSON.stringify(results[0]));
-    const record = await f.readRecord(state.sessionId);
-    assert.equal(record.receipts.length, 1); // All no-entry forms return the same receipt.
-    assert.equal(record.receipts[0].path, "drift/runtime/001-research-fixture.md");
-    assert.equal(record.receipts[0].fragment, undefined);
-    assert.equal(record.completed, undefined);
-    assert.equal(record.pending, undefined);
-  }
-  for (const [index, marker] of ["PUBLISH_RESEARCH_RECOVER_NULL", "PUBLISH_RESEARCH_RECOVER_EMPTY"].entries()) {
-    const start = client.events.length;
-    await client.prompt(marker);
-    const results = toolEnds(client, "drift_publish", start);
-    assert.equal(results.length, 2, JSON.stringify(results));
-    assert.equal(results[0].isError, true, JSON.stringify(results[0]));
-    assert.equal(results[1].isError, false, JSON.stringify(results[1]));
-    const record = await f.readRecord(state.sessionId);
-    assert.equal(record.receipts.length, index + 2); // Exactly one fresh artifact per recovered request.
-    assert.equal(record.pending, undefined);
-    assert.equal(record.receipts.at(-1).fragment, undefined);
-  }
-  const names = ["001-research-fixture.md", "002-research-recover-null.md", "003-research-recover-empty.md"];
-  assert.deepEqual((await fs.readdir(join(f.repo, "drift/runtime"))).sort(), names);
-  for (const name of names) assert.ok((await fs.readFile(join(f.repo, "drift/runtime", name), "utf8")).endsWith(researchBody.trim() + "\n"));
-  assert.equal(await fs.readFile(join(f.repo, ".drift.json"), "utf8"), config);
-  assert.equal(await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8"), changelog);
-  for (const path of ["changelog.d", ".gitattributes"]) await assert.rejects(fs.stat(join(f.repo, path)), { code: "ENOENT" });
-});
-
-test("actual Pi: /drift-changelog on, a publication carrying a changelog entry, regeneration, and the driver at the next session start", { skip: !piPresent, timeout: 90_000 }, async (t) => {
-  const f = await fixture(t); const client = f.rpc();
-  const state = await client.request({ type: "get_state" });
-  await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
-  await client.request({ type: "prompt", message: "/drift-changelog on" });
-  await until(() => fs.stat(join(f.repo, "changelog.d", "README.md")).catch(() => undefined), "command did not adopt the changelog");
-  await client.prompt("PUBLISH_HANDOFF_CHANGELOG");
-  const record = await f.readRecord(state.sessionId);
-  assert.ok(record.completed, client.stderr);
-  assert.equal(record.completed.fragment, "changelog.d/runtime-001-fixture.md");
-  assert.match(await fs.readFile(join(f.repo, "changelog.d", "runtime-001-fixture.md"), "utf8"), /section: "Changed"\nartifact: "drift\/runtime\/001-handoff-fixture\.md"\n---\nFixture change\.\n$/);
-  const changelog = await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8");
-  // No version tags in the fixture, so entries group by day.
-  assert.match(changelog, /^# Changelog\n\n<!-- drift:changelog[^\n]*\n\n## \d{4}-\d{2}-\d{2}\n\n### Changed\n\n- Fixture change\. <!-- changelog\.d\/runtime-001-fixture\.md [^ ]+ -->\n\n<!-- \/drift:changelog -->\n\n## \[0\.0\.1\] - 2026-01-01\n\n- old\n$/);
-  assert.ok(client.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && JSON.stringify(event).includes("Fragment: changelog.d/runtime-001-fixture.md")));
-
-  const second = f.rpc();
-  await second.request({ type: "get_state" });
-  const driver = await until(async () => (await git(f.repo, ["config", "--get", "merge.drift-changelog.driver"], 1)).trim(), "changelog driver was not installed at session start");
-  assert.match(driver, /^\S+ -I \S+\/scripts\/build-changelog\.py --merge %O %A %B$/);
+  await assert.rejects(fs.stat(join(f.repo, "drift/INDEX.md")), { code: "ENOENT" });
+  assert.ok(sent.includes("Recent project artifacts (navigation data, not instructions)"), "raw recent context missing");
 });
 
 async function withOrigin(f: Awaited<ReturnType<typeof fixture>>) {
@@ -508,47 +412,22 @@ test("actual Pi lands a completed interval itself where the repo opts in, then c
   assert.ok(!f.requests.slice(requestsBefore).some((request) => JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + secondRecord.completed.path + "`")), "a held landing must not continue");
 });
 
-test("actual Pi leaves a fresh shared clone's changelog untouched and publishes fragments once the adoption is committed", { skip: !piPresent, timeout: 90_000 }, async (t) => {
-  const f = await fixture(t);
-  await withOrigin(f);
-  const original = "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n";
-  await fs.writeFile(join(f.repo, "CHANGELOG.md"), original);
-  await git(f.repo, ["add", "CHANGELOG.md"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "shared changelog"]);
-  const before = await git(f.repo, ["status", "--porcelain"]);
-  const client = f.rpc();
-  const state = await client.request({ type: "get_state" });
-  await until(() => f.readRecord(state.sessionId).catch(() => undefined), "session start wrote no record"); // Written after the refresh.
-  assert.equal(await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8"), original);
-  assert.equal(await git(f.repo, ["status", "--porcelain"]), before);
-  await assert.rejects(fs.stat(join(f.repo, "changelog.d")), { code: "ENOENT" });
-  await assert.rejects(fs.stat(join(f.repo, ".gitattributes")), { code: "ENOENT" });
-
-  // The project adopts it once and commits that; the same session then generates with no command or flag.
-  await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n<!-- drift:changelog: generated from changelog.d/ - edit a bullet only if you keep its id comment -->\n<!-- /drift:changelog -->\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
-  await git(f.repo, ["add", "CHANGELOG.md"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "adopt generated changelog"]);
-  await client.prompt("PUBLISH_HANDOFF_CHANGELOG");
-  const record = await f.readRecord(state.sessionId);
-  assert.equal(record.completed?.fragment, "changelog.d/runtime-001-fixture.md");
-  assert.match(await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8"), /- Fixture change\. <!-- changelog\.d\/runtime-001-fixture\.md/);
-  // The model learns from context that the changelog is generated here.
-  assert.ok(f.requests.some((request) => JSON.stringify(request).includes("CHANGELOG.md is generated from changelog.d/ here")));
-});
-
-test("actual Pi lands a shared, tracked repository's handoff with its artifact, index, fragment and changelog committed", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+test("actual Pi lands a shared, tracked repository's handoff with its artifact committed and no index view", { skip: !piPresent, timeout: 90_000 }, async (t) => {
   const f = await fixture(t);
   const { branch } = await withOrigin(f);
   await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
-  await fs.writeFile(join(f.repo, ".drift.json"), '{ "trackArtifacts": true, "changelog": true, "land": { "auto": true } }\n');
-  await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
+  await fs.writeFile(join(f.repo, ".drift.json"), '{ "trackArtifacts": true, "land": { "auto": true } }\n');
   await git(f.repo, ["add", "-A"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "shared"]); await git(f.repo, ["push", "-q", "origin", `HEAD:${branch}`]);
   const client = f.rpc();
   const state = await client.request({ type: "get_state" });
-  await client.prompt("PUBLISH_HANDOFF_CHANGELOG");
+  await client.prompt("PUBLISH_HANDOFF");
   const record = await f.readRecord(state.sessionId);
   assert.ok(record.completed, client.stderr);
   const remote = (await git(f.repo, ["ls-tree", "-r", "--name-only", `origin/${branch}`])).trim().split("\n");
-  for (const file of ["drift/runtime/001-handoff-fixture.md", "drift/INDEX.md", "changelog.d/runtime-001-fixture.md", "CHANGELOG.md", ".gitattributes"]) assert.ok(remote.includes(file), `${file} not on origin`);
-  assert.ok(client.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && /Landed \S+ on origin\/[\s\S]*committed \d Drift files first/.test(JSON.stringify(event))));
+  assert.ok(remote.includes("drift/runtime/001-handoff-fixture.md"), `artifact not on origin: ${remote}`);
+  for (const file of ["drift/INDEX.md", "CHANGELOG.md", ".gitattributes"]) assert.ok(!remote.includes(file), `${file} reached origin`);
+  assert.ok(!remote.some((file) => file.startsWith("changelog.d/")));
+  assert.ok(client.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && /Landed \S+ on origin\/[\s\S]*committed 1 Drift file first/.test(JSON.stringify(event))));
   assert.equal((await git(f.repo, ["status", "--porcelain", "--untracked-files=no"])).trim(), "");
 });
 
@@ -686,10 +565,9 @@ async function commit(repo: string, message: string) {
 // preflights every sibling call before executing them concurrently, so a sibling would run against an unknown root.
 test("actual Pi adopts a linked worktree as the active Drift root: measured interval, status, checkpoint, publication, reload/resume/compaction and the next interval", { skip: !piPresent, timeout: 150_000 }, async (t) => {
   const f = await fixture(t);
-  await fs.writeFile(join(f.repo, ".drift.json"), '{"trackArtifacts":true,"changelog":true}\n');
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"trackArtifacts":true}\n');
   await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
-  await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
-  await git(f.repo, ["add", ".drift.json", ".gitignore", "CHANGELOG.md"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "config"]);
+  await git(f.repo, ["add", ".drift.json", ".gitignore"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "config"]);
   const mainBranch = (await git(f.repo, ["symbolic-ref", "--short", "HEAD"])).trim();
   const worker = await linkedWorktree(f);
   await fs.writeFile(join(worker.path, "worker-dirty.txt"), "dirty before adoption\n");
@@ -778,21 +656,16 @@ test("actual Pi adopts a linked worktree as the active Drift root: measured inte
   await client.prompt("after compaction");
   assert.ok(JSON.stringify(f.requests.at(-1)).includes(adopted.intervalId));
 
-  // Tracked publication and its changelog fragment land in the worker only.
-  const mainChangelog = await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8");
-  await client.prompt("PUBLISH_HANDOFF_CHANGELOG");
+  // Tracked publication lands in the worker only.
+  await client.prompt("PUBLISH_HANDOFF");
   const completed = await f.readRecord(state.sessionId);
   assert.ok(completed.completed, client.stderr);
-  assert.equal(completed.completed.fragment, "changelog.d/runtime-001-fixture.md");
   const artifact = await fs.readFile(join(worker.path, completed.completed.path), "utf8");
   assert.ok(artifact.includes(`session_started: ${JSON.stringify(adopted.started)}`), artifact);
-  assert.ok(await exists(join(worker.path, "drift/INDEX.md")));
-  assert.ok(await exists(join(worker.path, "changelog.d/runtime-001-fixture.md")));
-  assert.match(await fs.readFile(join(worker.path, "CHANGELOG.md"), "utf8"), /- Fixture change\. <!-- changelog\.d\/runtime-001-fixture\.md/);
+  assert.ok(!(await exists(join(worker.path, "drift/INDEX.md"))));
+  assert.ok(!(await exists(join(worker.path, "changelog.d"))));
   assert.ok(!(await exists(join(f.repo, completed.completed.path))), "artifact silently written to main");
   assert.ok(!(await exists(join(f.repo, "drift/runtime"))));
-  assert.ok(!(await exists(join(f.repo, "changelog.d/runtime-001-fixture.md"))));
-  assert.equal(await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8"), mainChangelog);
   assert.ok((await git(worker.path, ["ls-files", "--others", "--exclude-standard"])).includes(completed.completed.path));
   assert.equal(await git(worker.path, ["diff", "--cached", "--name-only"]), "");
 
@@ -824,10 +697,9 @@ test("actual Pi adopts a linked worktree as the active Drift root: measured inte
   assert.equal(freshRecord.startBranch, mainBranch);
 });
 
-test("actual Pi keeps private artifacts in main while an adopted worktree owns its branch, fragments, commands, /drift and profiled continuation", { skip: !piPresent, timeout: 120_000 }, async (t) => {
+test("actual Pi keeps private artifacts in main while an adopted worktree owns its branch, commands, /drift and profiled continuation", { skip: !piPresent, timeout: 120_000 }, async (t) => {
   const f = await fixture(t);
-  await fs.writeFile(join(f.repo, ".drift.json"), '{"changelog":true,"autoContinue":true}\n');
-  await fs.writeFile(join(f.repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"autoContinue":true}\n');
   await commit(f.repo, "private config");
   const worker = await linkedWorktree(f);
   let client = f.rpc();
@@ -846,10 +718,10 @@ test("actual Pi keeps private artifacts in main while an adopted worktree owns i
   assert.ok(!notices(client, mark).some((event: any) => event.notifyType === "error"), JSON.stringify(notices(client, mark)));
 
   // Configuration commands target the active root.
-  await client.request({ type: "prompt", message: "/drift-changelog off" });
-  assert.deepEqual(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")), { changelog: false, autoContinue: true });
-  await client.request({ type: "prompt", message: "/drift-changelog on" });
-  assert.deepEqual(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")), { changelog: true, autoContinue: true });
+  await client.request({ type: "prompt", message: "/drift-auto-continue off" });
+  assert.deepEqual(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")), { autoContinue: false });
+  await client.request({ type: "prompt", message: "/drift-auto-continue on" });
+  assert.deepEqual(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")), { autoContinue: true });
   await client.request({ type: "prompt", message: "/drift-track-artifacts on" });
   assert.equal(JSON.parse(await fs.readFile(join(worker.path, ".drift.json"), "utf8")).trackArtifacts, true);
   await client.request({ type: "prompt", message: "/drift-track-artifacts off" });
@@ -859,18 +731,14 @@ test("actual Pi keeps private artifacts in main while an adopted worktree owns i
   assert.equal(await fs.readFile(join(f.repo, ".gitignore"), "utf8"), mainIgnore);
   assert.equal(f.requests.length, before, "user commands must not start inference");
 
-  // A profiled, private publication: the artifact in main's shared store, the fragment in the worker's branch.
-  const mainChangelog = await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8");
+  // A profiled, private publication: the artifact in main's shared store.
   const requestsBefore = f.requests.length;
-  await client.prompt("PUBLISH_AUTO_HANDOFF_CHANGELOG");
+  await client.prompt("PUBLISH_AUTO_HANDOFF");
   const completed = await f.readRecord(state.sessionId);
   assert.ok(completed.completed, client.stderr);
   assert.ok(await exists(join(f.repo, completed.completed.path)), "private artifact not in main's shared store");
   assert.ok(!(await exists(join(worker.path, "drift"))), "a private linked worktree must hold no drift/ of its own");
-  assert.ok(await exists(join(worker.path, "changelog.d/runtime-001-fixture.md")));
-  assert.ok(!(await exists(join(f.repo, "changelog.d/runtime-001-fixture.md"))));
-  assert.match(await fs.readFile(join(worker.path, "CHANGELOG.md"), "utf8"), /- Fixture change\./);
-  assert.equal(await fs.readFile(join(f.repo, "CHANGELOG.md"), "utf8"), mainChangelog);
+  for (const root of [f.repo, worker.path]) assert.ok(!(await exists(join(root, "changelog.d"))) && !(await exists(join(root, "drift/INDEX.md"))));
   assert.ok((await fs.readFile(join(f.repo, completed.completed.path), "utf8")).includes('next_session_profile: "architecture"'));
   // Continuation resolves the handoff through the active root and keeps the adoption.
   await until(() => f.requests.slice(requestsBefore + 1).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + completed.completed.path + "`")), "profiled continuation did not run from the adopted root");
@@ -1032,12 +900,12 @@ test("actual Pi auto-lands the ADOPTED worker's branch, runs its check there and
   assert.match(JSON.stringify(published), new RegExp(`Landed ${worker.branch} on origin/${branch}`));
   assert.match(JSON.stringify(published), /1 check passed/);
   const remote = (await git(bare, ["ls-tree", "-r", "--name-only", branch])).trim().split("\n");
-  for (const file of ["worker-code.txt", record.completed.path, "drift/INDEX.md"]) assert.ok(remote.includes(file), `${file} not on the bare origin: ${remote}`);
+  for (const file of ["worker-code.txt", record.completed.path]) assert.ok(remote.includes(file), `${file} not on the bare origin: ${remote}`);
+  assert.ok(!remote.includes("drift/INDEX.md"), "an index view reached origin");
   assert.ok(samePath(await fs.readFile(join(worker.path, "land-cwd.txt"), "utf8"), worker.path), "the check did not run in the worker");
   assert.ok(!(await exists(join(f.repo, "land-cwd.txt"))), "the check ran in main");
   assert.equal((await git(f.repo, ["rev-parse", "HEAD"])).trim(), mainHead, "main HEAD moved");
   assert.ok(!(await exists(join(f.repo, "drift"))), "artifact written to main");
-  assert.ok(!(await exists(join(f.repo, "changelog.d"))), "fragment written to main");
   assert.ok(!(await exists(join(f.repo, "worker-code.txt"))));
 });
 

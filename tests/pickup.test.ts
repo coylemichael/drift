@@ -28,10 +28,10 @@ test("/drift with no artifacts asks how to start instead of guessing", async (t)
   await assert.rejects(fs.stat(join(dir, "drift")), { code: "ENOENT" });
 });
 
-test("/drift finds raw artifacts when a missing index cannot be generated under Git policy", async (t) => {
+test("/drift finds raw artifacts under a Git-policy mismatch, changing no policy and creating no INDEX.md", async (t) => {
   const dir = await repo(t);
   await artifact(dir, "auth", "001-plan-build.md", "2026-10-09T10:00:00+01:00", "pending");
-  await fs.unlink(join(dir, ".gitignore")); // View generation must fail without changing policy.
+  await fs.unlink(join(dir, ".gitignore")); // Pickup only reads, so the mismatch neither blocks it nor gets repaired.
   const result = await pickup(dir, "");
   assert.equal(result.artifact, "drift/auth/001-plan-build.md");
   assert.match(result.text, /Execute the Drift plan/);
@@ -39,7 +39,7 @@ test("/drift finds raw artifacts when a missing index cannot be generated under 
   await assert.rejects(fs.stat(join(dir, ".gitignore")), { code: "ENOENT" });
 });
 
-test("/drift alone picks the newest raw artifact and routes it by kind without creating an index", async (t) => {
+test("/drift alone picks the newest raw artifact and routes it by kind, creating no INDEX.md", async (t) => {
   const dir = await repo(t);
   await artifact(dir, "auth", "001-research-flow.md", "2026-10-09T10:00:00+01:00", "complete");
   assert.match((await pickup(dir, "")).text, /^\/skill:drift Turn the Drift research at `drift\/auth\/001-research-flow\.md` into an implementation plan/);
@@ -65,7 +65,7 @@ test("/drift alone stops at finished work rather than reopening it or searching 
   assert.doesNotMatch(result.text, /Continue the work recorded/);
 });
 
-test("/drift ignores stale, blocked and conflicting index views and never acquires the publication lock", async (t) => {
+test("/drift ignores a leftover INDEX.md (stale, blocked or conflicting), never rewrites it and never acquires the publication lock", async (t) => {
   for (const scenario of ["stale", "directory", "merge", "locked"]) {
     await t.test(scenario, async (t: any) => {
       const dir = await repo(t);
@@ -91,7 +91,7 @@ test("/drift ignores stale, blocked and conflicting index views and never acquir
   }
 });
 
-test("/drift does not mistake an index-only tree or undated artifacts for a newest artifact", async (t) => {
+test("/drift does not mistake a tree holding only a leftover INDEX.md, or undated artifacts, for a newest artifact", async (t) => {
   const dir = await repo(t);
   await fs.mkdir(join(dir, "drift"));
   const index = join(dir, "drift", "INDEX.md");

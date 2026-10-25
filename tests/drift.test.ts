@@ -5,12 +5,10 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { artifactStore, atomicWrite, delta, driftConfig, fingerprint, git, mainWorktree, mergeInProgress, python, Records, run, safePath, setAutoContinue, withLock } from "../lib/state.ts";
-import { changelogState, END, START, setChangelog, syncChangelog } from "../lib/changelog.ts";
+import { artifactStore, atomicWrite, delta, driftConfig, fingerprint, git, mainWorktree, mergeInProgress, python, readArtifactCatalog, Records, run, safePath, setAutoContinue, withLock } from "../lib/state.ts";
 import { describeLanding, land, LandHalt, landingGuard } from "../lib/land.ts";
 import { pickup } from "../lib/pickup.ts";
-import { attributeFor, hasAttribute, indexDriverCommand, installDriver } from "../lib/git-drivers.ts";
-import { ensureIndexAttribute, hasArtifacts, publish, setArtifactTracking, syncIndex } from "../lib/artifacts.ts";
+import { hasArtifacts, publish, setArtifactTracking } from "../lib/artifacts.ts";
 import type { ArtifactInput } from "../lib/artifacts.ts";
 import { describeProfile, loadModelProfiles, modelProfileSources, readHandoffRoute } from "../lib/routing.ts";
 
@@ -169,7 +167,7 @@ test("corrupt/mismatched records and invalid session IDs are refused without ove
   }
 });
 
-test("publication supplies original metadata, stable numbering, references and a canonical index", async (t) => {
+test("publication supplies original metadata, stable numbering and references, and writes no index view or changelog fragment", async (t) => {
   const { repo, agent } = await fixture(t);
   const store = (await Records.open(repo, "session-a", agent))!;
   const baseline = await store.read();
@@ -184,7 +182,11 @@ test("publication supplies original metadata, stable numbering, references and a
   assert.ok(text.includes(`start_commit: ${JSON.stringify(baseline.startCommit)}`));
   assert.ok(text.includes(`source_research: ${JSON.stringify(first.path)}`));
   assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), "/drift/\n");
-  await run(await python(), [join(root, "scripts/build-index.py"), join(repo, "drift"), "--check"], repo);
+  await assert.rejects(fs.stat(join(repo, "drift", "INDEX.md")), { code: "ENOENT" });
+  await assert.rejects(fs.stat(join(repo, "changelog.d")), { code: "ENOENT" });
+  await assert.rejects(fs.stat(join(repo, ".gitattributes")), { code: "ENOENT" });
+  assert.deepEqual((await readArtifactCatalog(repo)).dated.map((entry) => entry.path), [first.path, second.path].map((path) => path.slice("drift/".length)));
+  assert.equal(Object.hasOwn(second, "fragment"), false);
 });
 
 test("repo-local tracked artifacts publish without creating ignores or staging files", async (t) => {
@@ -196,9 +198,8 @@ test("repo-local tracked artifacts publish without creating ignores or staging f
   await assert.rejects(fs.stat(join(repo, ".gitignore")), { code: "ENOENT" });
   const visible = (await git(repo, ["ls-files", "--others", "--exclude-standard"])).trim().split("\n");
   assert.ok(visible.includes(receipt.path));
-  assert.ok(visible.includes("drift/INDEX.md"));
+  assert.ok(!visible.includes("drift/INDEX.md"));
   assert.equal(await git(repo, ["diff", "--cached", "--name-only"]), "");
-  await run(await python(), [join(root, "scripts/build-index.py"), join(repo, "drift"), "--check"], repo);
 
   // Explicitly committing is the user's job; the choice and handoff travel together.
   await git(repo, ["add", ".drift.json", "drift"]);
@@ -254,7 +255,7 @@ test("tracked policy conflicts are actionable and never rewrite ignores or force
   const { repo, agent } = await fixture(t);
   await fs.writeFile(join(repo, ".drift.json"), '{"trackArtifacts":true}');
   const store = (await Records.open(repo, "session-a", agent))!;
-  for (const ignore of ["/drift/\n", "/drift/INDEX.md\n", "*.md\n"]) {
+  for (const ignore of ["/drift/\n", "*.md\n"]) {
     await fs.writeFile(join(repo, ".gitignore"), ignore);
     await assert.rejects(publish(store, input), /trackArtifacts is true.*Git ignores/);
     assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), ignore);
@@ -322,18 +323,6 @@ test("publication rereads the repo flag rather than caching the first choice", a
   await assert.rejects(publish(store, input), /trackArtifacts is true.*Git ignores/);
   await fs.unlink(join(repo, ".gitignore"));
   assert.match((await publish(store, input)).path, /003-handoff-fixture.md$/);
-});
-
-test("ignored default validates the index too, not only the artifact path", async (t) => {
-  const { repo, agent } = await fixture(t);
-  // A file negation only works when its parent directory is unignored too.
-  const ignore = "/drift/\n!/drift/\n/drift/*\n!/drift/INDEX.md\n";
-  await fs.writeFile(join(repo, ".gitignore"), ignore);
-  const store = (await Records.open(repo, "session-a", agent))!;
-  await assert.rejects(publish(store, input), /Git does not ignore.*INDEX.md/);
-  assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), ignore);
-  assert.equal((await store.read()).pending, undefined);
-  assert.equal((await store.read()).completed, undefined);
 });
 
 test("tracked publication retains normal pending-intent and replay safety", async (t) => {
@@ -457,7 +446,7 @@ test("blank optional references are absent, while non-empty paths remain strict"
   assert.equal((await other.read()).completed, undefined);
 });
 
-test("index failure leaves retryable intent; retry is idempotent and does not consume early", async (t) => {
+test("catalog verification failure leaves retryable intent; retry is idempotent and does not consume early", async (t) => {
   const { repo, agent } = await fixture(t);
   const store = (await Records.open(repo, "session-a", agent))!;
   await assert.rejects(publish(store, input, join(repo, "missing-python")), /failed/);
@@ -497,12 +486,13 @@ test("managed symlinks and escapes are refused; unrelated targets remain intact"
   assert.deepEqual(await fs.readdir(outside), ["sentinel"]);
   await assert.rejects(safePath(repo, join(repo, "../outside")), /escapes/);
   await fs.unlink(join(repo, "drift")); await fs.mkdir(join(repo, "drift"));
-  await fs.symlink(join(outside, "sentinel"), join(repo, "drift/INDEX.md"));
-  await assert.rejects(publish(store, input), /symlink/);
+  await fs.symlink(outside, join(repo, "drift/TEST-1"));
+  await assert.rejects(publish(store, input), /symlink|escapes/);
+  assert.deepEqual(await fs.readdir(outside), ["sentinel"]);
   assert.equal(await fs.readFile(join(outside, "sentinel"), "utf8"), "untouched");
 });
 
-test("multiple processes allocate different artifact numbers and preserve every index row", async (t) => {
+test("multiple processes allocate different artifact numbers and every artifact reaches the catalog", async (t) => {
   const { repo, agent } = await fixture(t);
   const script = `import { Records } from ${JSON.stringify(new URL("../lib/state.ts", import.meta.url).href)};
     import { publish } from ${JSON.stringify(new URL("../lib/artifacts.ts", import.meta.url).href)};
@@ -512,9 +502,8 @@ test("multiple processes allocate different artifact numbers and preserve every 
   await Promise.all(["one", "two", "three"].map((id) => child(script, [repo, agent, id, body])));
   const paths = await fs.readdir(join(repo, "drift/parallel"));
   assert.deepEqual(paths.map((path) => path.slice(0, 3)).sort(), ["001", "002", "003"]);
-  const index = await fs.readFile(join(repo, "drift/INDEX.md"), "utf8");
-  assert.equal(index.split("\n").filter((line) => /^\| \d+ \|/.test(line)).length, 3);
-  await run(await python(), [join(root, "scripts/build-index.py"), join(repo, "drift"), "--check"], repo);
+  assert.equal((await readArtifactCatalog(repo)).dated.length, 3);
+  await assert.rejects(fs.stat(join(repo, "drift/INDEX.md")), { code: "ENOENT" });
 });
 
 test("busy locks fail visibly and are never silently reaped", async (t) => {
@@ -562,7 +551,7 @@ test("inherited Git overrides cannot redirect metadata commands into another wor
   assert.deepEqual(await fs.readdir(sentinel), [".git"]);
 });
 
-test("one index renderer orders offsets/legacy/undated data; stdout never writes", async (t) => {
+test("build-index.py prints the ordered timeline (offsets/legacy/undated) and writes nothing; --stdout is an alias; --json still works", async (t) => {
   const { repo } = await fixture(t);
   const drift = join(repo, "drift"); const feature = join(drift, "feature");
   await fs.mkdir(join(feature, "handoffs"), { recursive: true });
@@ -570,11 +559,18 @@ test("one index renderer orders offsets/legacy/undated data; stdout never writes
   await fs.writeFile(join(feature, "002-handoff-earlier.md"), "---\ndate: 2026-09-01T00:00:00+01:00\ntype: handoff\n---\n");
   await fs.writeFile(join(feature, "handoffs/old.md"), "**Date:** 2026-08-01\n");
   await fs.writeFile(join(feature, "no-date.md"), "Undated context\n");
-  const result = await run(await python(), [join(root, "scripts/build-index.py"), drift, "--stdout"], repo);
+  const before = (await fs.readdir(drift, { recursive: true })).sort();
+  const result = await run(await python(), ["-I", join(root, "scripts/build-index.py"), drift], repo);
+  assert.match(result, /^\| 001 \| .* \| feature \| /m);
   assert.ok(result.indexOf("002-handoff-earlier") < result.indexOf("001-handoff-later"));
   assert.ok(result.includes("feature/handoffs/old.md"));
   assert.ok(result.includes("(approx)")); assert.ok(result.includes("## Undated"));
-  await assert.rejects(fs.stat(join(drift, "INDEX.md")), { code: "ENOENT" });
+  assert.equal(await run(await python(), ["-I", join(root, "scripts/build-index.py"), drift, "--stdout"], repo), result);
+  const catalog = JSON.parse(await run(await python(), ["-I", join(root, "scripts/build-index.py"), drift, "--json"], repo));
+  assert.deepEqual(catalog.dated.map((entry: any) => entry.path), ["feature/handoffs/old.md", "feature/002-handoff-earlier.md", "feature/001-handoff-later.md"]);
+  assert.deepEqual(catalog.undated.map((entry: any) => entry.path), ["feature/no-date.md"]);
+  for (const retired of ["--check", "--merge"]) await assert.rejects(run(await python(), ["-I", join(root, "scripts/build-index.py"), drift, retired], repo));
+  assert.deepEqual((await fs.readdir(drift, { recursive: true })).sort(), before); // Nothing written, INDEX.md included.
 });
 
 test("changed source files are surfaced as unpublished until a handoff completes the interval", async (t) => {
@@ -622,55 +618,18 @@ test("a record held open without delete sharing (an editor buffer) is still upda
   }
 });
 
-test("session-start index sync builds a missing index from hand-written artifacts, then leaves it alone", async (t) => {
-  const { repo } = await fixture(t);
-  assert.equal(await syncIndex(repo), false);
-  await assert.rejects(fs.stat(join(repo, "drift")), { code: "ENOENT" }); // Never creates drift/.
-
-  await fs.mkdir(join(repo, "drift", "TEST-1"), { recursive: true });
-  await fs.writeFile(join(repo, "drift", "TEST-1", "notes.txt"), "not an artifact\n");
-  assert.equal(await syncIndex(repo), false);
-  await assert.rejects(fs.stat(join(repo, "drift", "INDEX.md")), { code: "ENOENT" }); // No empty index.
-
-  await fs.writeFile(join(repo, ".gitignore"), "/drift/\n");
-  const artifact = join(repo, "drift", "TEST-1", "001-research-by-hand.md");
-  await fs.writeFile(artifact, '---\ndate: "2026-08-28T20:30:00+01:00"\nfeature: "TEST-1"\nsequence: "001"\ntype: "research"\nstatus: "complete"\n---\n\n## Summary\nWritten by another host.\n');
-  assert.equal(await syncIndex(repo), true);
-  const index = join(repo, "drift", "INDEX.md");
-  assert.match(await fs.readFile(index, "utf8"), /\| 001 \| .* \| TEST-1 \| research \| \[001-research-by-hand\]\(TEST-1\/001-research-by-hand\.md\) \|/);
-  await run(await python(), [join(root, "scripts/build-index.py"), join(repo, "drift"), "--check"], repo);
-  assert.equal(await syncIndex(repo), false); // In sync: not rewritten.
-
-  await fs.writeFile(index, "stale\n");
-  assert.equal(await syncIndex(repo), true);
-  assert.match(await fs.readFile(index, "utf8"), /001-research-by-hand/);
-  assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), "/drift/\n");
-  await assert.rejects(fs.stat(join(repo, "drift", ".publish.lock")), { code: "ENOENT" });
-});
-
-test("session-start index sync reports a Git-policy mismatch without editing ignores or writing", async (t) => {
-  const { repo } = await fixture(t);
-  await fs.mkdir(join(repo, "drift", "TEST-1"), { recursive: true });
-  await fs.writeFile(join(repo, "drift", "TEST-1", "001-research-by-hand.md"), '---\ndate: "2026-08-28T20:30:00+01:00"\nfeature: "TEST-1"\nsequence: "001"\ntype: "research"\n---\n\n## Summary\nx\n');
-  await assert.rejects(syncIndex(repo), /must be ignored by default/);
-  await assert.rejects(fs.stat(join(repo, ".gitignore")), { code: "ENOENT" });
-  await assert.rejects(fs.stat(join(repo, "drift", "INDEX.md")), { code: "ENOENT" });
-
-  await fs.writeFile(join(repo, ".drift.json"), '{"trackArtifacts":true}');
-  assert.equal(await syncIndex(repo), true); // Tracked mode: a visible index is the expected state.
-  assert.ok((await git(repo, ["ls-files", "--others", "--exclude-standard"])).includes("drift/INDEX.md"));
-});
-
 test("/drift-track-artifacts on/off toggles only Drift's flag and ignore rule, never staging or untracking", async (t) => {
   const { repo, agent } = await fixture(t);
   const ignore = "logs/*\n# Local research, plans and session handoffs.\n/drift/\nbuild/\n";
   await fs.writeFile(join(repo, ".gitignore"), ignore);
   assert.match(await setArtifactTracking(repo, "status"), /are ignored \(the default\)\.$/);
   await fs.writeFile(join(repo, ".gitattributes"), "*.png binary\n");
-  assert.match(await setArtifactTracking(repo, "toggle"), /now tracked: set trackArtifacts to true in \.drift\.json; removed 1 drift\/ rule\(s\) from \.gitignore; added "drift\/INDEX\.md merge=drift-index" to \.gitattributes/);
+  const on = await setArtifactTracking(repo, "toggle");
+  assert.match(on, /now tracked: set trackArtifacts to true in \.drift\.json; removed 1 drift\/ rule\(s\) from \.gitignore\./);
+  assert.doesNotMatch(on, /INDEX|merge driver|gitattributes/);
   assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { trackArtifacts: true });
   assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), "logs/*\n# Local research, plans and session handoffs.\nbuild/\n");
-  assert.equal(await fs.readFile(join(repo, ".gitattributes"), "utf8"), "*.png binary\ndrift/INDEX.md merge=drift-index\n");
+  assert.equal(await fs.readFile(join(repo, ".gitattributes"), "utf8"), "*.png binary\n"); // Never touched.
   assert.equal(await git(repo, ["diff", "--cached", "--name-only"]), "");
   assert.match(await setArtifactTracking(repo, "on"), /now tracked; nothing needed changing/);
   assert.match(await setArtifactTracking(repo, "status"), /are tracked: trackArtifacts is true/);
@@ -683,68 +642,31 @@ test("/drift-track-artifacts on/off toggles only Drift's flag and ignore rule, n
 
   const off = await setArtifactTracking(repo, "toggle");
   assert.match(off, /now ignored: set trackArtifacts to false in \.drift\.json; added \/drift\/ to \.gitignore/);
-  assert.match(off, /2 file\(s\) under drift\/ are already committed; ignoring does not untrack them/);
+  assert.match(off, /1 file\(s\) under drift\/ are already committed; ignoring does not untrack them/);
   assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { trackArtifacts: false });
   assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), "logs/*\n# Local research, plans and session handoffs.\nbuild/\n/drift/\n");
-  assert.equal((await git(repo, ["ls-files", "--", "drift"])).trim().split("\n").length, 2); // Still tracked: the user decides.
+  assert.equal((await git(repo, ["ls-files", "--", "drift"])).trim().split("\n").length, 1); // Still tracked: the user decides.
   assert.match(await setArtifactTracking(repo, "off"), /now ignored; nothing needed changing/);
-  assert.equal(await fs.readFile(join(repo, ".gitattributes"), "utf8"), "*.png binary\ndrift/INDEX.md merge=drift-index\n"); // Inert without the driver; stays.
+  assert.equal(await fs.readFile(join(repo, ".gitattributes"), "utf8"), "*.png binary\n");
 });
 
 test("/drift-track-artifacts restores both files and names the rule that defeats the choice", async (t) => {
   const { repo } = await fixture(t);
   const ignore = "/drift/\n*.md\n!README.md\n";
   await fs.writeFile(join(repo, ".gitignore"), ignore);
-  await assert.rejects(setArtifactTracking(repo, "on"), /Git still ignores drift\/INDEX\.md because of rule "\*\.md" in \.gitignore\. Nothing was changed/);
+  await assert.rejects(setArtifactTracking(repo, "on"), /Git still ignores drift\/feature\/001-handoff-check\.md because of rule "\*\.md" in \.gitignore\. Nothing was changed/);
   assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), ignore);
   await assert.rejects(fs.stat(join(repo, ".drift.json")), { code: "ENOENT" });
-  await assert.rejects(fs.stat(join(repo, ".gitattributes")), { code: "ENOENT" }); // The attribute is rolled back with the rest.
+  await assert.rejects(fs.stat(join(repo, ".gitattributes")), { code: "ENOENT" });
 
   await fs.writeFile(join(repo, ".gitignore"), "/drift/\n!/drift/\n"); // An exception after Drift's own rule.
-  await assert.rejects(setArtifactTracking(repo, "off"), /Git does not ignore drift\/INDEX\.md; an exception such as !\/drift\/ re-includes it\. Nothing was changed/);
+  await assert.rejects(setArtifactTracking(repo, "off"), /Git does not ignore drift\/feature\/001-handoff-check\.md; an exception such as !\/drift\/ re-includes it\. Nothing was changed/);
   assert.equal(await fs.readFile(join(repo, ".gitignore"), "utf8"), "/drift/\n!/drift/\n");
-  assert.match(await setArtifactTracking(repo, "status"), /ignored \(the default\)\.\nBut Git does not ignore drift\/INDEX\.md/);
+  assert.match(await setArtifactTracking(repo, "status"), /ignored \(the default\)\.\nBut Git does not ignore drift\/feature\/001-handoff-check\.md/);
 
   await fs.writeFile(join(repo, ".drift.json"), '{"trackArtifacts":"yes"}');
   await assert.rejects(setArtifactTracking(repo, "on"), /Drift configuration/); // Invalid config is reported, not overwritten.
   assert.equal(await fs.readFile(join(repo, ".drift.json"), "utf8"), '{"trackArtifacts":"yes"}');
-});
-
-test("the index merge driver installs once per clone with a forward-slash path and never replaces a foreign driver", async (t) => {
-  const { repo } = await fixture(t);
-  assert.equal(await attributeFor(repo, "drift/INDEX.md"), undefined);
-  await fs.writeFile(join(repo, ".gitattributes"), "drift/INDEX.md merge=drift-index\n");
-  assert.equal(await attributeFor(repo, "drift/INDEX.md"), "drift-index");
-  const command = await indexDriverCommand();
-  assert.match(command, /^\S+ -I \S+\/scripts\/build-index\.py --merge %O %A %B$/);
-  assert.ok(!command.includes("\\"), "git runs drivers through sh -c, which eats backslashes");
-  assert.deepEqual(await installDriver(repo, "drift-index", "Drift index row merge", command), { status: "installed" });
-  assert.equal((await git(repo, ["config", "--get", "merge.drift-index.driver"])).trim(), command);
-  assert.equal((await git(repo, ["config", "--get", "merge.drift-index.name"])).trim(), "Drift index row merge");
-  assert.deepEqual(await installDriver(repo, "drift-index", "Drift index row merge", command), { status: "present" });
-  await git(repo, ["config", "merge.drift-index.driver", "other-tool %O %A %B"]);
-  assert.deepEqual(await installDriver(repo, "drift-index", "Drift index row merge", command), { status: "conflict", existing: "other-tool %O %A %B" });
-  assert.equal((await git(repo, ["config", "--get", "merge.drift-index.driver"])).trim(), "other-tool %O %A %B");
-  assert.ok(hasAttribute("drift/INDEX.md  diff=x merge=drift-index\n", "drift/INDEX.md", "drift-index"));
-  assert.ok(!hasAttribute("drift/INDEX.md merge=drift-indexer\n", "drift/INDEX.md", "drift-index"));
-  assert.ok(!hasAttribute("drift/other.md merge=drift-index\n", "drift/INDEX.md", "drift-index"));
-});
-
-test("session-start index sync leaves a worktree alone while a merge is in progress", async (t) => {
-  const { repo } = await fixture(t);
-  await fs.writeFile(join(repo, ".gitignore"), "/drift/\n");
-  await fs.mkdir(join(repo, "drift", "TEST-1"), { recursive: true });
-  await fs.writeFile(join(repo, "drift", "TEST-1", "001-research-by-hand.md"), '---\ndate: "2026-08-28T20:30:00+01:00"\nfeature: "TEST-1"\nsequence: "001"\ntype: "research"\n---\n\n## Summary\nx\n');
-  assert.equal(await syncIndex(repo), true);
-  const index = join(repo, "drift", "INDEX.md");
-  await fs.writeFile(join(repo, ".git", "MERGE_HEAD"), "0".repeat(40) + "\n");
-  assert.equal(await mergeInProgress(repo), true);
-  await fs.writeFile(index, "stale\n");
-  assert.equal(await syncIndex(repo), false); // The driver owns the file until the merge ends.
-  assert.equal(await fs.readFile(index, "utf8"), "stale\n");
-  await fs.rm(join(repo, ".git", "MERGE_HEAD"));
-  assert.equal(await mergeInProgress(repo), false);
-  assert.equal(await syncIndex(repo), true);
 });
 
 test("tracked publication numbers past artifacts that exist only on a remote-tracking ref; private mode does not", async (t) => {
@@ -786,7 +708,7 @@ test("private worktrees use the main worktree's drift/ and hold none of their ow
   assert.match(await fromWorktree.context(), /artifacts for this repository live in .*drift, shared by every worktree; this linked worktree holds no drift\/ of its own/);
   const fromMain = (await Records.open(repo, "session-main", agent))!;
   assert.equal((await publish(fromMain, { ...input, slug: "second" })).path, "drift/TEST-1/002-handoff-second.md"); // One sequence.
-  assert.equal(await syncIndex(wtRoot), false); // Already in sync.
+  await assert.rejects(fs.stat(join(repo, "drift", "INDEX.md")), { code: "ENOENT" });
   assert.equal((await pickup(wtRoot, "")).artifact, "drift/TEST-1/002-handoff-second.md"); // /drift sees the shared history.
   await git(repo, ["worktree", "remove", "--force", wt]);
   await fs.stat(join(repo, "drift", "TEST-1", "001-handoff-fixture.md")); // History survives the worktree.
@@ -811,18 +733,18 @@ test("private worktrees use the main worktree's drift/ and hold none of their ow
   assert.match(await (await Records.open(wtCRoot, "session-c", agent))!.context(), /holds its own drift\/ as well as the repository's shared store/);
 });
 
-test("Drift configuration accepts trackArtifacts, changelog, autoContinue and land, rejects anything else, and partial updates keep other fields", async (t) => {
+test("Drift configuration accepts trackArtifacts, autoContinue and land, rejects anything else, and partial updates keep other fields", async (t) => {
   const { repo } = await fixture(t);
-  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, changelog: { mode: "auto", tags: "v*" }, autoContinue: false, land: undefined });
-  await fs.writeFile(join(repo, ".drift.json"), '{ "changelog": { "tags": "release-*" }, "land": { "auto": true, "check": ["make test"] } }\n');
-  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, changelog: { mode: "on", tags: "release-*" }, autoContinue: false, land: { auto: true, check: ["make test"] } });
+  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, autoContinue: false, land: undefined });
+  await fs.writeFile(join(repo, ".drift.json"), '{ "land": { "auto": true, "check": ["make test"] } }\n');
+  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, autoContinue: false, land: { auto: true, check: ["make test"] } });
   await setArtifactTracking(repo, "on");
-  assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { changelog: { tags: "release-*" }, land: { auto: true, check: ["make test"] }, trackArtifacts: true });
-  await fs.writeFile(join(repo, ".drift.json"), '{ "changelog": true, "autoContinue": true, "land": { "check": "pytest -q" } }');
-  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, changelog: { mode: "on", tags: "v*" }, autoContinue: true, land: { auto: false, check: ["pytest -q"] } });
+  assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { land: { auto: true, check: ["make test"] }, trackArtifacts: true });
+  await fs.writeFile(join(repo, ".drift.json"), '{ "autoContinue": true, "land": { "check": "pytest -q" } }');
+  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, autoContinue: true, land: { auto: false, check: ["pytest -q"] } });
   assert.match(await setAutoContinue(repo, "status"), /on for this repo/);
   assert.match(await setAutoContinue(repo, "off"), /now off: set autoContinue to false in \.drift\.json/);
-  assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { changelog: true, autoContinue: false, land: { check: "pytest -q" } });
+  assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { autoContinue: false, land: { check: "pytest -q" } });
   assert.match(await setAutoContinue(repo, "off"), /already off; nothing needed changing/);
   assert.match(await setAutoContinue(repo, "status"), /off \(the default\)/);
   assert.match(await setAutoContinue(repo, "status"), /Run \/drift to pick up the latest work, or \/drift <file>, on the model you have selected/);
@@ -830,154 +752,22 @@ test("Drift configuration accepts trackArtifacts, changelog, autoContinue and la
   assert.match(await setAutoContinue(repo, "on"), /now on: set autoContinue to true in \.drift\.json\. The next profiled handoff starts a fresh context window from the handoff alone/);
   assert.match(await setAutoContinue(repo, "status"), /no summary of the previous conversation/);
   assert.equal((await driftConfig(repo)).autoContinue, true);
-  for (const text of ['{"changelog":"yes"}', '{"land":{"auto":"yes"}}', '{"land":{"check":1}}', '{"changelog":{"tag":"v*"}}', '{"changelog":{"tags":""}}', '{"land":"auto"}', '{"autoContinue":"yes"}', '{"other":1}']) {
+  for (const text of ['{"land":{"auto":"yes"}}', '{"land":{"check":1}}', '{"land":"auto"}', '{"autoContinue":"yes"}', '{"other":1}']) {
     await fs.writeFile(join(repo, ".drift.json"), text);
     await assert.rejects(driftConfig(repo), /Drift configuration/);
   }
 });
 
-test("no-changelog forms recover rejected research and normalise to one receipt without changing policy", async (t) => {
-  for (const mode of ["unadopted", "off", "foreign", "on"]) {
-    await t.test(mode, async (t) => {
-      const { repo, agent } = await fixture(t);
-      await fs.writeFile(join(repo, ".gitignore"), "/drift/\n");
-      await fs.writeFile(join(repo, "CHANGELOG.md"), "# Changelog\n\n- Project-owned entry.\n");
-      if (mode === "off") await fs.writeFile(join(repo, ".drift.json"), '{"changelog":false}\n');
-      if (mode === "foreign") {
-        await fs.mkdir(join(repo, "changelog.d"));
-        await fs.writeFile(join(repo, "changelog.d", "project.added.md"), "A project-owned fragment.\n");
-      }
-      if (mode === "on") await setChangelog(repo, "on");
-      const policyPaths = ["CHANGELOG.md", ".drift.json", ".gitattributes", ".gitignore", "changelog.d/README.md", "changelog.d/project.added.md"];
-      const policySnapshot = () => Promise.all(policyPaths.map((path) => fs.readFile(join(repo, path), "utf8").catch((error) => {
-        if (error.code === "ENOENT") return null;
-        throw error;
-      })));
-      const before = await policySnapshot();
-      const store = (await Records.open(repo, "session-a", agent))!;
-      const research: ArtifactInput = { feature: "TEST-1", kind: "research", slug: "decision", status: "complete",
-        body: ["Research Question", "Summary", "Detailed Findings", "Code References", "Open Questions"].map((heading) => `## ${heading}\nFull decision text.\n`).join("\n") };
-      if (mode !== "on") {
-        for (let attempt = 0; attempt < 2; attempt++) {
-          await assert.rejects(publish(store, { ...research, changelog: { section: "Changed", text: "A real entry." } }),
-            /not generated by Drift[\s\S]*did not start a publication[\s\S]*Retry with changelog: null/);
-        }
-        assert.equal((await store.read()).pending, undefined);
-        assert.equal((await store.read()).receipts.length, 0);
-        await assert.rejects(fs.stat(join(repo, "drift")), { code: "ENOENT" });
-      }
-      const variants = [
-        { ...research, changelog: null },
-        { ...research, changelog: { section: "Changed", text: "" } },
-        { ...research, changelog: { section: "Fixed", text: " \t\r\n " } },
-        research,
-      ];
-      const receipt = await publish(store, variants[0]);
-      assert.equal(receipt.fragment, undefined);
-      assert.equal(receipt.path, "drift/TEST-1/001-research-decision.md");
-      for (const variant of variants.slice(1)) assert.deepEqual(await publish(store, variant), receipt);
-      const record = await store.read();
-      assert.equal(record.receipts.length, 1);
-      assert.equal(record.pending, undefined);
-      assert.equal(record.completed, undefined); // Research leaves the interval active.
-      assert.deepEqual(await fs.readdir(join(repo, "drift/TEST-1")), ["001-research-decision.md"]);
-      assert.ok((await fs.readFile(join(repo, receipt.path), "utf8")).endsWith(research.body.trim() + "\n"));
-      assert.deepEqual(await policySnapshot(), before);
-      assert.equal((await changelogState(repo)).enabled, mode === "on");
-      assert.equal(await git(repo, ["diff", "--cached", "--name-only"]), "");
-    });
-  }
-});
-
-test("no-changelog normalisation recovers an interrupted publication but cannot discard a pending real entry", async (t) => {
+test("a .drift.json changelog key is rejected as an unsupported field, like any other unknown key", async (t) => {
   const { repo, agent } = await fixture(t);
-  await fs.writeFile(join(repo, ".gitignore"), "/drift/\n");
-  const store = (await Records.open(repo, "session-a", agent))!;
-  await assert.rejects(publish(store, { ...input, changelog: null }, join(repo, "missing-python")), /failed/);
-  const pending = (await store.read()).pending!;
-  const receipt = await publish(store, { ...input, changelog: { section: "Changed", text: "" } });
-  assert.equal(receipt.path, pending.path);
-  assert.equal(receipt.fragment, undefined);
-  assert.deepEqual(await publish(store, input), receipt);
-
-  await setChangelog(repo, "on");
-  const other = (await Records.open(repo, "session-b", agent))!;
-  const requested = { ...input, slug: "with-entry", changelog: { section: "Changed", text: "Preserve this entry." } };
-  await assert.rejects(publish(other, requested, join(repo, "missing-python")), /failed/);
-  const intent = await fs.readFile(other.file, "utf8");
-  for (const changelog of [null, { section: "Changed", text: "" }]) {
-    await assert.rejects(publish(other, { ...requested, changelog }), /Incomplete publication[\s\S]*SAME input/);
-    assert.equal(await fs.readFile(other.file, "utf8"), intent);
+  for (const text of ['{"changelog":true}', '{"changelog":false}', '{"trackArtifacts":true,"changelog":{"tags":"v*"}}']) {
+    await fs.writeFile(join(repo, ".drift.json"), text);
+    await assert.rejects(driftConfig(repo), /Drift configuration must be an object with only trackArtifacts \(boolean\), autoContinue/);
+    await assert.rejects(setArtifactTracking(repo, "status"), /Drift configuration/);
   }
-  await setChangelog(repo, "off");
-  await assert.rejects(publish(other, requested), /Existing publication[\s\S]*remains pending[\s\S]*original input unchanged/);
-  assert.equal(await fs.readFile(other.file, "utf8"), intent);
-  await setChangelog(repo, "on");
-  const recovered = await publish(other, requested);
-  assert.ok(recovered.fragment);
-  assert.match(await fs.readFile(join(repo, recovered.fragment!), "utf8"), /Preserve this entry\./);
-});
-
-test("malformed changelog objects are not mistaken for the blank-text sentinel", async (t) => {
-  const { repo, agent } = await fixture(t);
   const store = (await Records.open(repo, "session-a", agent))!;
-  for (const changelog of [{}, { section: "Changed" }, { section: "Perf", text: "" }, { section: "Changed", text: null }, { section: "Changed", text: 1 }]) {
-    await assert.rejects(publish(store, { ...input, changelog } as any), /changelog\.(section|text)/);
-  }
+  await assert.rejects(publish(store, input), /Drift configuration/);
   assert.equal((await store.read()).pending, undefined);
-  await assert.rejects(fs.stat(join(repo, "drift")), { code: "ENOENT" });
-});
-
-test("/drift-changelog on adopts CHANGELOG.md, drift_publish writes fragments, and the file regenerates", async (t) => {
-  const { repo, agent } = await fixture(t);
-  await fs.writeFile(join(repo, "CHANGELOG.md"), "# Changelog\n\nAll notable changes.\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
-  await fs.writeFile(join(repo, ".gitignore"), "/drift/\n");
-  const store = (await Records.open(repo, "session-a", agent))!;
-  const entry = { section: "Fixed", text: "**Fixed the fixture.** Details." };
-  await assert.rejects(publish(store, { ...input, changelog: entry }), /not generated by Drift[\s\S]*run \/drift-changelog on to adopt it/);
-  assert.match(await setChangelog(repo, "status"), /is off for this repo because the committed CHANGELOG\.md has no Drift markers[^;]*; 0 fragments/);
-
-  const on = await setChangelog(repo, "on");
-  assert.match(on, /now on: set changelog to true in \.drift\.json; created changelog\.d\/README\.md; inserted the generated region into CHANGELOG\.md before its first heading; added "CHANGELOG\.md merge=drift-changelog" to \.gitattributes\./);
-  const adopted = await fs.readFile(join(repo, "CHANGELOG.md"), "utf8");
-  assert.ok(adopted.startsWith(`# Changelog\n\nAll notable changes.\n\n${START}\n${END}\n\n## [0.0.1] - 2026-01-01\n`), adopted);
-  assert.deepEqual((await driftConfig(repo)).changelog, { mode: "on", tags: "v*" });
-  assert.equal(await git(repo, ["diff", "--cached", "--name-only"]), "");
-  assert.match(await setChangelog(repo, "on"), /now on; nothing needed changing/);
-
-  await assert.rejects(publish(store, { ...input, changelog: { section: "Perf", text: "x" } }), /changelog\.section must be one of Added, Changed/);
-  await assert.rejects(publish(store, { ...input, changelog: { section: "Fixed", text: "a\n\nb" } }), /without blank lines or HTML comments/);
-  const receipt = await publish(store, { ...input, changelog: entry });
-  assert.equal(receipt.fragment, "changelog.d/TEST-1-001-fixture.md");
-  const fragment = await fs.readFile(join(repo, "changelog.d", "TEST-1-001-fixture.md"), "utf8");
-  assert.match(fragment, /^---\ndate: "\d{4}-[^"]+"\nsection: "Fixed"\nartifact: "drift\/TEST-1\/001-handoff-fixture\.md"\n---\n\*\*Fixed the fixture\.\*\* Details\.\n$/);
-  assert.deepEqual(await publish(store, { ...input, changelog: entry }), receipt); // Identical retry returns the receipt, writes nothing new.
-  assert.equal((await store.read()).completed?.fragment, "changelog.d/TEST-1-001-fixture.md");
-
-  assert.equal((await syncChangelog(repo)).status, "written");
-  assert.match(await fs.readFile(join(repo, "CHANGELOG.md"), "utf8"), /### Fixed\n\n- \*\*Fixed the fixture\.\*\* Details\. <!-- changelog\.d\/TEST-1-001-fixture\.md \d{4}-/);
-  assert.equal((await syncChangelog(repo)).status, "unchanged");
-  assert.match(await setChangelog(repo, "status"), /is on because \.drift\.json turns it on \(version tags: v\*\); 1 fragment in changelog\.d\/\. CHANGELOG\.md is up to date/);
-  assert.match(await setChangelog(repo, "off"), /now off: set changelog to false/);
-  assert.equal((await syncChangelog(repo)).status, "disabled");
-  await fs.stat(join(repo, "changelog.d", "README.md")); // Off leaves the files alone.
-});
-
-test("/drift-changelog on refuses a repository with its own fragment system or an ignored changelog.d/, writing nothing", async (t) => {
-  const { repo } = await fixture(t);
-  await fs.mkdir(join(repo, ".changeset"));
-  await assert.rejects(setChangelog(repo, "on"), /already keeps changelog fragments with changesets \(\.changeset\/\)/);
-  await fs.rmdir(join(repo, ".changeset"));
-  await fs.writeFile(join(repo, ".gitignore"), "changelog.d/\n");
-  await assert.rejects(setChangelog(repo, "on"), /Git ignores changelog\.d\/ because of rule "changelog\.d\/" in \.gitignore/);
-  await assert.rejects(fs.stat(join(repo, ".drift.json")), { code: "ENOENT" });
-  await assert.rejects(fs.stat(join(repo, "CHANGELOG.md")), { code: "ENOENT" });
-  await assert.rejects(fs.stat(join(repo, "changelog.d")), { code: "ENOENT" });
-
-  // A repository with no changelog at all gets a minimal one.
-  await fs.writeFile(join(repo, ".gitignore"), "/drift/\n");
-  assert.match(await setChangelog(repo, "on"), /created CHANGELOG\.md/);
-  assert.equal(await fs.readFile(join(repo, "CHANGELOG.md"), "utf8"), `# Changelog\n\n${START}\n${END}\n`);
 });
 
 async function landing(t: any) {
@@ -1064,118 +854,16 @@ test("landing halts on a real conflict with the branch untouched, on uncommitted
   assert.ok((await remoteFiles(repo, branch)).includes("mine.txt"));
 });
 
-test("an origin remote and a CHANGELOG.md adopt nothing; a committed adoption is regenerated without writing anything else", async (t) => {
-  const { repo, agent, dir } = await fixture(t);
-  await fs.writeFile(join(repo, ".gitignore"), "/drift/\n");
-  const bare = join(dir, "origin.git");
-  await git(dir, ["init", "-q", "--bare", bare]);
-  await git(repo, ["remote", "add", "origin", bare]);
-  const original = "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n";
-  await fs.writeFile(join(repo, "CHANGELOG.md"), original);
-  await git(repo, ["add", "CHANGELOG.md", ".gitignore"]); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "shared repo"]);
-
-  // A fresh clone of a shared repository: opening it must leave the working tree exactly as cloned.
-  assert.deepEqual(await changelogState(repo), { enabled: false, reason: "the committed CHANGELOG.md has no Drift markers, so the project has not adopted it", tags: "v*" });
-  assert.deepEqual(await syncChangelog(repo), { status: "disabled", detail: "the committed CHANGELOG.md has no Drift markers, so the project has not adopted it" });
-  assert.equal(await fs.readFile(join(repo, "CHANGELOG.md"), "utf8"), original);
-  await assert.rejects(fs.stat(join(repo, ".gitattributes")), { code: "ENOENT" });
-  await assert.rejects(fs.stat(join(repo, "changelog.d")), { code: "ENOENT" });
-  assert.equal((await git(repo, ["status", "--porcelain"])).trim(), "");
-  const store = (await Records.open(repo, "session-a", agent))!;
-  await assert.rejects(publish(store, { ...input, changelog: { section: "Added", text: "x" } }), /not generated by Drift/);
-
-  // Markers only in the working tree are not an adoption either: someone's uncommitted residue stays theirs.
-  await fs.writeFile(join(repo, "CHANGELOG.md"), `# Changelog\n\n${START}\n${END}\n\n## [0.0.1] - 2026-01-01\n\n- old\n`);
-  assert.equal((await changelogState(repo)).enabled, false);
-
-  // The project adopts once, explicitly, and commits it; from then on every clone regenerates with no flag.
-  await setChangelog(repo, "on");
-  await fs.writeFile(join(repo, ".drift.json"), "{}\n");
-  await git(repo, ["add", "-A", "--", "CHANGELOG.md", "changelog.d", ".gitattributes"]); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "adopt generated changelog"]);
-  assert.deepEqual(await changelogState(repo), { enabled: true, reason: "the committed CHANGELOG.md carries Drift's markers", tags: "v*" });
-  assert.deepEqual(await syncChangelog(repo), { status: "unchanged" });
-  const receipt = await publish(store, { ...input, changelog: { section: "Added", text: "Needs no flag once committed." } });
-  assert.equal(receipt.fragment, "changelog.d/TEST-1-001-fixture.md");
-  const sync = await syncChangelog(repo);
-  assert.equal(sync.status, "written");
-  assert.equal(sync.adopted, undefined);
-  assert.match(await fs.readFile(join(repo, "CHANGELOG.md"), "utf8"), /- Needs no flag once committed\. <!-- changelog\.d\/TEST-1-001-fixture\.md/);
-
-  // A committed adoption is only regenerated: Drift does not restore a README or attribute the project removed.
-  await fs.rm(join(repo, "changelog.d", "README.md"));
-  await fs.writeFile(join(repo, ".gitattributes"), "");
-  assert.equal((await syncChangelog(repo)).status, "unchanged");
-  await assert.rejects(fs.stat(join(repo, "changelog.d", "README.md")), { code: "ENOENT" });
-  assert.equal(await fs.readFile(join(repo, ".gitattributes"), "utf8"), "");
-
-  // The override: a shared repo that wants its changelog hand-written.
-  await fs.writeFile(join(repo, ".drift.json"), '{ "changelog": false }\n');
-  assert.match((await changelogState(repo)).reason, /changelog is false in \.drift\.json/);
-  assert.equal((await syncChangelog(repo)).status, "disabled");
-  await assert.rejects(publish(store, { ...input, slug: "second", changelog: { section: "Added", text: "x" } }), /not generated by Drift/);
-
-  // The tracked index's attribute arrives with the remote; no command needed (tracking is itself an opt-in).
-  assert.equal(await ensureIndexAttribute(repo), true);
-  assert.equal(await ensureIndexAttribute(repo), false);
-  assert.equal(await fs.readFile(join(repo, ".gitattributes"), "utf8"), "drift/INDEX.md merge=drift-index\n");
-});
-
-test("a changelog.d/ already kept in another format is the project's convention: Drift writes nothing, even with an origin remote", async (t) => {
-  const { repo, dir } = await fixture(t);
-  const bare = join(dir, "origin.git");
-  await git(dir, ["init", "-q", "--bare", bare]);
-  await git(repo, ["remote", "add", "origin", bare]);
-  const changelog = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- old\n";
-  await fs.writeFile(join(repo, "CHANGELOG.md"), changelog);
-  await fs.mkdir(join(repo, "changelog.d"));
-  await fs.writeFile(join(repo, "changelog.d", "README.md"), "# Changelog fragments\n\nWrite `changelog.d/<slug>.<type>.md`.\n");
-  await fs.writeFile(join(repo, "changelog.d", "chore-fragments.added.md"), "- Replaced direct editing with fragments.\n\n  A continuation paragraph.\n");
-  const unchanged = async () => {
-    assert.equal(await fs.readFile(join(repo, "CHANGELOG.md"), "utf8"), changelog);
-    await assert.rejects(fs.stat(join(repo, ".gitattributes")), { code: "ENOENT" });
-    assert.deepEqual((await fs.readdir(join(repo, "changelog.d"))).sort(), ["README.md", "chore-fragments.added.md"]);
-  };
-  assert.deepEqual(await changelogState(repo), { enabled: false, reason: "the repository keeps changelog fragments with its own changelog.d/ format (changelog.d/chore-fragments.added.md has no Drift frontmatter)", tags: "v*" });
-  assert.equal((await syncChangelog(repo)).status, "disabled");
-  await assert.rejects(setChangelog(repo, "on"), /already keeps changelog fragments with its own changelog\.d\/ format/);
-  await unchanged();
-
-  // At release that convention folds and deletes its fragments, leaving only its README: still not Drift's.
-  await fs.rm(join(repo, "changelog.d", "chore-fragments.added.md"));
-  assert.match((await changelogState(repo)).reason, /its own changelog\.d\/ convention \(changelog\.d\/README\.md is not Drift's\)/);
-  assert.equal((await syncChangelog(repo)).status, "disabled");
-  await fs.writeFile(join(repo, "changelog.d", "chore-fragments.added.md"), "- Replaced direct editing with fragments.\n");
-
-  // One Drift-format fragment means Drift is in use, so the other file is reported as invalid, and adoption,
-  // which would write the markers and the merge attribute, waits until every fragment would build.
-  await fs.writeFile(join(repo, ".drift.json"), '{ "changelog": true }\n');
-  await fs.writeFile(join(repo, "changelog.d", "TEST-1-001-x.md"), '---\ndate: "2026-10-09T16:29:21+01:00"\nsection: "Added"\n---\nA Drift entry.\n');
-  assert.equal((await changelogState(repo)).enabled, true);
-  const sync = await syncChangelog(repo);
-  assert.equal(sync.status, "unrecognised");
-  assert.equal(sync.adopted, undefined);
-  assert.match(sync.detail!, /invalid fragment \(no frontmatter\): changelog\.d\/chore-fragments\.added\.md; .*CHANGELOG\.md was not adopted; nothing was written$/);
-  assert.equal(await fs.readFile(join(repo, "CHANGELOG.md"), "utf8"), changelog);
-  await assert.rejects(fs.stat(join(repo, ".gitattributes")), { code: "ENOENT" });
-
-  await fs.rm(join(repo, "changelog.d", "chore-fragments.added.md"));
-  const adopted = await syncChangelog(repo);
-  assert.equal(adopted.status, "written");
-  assert.match(await fs.readFile(join(repo, "CHANGELOG.md"), "utf8"), /- A Drift entry\. <!-- changelog\.d\/TEST-1-001-x\.md/);
-});
-
 test("landing commits Drift's own publication outputs first and still halts on anything else", async (t) => {
   const { repo, agent, branch } = await landing(t);
   await fs.writeFile(join(repo, ".gitignore"), "logs/*\n");
-  await fs.writeFile(join(repo, ".drift.json"), '{ "trackArtifacts": true, "changelog": true }\n');
-  await fs.writeFile(join(repo, "CHANGELOG.md"), "# Changelog\n\n## [0.0.1] - 2026-01-01\n\n- old\n");
+  await fs.writeFile(join(repo, ".drift.json"), '{ "trackArtifacts": true }\n');
   await git(repo, ["add", "-A"]); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "shared repo"]); await git(repo, ["push", "-q", "origin", `HEAD:${branch}`]);
   const store = (await Records.open(repo, "session-a", agent))!;
-  const receipt = await publish(store, { ...input, changelog: { section: "Added", text: "Landed with its handoff." } });
-  await syncChangelog(repo);
+  const receipt = await publish(store, input);
   const outcome = await land(repo, { records: store, message: `drift: publish ${receipt.path}` });
-  assert.deepEqual([...outcome.committed].sort(), [".gitattributes", "CHANGELOG.md", "changelog.d/README.md", "changelog.d/TEST-1-001-fixture.md", "drift/INDEX.md", "drift/TEST-1/001-handoff-fixture.md"]);
-  assert.match(describeLanding(outcome), /committed 6 Drift files first/);
+  assert.deepEqual([...outcome.committed].sort(), ["drift/TEST-1/001-handoff-fixture.md"]);
+  assert.match(describeLanding(outcome), /committed 1 Drift file first/);
   const remote = (await git(repo, ["ls-tree", "-r", "--name-only", `origin/${branch}`])).trim().split("\n");
   for (const file of outcome.committed) assert.ok(remote.includes(file), file);
   assert.equal((await git(repo, ["log", "-1", "--format=%s"])).trim(), `drift: publish ${receipt.path}`);

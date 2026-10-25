@@ -62,7 +62,6 @@ command (or `status`) only reports.
 | `/drift [artifact \| request]` | The entry point: picks up the newest artifact from the raw files, the one you name, or passes any other request to the Drift skill, on the model you have selected. |
 | `/drift-worktree [status \| <path>]` | Shows the launch repo, active Drift root and record, or adopts an existing linked worktree of the same repository. ([details](docs/worktrees.md)) |
 | `/drift-track-artifacts on\|off\|status` | Whether this repo's `drift/` artifacts are committed to Git or stay private (ignored). ([details](docs/artifact-git-policy.md)) |
-| `/drift-changelog on\|off\|status` | Whether `CHANGELOG.md` is generated from `changelog.d/` fragments (never automatic: on where a committed `CHANGELOG.md` carries Drift's markers or `.drift.json` turns it on). ([details](docs/changelog.md)) |
 | `/drift-auto-continue on\|off\|status` | Whether each profiled handoff automatically starts a fresh context window from the handoff alone, on the model your profile map assigns. Off by default: you pick up with `/drift`. ([details](docs/continuation.md)) |
 | `/drift-land` | Lands the current branch on origin's default branch: fetch, rebase, verify, check, push; never squash or force. ([details](docs/landing.md)) |
 
@@ -82,16 +81,21 @@ in the target repository, not the skill checkout:
 
 ```text
 drift/
-  INDEX.md
   auth-refactor/
     001-research-auth-flow.md
     002-plan-implementation.md
     003-handoff-progress.md
 ```
 
-`INDEX.md` is a generated, repository-wide chronological view for people. Pickup
-and recent-context navigation query the raw artifacts through the same parser;
-they do not need the view to exist or be writable.
+Drift keeps no index file. Pickup and the per-session recent-artifact list read
+the raw artifacts through one shared parser. For a repository-wide chronological
+timeline, `python3 -I scripts/build-index.py /path/to/project/drift` prints it as
+a Markdown table to stdout and writes nothing; `--json` returns the same
+read-only catalog for tools.
+
+Project history is the commit messages (what changed, why, and which Drift
+artifact they implement), the handoffs and the recent-artifact list. Drift
+maintains no changelog.
 
 Each artifact's frontmatter also carries a `status` — `pending`, `in-progress`,
 `complete` or `superseded` — so you can see which plans have run and which
@@ -113,34 +117,22 @@ published. Drift never guesses or backfills a successor and never follows the
 link on its own; it reports `<old> superseded by <new>`, and an older
 `superseded` artifact without the field still reads fine as "replacement not
 recorded". Those two lifecycle lines are the only in-place edits Drift makes to
-an existing artifact. Lifecycle state stays out of index columns, because index
-rows never change.
+an existing artifact. The catalog reports each artifact's current status
+alongside its timeline row.
 
-![A repository tree showing drift/INDEX.md, numbered feature artifacts with status chips, changelog.d fragments and a generated CHANGELOG.md, annotated with callouts for the timeline, measured metadata with graded citations, and conflict-free changelogs.](assets/what-lands-in-repo.svg)
+![A repository tree showing numbered feature artifacts under drift/ with status chips, annotated with callouts for the catalog timeline, measured metadata with graded citations, and history kept in commit messages.](assets/what-lands-in-repo.svg)
 
 ### Artifact Git policy (per repository)
 
 Artifacts are private by default: Drift keeps `drift/` ignored. Committing
 `{ "trackArtifacts": true }` in a repository-root `.drift.json` lets handoffs
 travel between machines; on Pi, `/drift-track-artifacts on|off|status` makes
-the `.gitignore` edits for you and verifies Git agrees, staging nothing. A
-tracked `drift/INDEX.md` gets a merge driver so parallel branches union their
-rows instead of conflicting, and linked worktrees in private mode publish into
-the main worktree's shared store. Review artifacts before committing: handoffs
-can contain private project context even though they must not contain
-credentials. Exact rules, edge cases and the driver setup for other hosts:
+the `.gitignore` edits for you and verifies Git agrees, staging nothing.
+Linked worktrees in private mode publish into the main worktree's shared store.
+Review artifacts before committing: handoffs can contain private project
+context even though they must not contain credentials. Exact rules and edge
+cases:
 [docs/artifact-git-policy.md](docs/artifact-git-policy.md).
-
-### Changelog from fragments (per repository)
-
-Parallel agents editing one `[Unreleased]` section lose entries on every
-rebase, so in a repository with an `origin` remote and a root `CHANGELOG.md`
-Drift generates the changelog instead: one fragment per change in
-`changelog.d/`, rebuilt between marker comments at each publication, grouped by
-version tag, with the project's own text outside the markers preserved byte for
-byte. A local-only repository is left alone; `/drift-changelog on|off|status`
-overrides the trigger either way. Fragment format, hand-edit detection and the
-merge driver: [docs/changelog.md](docs/changelog.md).
 
 ### Citation anchors (per artifact)
 
@@ -161,7 +153,7 @@ metrics ledger: [docs/citation-anchors.md](docs/citation-anchors.md).
 Drift already knows when a unit of work ends: the handoff that completes the
 interval. With a one-time `{ "land": { "auto": true, "check": "pytest -q" } }`
 opt-in, that handoff lands itself: fetch, rebase onto origin's default branch,
-verify derived files, guard against reverting other threads' work, run the
+guard against reverting other threads' work, run the
 repo's checks, push — never squash, never force. A real conflict or a tripped
 guard halts with the branch as it was and says what blocked. `/drift-land` is
 the same sequence as a manual command, and landings are serialised across a
@@ -170,7 +162,7 @@ repository's worktrees. The full sequence, the guard, and what the one
 
 ## Worktrees for parallel workers (Pi)
 
-![An orchestrator in the main checkout assigns three workers their own Git worktrees; all publish into one drift/INDEX.md whose rows are unioned, re-ordered and renumbered by a merge driver.](assets/parallel-workers.svg)
+![An orchestrator in the main checkout assigns three workers their own Git worktrees; all publish into one drift/ store whose artifacts the catalog orders into one timeline by measured date.](assets/parallel-workers.svg)
 
 A common layout: start several Pi ACP sessions in the main checkout, then have
 an orchestrator assign each worker an existing linked worktree. A Pi session's
@@ -183,8 +175,8 @@ an orchestrator assign each worker an existing linked worktree. A Pi session's
 | `drift_worktree { action: "status" }` / `{ action: "adopt", path }` | The same, as a model tool. |
 
 Adoption accepts only the root of an existing worktree of the same repository,
-then binds every Drift repository operation to it: metadata, numbering, index,
-publication, changelog fragments, the configuration commands and continuation.
+then binds every Drift repository operation to it: metadata, numbering,
+publication, the configuration commands and continuation.
 Each adoption takes a fresh measured baseline, and the binding survives reload,
 resume and compaction. It does not change Pi's `cwd` or the default directory
 of the built-in tools, and it is not a sandbox: the adopted branch's
@@ -241,9 +233,8 @@ On Pi, `/drift` is the one entry point:
 | `/drift <anything else>` | An ordinary Drift request, like `/skill:drift`. |
 
 The choice is made in code, not by the model, and is announced ("Drift: picking up …").
-A missing, stale, conflicting or unwritable `INDEX.md` cannot determine the choice:
-the shared parser reads the actual artifacts without updating the view. Raw-file
-read failures are reported rather than hidden behind a stale index; undated-only
+The shared parser reads the actual artifacts. Raw-file read failures are
+reported rather than hidden; undated-only
 stores ask you to name an artifact instead of guessing. For a read-only catalog in
 other hosts, run `python3 -I scripts/build-index.py /path/to/project/drift --json`
 from the Drift checkout (`py -3` on Windows).
@@ -259,11 +250,7 @@ pick-up rule from `SKILL.md` when you ask to "pick up" without naming an artifac
 - `/drift`, which picks up the newest artifact (or the one you name) and
   routes it to the right workflow.
 - Raw-artifact pickup and a bounded recent-artifact list, using the shared
-  parser rather than reading `INDEX.md`. Navigation neither writes the view nor
-  waits for its publication lock.
-- A human-readable `drift/INDEX.md` view refreshed at session start and
-  publication for compatibility. A failed view refresh does not make existing
-  artifacts undiscoverable.
+  parser. Navigation writes nothing.
 - Measured start metadata and dirty-file fingerprints that survive reload,
   resume, and compaction.
 - Bounded Drift context on normal model requests and checkpoints after settled
@@ -275,7 +262,8 @@ pick-up rule from `SKILL.md` when you ask to "pick up" without naming an artifac
   from live sessions is transcribed in
   [docs/field-observations.md](docs/field-observations.md).
 - `drift_publish`, which validates artifact paths, writes measured frontmatter,
-  allocates numbers, rebuilds the index, and retains retryable receipts.
+  allocates numbers, and retains retryable receipts. It writes only the
+  artifact: no index or changelog file.
 
 A published handoff completes only its current work interval. Pi conversation
 logs and session records are never deleted by Drift. The extension is inactive
@@ -289,9 +277,10 @@ usable manually in other agents.
 npm test
 npm run typecheck
 npm run lint
-python3 -I scripts/build-index.py /path/to/project/drift --check
 git diff --check
 ```
+
+Maintenance: `python3 -I scripts/retire-index-and-changelog.py <repo>... [--apply]` removes the changelog and `drift/INDEX.md` leftovers of earlier Drift versions (Drift-generated `CHANGELOG.md`, `changelog.d/`, `drift/INDEX.md`, Drift's `.gitattributes` lines and clone merge-driver config); it is a dry run without `--apply`, skips linked worktrees and never commits.
 
 CI runs the lint, typecheck and test steps on Ubuntu, macOS and Windows for
 every push and pull request; the real-Pi tests use the Pi version the lockfile

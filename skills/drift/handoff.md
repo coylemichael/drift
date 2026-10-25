@@ -72,8 +72,6 @@ Before creating `drift/` or writing the artifact, apply **Artifact Git Policy** 
 
 Create `drift/<feature>/` if it doesn't exist.
 
-Where the human-readable `drift/INDEX.md` view is maintained, update it after writing the artifact; a host publisher owns that update where available. The view is not required for pickup or recent navigation. See the "Root Index" section of `SKILL.md` for the format, ordering, and rebuild rules.
-
 ### Path verification
 
 Before writing, confirm the resolved path is **inside the repository** and matches `drift/<feature>/NNN-handoff-<description>.md`. Do not write new artifacts to `research/`, `plans/`, or `handoffs/` subfolders. Legacy subfolder paths are allowed only when explicitly continuing an existing legacy chain. Do not write to editor memory systems, temp directories, user-profile paths, or any absolute path outside the repository root. If you cannot resolve the repository root, ask the user rather than guess.
@@ -127,7 +125,7 @@ Leave other threads' and historical records untouched. An explicitly owned legac
 
 ## Guidelines
 
-- **File references over prose.** `src/db/schema.py:84` beats "the schema file." But match the anchor to the tree state: a handoff is routinely written over uncommitted changes, where line numbers are wrong the moment the work is committed or rebased. For code you did not just commit, prefer symbol-shaped references — `lib/changelog.ts: syncChangelog()` — and keep `path:line` for committed state you verified this session.
+- **File references over prose.** `src/db/schema.py:84` beats "the schema file." But match the anchor to the tree state: a handoff is routinely written over uncommitted changes, where line numbers are wrong the moment the work is committed or rebased. For code you did not just commit, prefer symbol-shaped references — `lib/artifacts.ts: publish()` — and keep `path:line` for committed state you verified this session.
 - A host publisher records anchor capture coverage: no eligible numeric references, all captured, or partial capture with skipped reasons. Symbol-shaped references are not numeric candidates; no anchors is expected in that case. Do not invent line numbers merely to get anchors, and do not treat complete capture as proof of freshness or behavioral verification. Missing legacy coverage is not-recorded, not inferred complete.
 - Be honest about state. If something is half-done or broken, say so. The next session needs the truth, not a clean narrative.
 - Keep "Codebase Context" factual. "The extraction module uses X pattern, follow it" — good. "The extraction module should be refactored" — out of scope.
@@ -143,7 +141,7 @@ A host overlay may continue a profiled handoff automatically; see "Host overlays
 2. Read the source research document it references, if any
 3. If the handoff references a previous handoff, read that too — but focus on the most recent one
 4. Infer the feature folder from the handoff path, including legacy paths such as `drift/<feature>/handoffs/...`
-5. Skim the recent raw-artifact list (supplied by the host or queried with the shared `build-index.py --json` helper in `SKILL.md`) to see what happened elsewhere in the repo since that handoff was written — other features may have landed changes it does not know about. Do not trust a stale `INDEX.md` view
+5. Skim the recent raw-artifact list (supplied by the host or queried with the shared `build-index.py --json` helper in `SKILL.md`) to see what happened elsewhere in the repo since that handoff was written — other features may have landed changes it does not know about.
 6. Pick up at the **Next Steps** section of the handoff
 7. Do not re-investigate the codebase or re-research. Trust the handoff's description of current state
 8. If a file reference in the handoff no longer matches what's on disk, note the discrepancy and adapt — don't halt. A host may attach a citation report grading each reference (fresh / moved / changed / gone / uncertain); when one is supplied, use it to decide what to re-check instead of trusting blindly or re-verifying everything

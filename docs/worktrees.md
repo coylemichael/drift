@@ -19,9 +19,8 @@ What adoption accepts and does:
   (same Git common directory). Other clones, submodules, subdirectories and
   missing paths are rejected. Drift never creates, rebases or repairs a
   worktree, and never edits its policy; the target's own (branch-local)
-  `.drift.json` applies. As at session start, derived files may be refreshed and
-  merge drivers installed before the new baseline; tracking opt-in and ignore
-  rules are not changed.
+  `.drift.json` applies. Session-start preparation runs before the new baseline;
+  tracking opt-in and ignore rules are not changed.
 - **When:** as the sole call in its tool-call batch, with no publication pending and
   no continuation queued; otherwise it fails and changes nothing. Adopting the
   current root is a no-op.
@@ -33,11 +32,11 @@ What adoption accepts and does:
   before adoption is not measured against the new root. Worktree-aware records
   use version 2 so an older publisher refuses them rather than measuring main.
 - **Scope:** every Drift repository operation then uses the adopted root:
-  metadata, numbering, index, publication, refs, changelog fragments,
-  `/drift-track-artifacts`, `/drift-changelog`, `/drift-auto-continue`,
+  metadata, numbering, publication, refs,
+  `/drift-track-artifacts`, `/drift-auto-continue`,
   `/drift-land` and continuation
   artifacts. Tracked artifacts follow the worktree's branch; private artifacts
-  go to the shared main-worktree store, with metadata and fragments from the
+  go to the shared main-worktree store, with metadata from the
   worker (see [artifact-git-policy.md](artifact-git-policy.md)).
 - **Durability:** the binding survives reload, resume, compaction and automatic
   continuation of the same session. A new, forked or cloned session is not

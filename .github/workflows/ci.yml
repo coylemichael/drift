@@ -27,11 +27,6 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
-        with:
-          # The changelog check groups fragments by the first version tag containing them; a shallow,
-          # tag-less checkout renders a different region from the committed one.
-          fetch-depth: 0
-          fetch-tags: true
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -44,4 +39,3 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
-      - run: python -I scripts/build-changelog.py . --check

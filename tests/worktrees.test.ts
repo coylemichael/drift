@@ -253,16 +253,17 @@ test("tracked artifacts publish into the adopted worktree", async (t) => {
   assert.match(await store.context(), /Artifact store: .*feature wt.*\(tracked: committed per worktree\)/);
 });
 
-test("private artifacts stay in the main store while metadata and fragments come from the adopted worktree", async (t) => {
-  const { repo, wt, agent } = await fixture(t, { changelog: true });
+test("private artifacts stay in the main store while metadata comes from the adopted worktree", async (t) => {
+  const { repo, wt, agent } = await fixture(t);
   const store = (await Records.open(repo, "s1", agent))!;
   await store.adopt(wt);
-  const receipt = await publish(store, handoff("private", { changelog: { section: "Added", text: "- Worktree adoption." } }));
+  const receipt = await publish(store, handoff("private"));
   const content = await fs.readFile(join(repo, receipt.path), "utf8");
   assert.match(content, /^branch: "feature"$/m);
   assert.match(content, new RegExp(`^git_commit: "${(await git(wt, ["rev-parse", "HEAD"])).trim()}"$`, "m"));
-  assert.ok(await fs.stat(join(wt, receipt.fragment!)));
-  assert.equal(await fs.stat(join(repo, receipt.fragment!)).catch(() => undefined), undefined);
+  for (const root of [repo, wt]) for (const retired of ["changelog.d", join("drift", "INDEX.md")]) {
+    assert.equal(await fs.stat(join(root, retired)).catch(() => undefined), undefined);
+  }
   assert.equal(await fs.stat(join(wt, "drift")).catch(() => undefined), undefined);
 });
 

@@ -11,9 +11,7 @@ interval. With a one-time opt-in, that handoff lands itself:
 { "land": { "auto": true, "check": ["cargo fmt --check", "cargo test"] } }
 ```
 
-The sequence is fetch; rebase onto origin's default branch (the
-[index](artifact-git-policy.md) and [changelog](changelog.md) drivers resolve
-their files); verify the derived files; the guard
+The sequence is fetch; rebase onto origin's default branch; the guard
 (`git diff origin/<default> --name-only` may list only files the branch's own
 commits touch, which is how a squash against a moved ref or a push from a stale
 index reverts other threads' work); the repo's check commands, any shell
@@ -25,12 +23,11 @@ the profiled continuation then resumes in the same active worktree
 at the landed commit; landing does not switch to the main checkout. It never
 squashes, force-pushes or resets against a moving ref. The one thing it commits
 is Drift's own publication output, which the handoff has just produced and which
-holds nothing the agent decided: the artifact and index in a tracked repo, the
-fragment and regenerated changelog, and Drift's own ignore and attribute lines,
-in one `drift: publish <artifact>` commit. Any other uncommitted tracked change
+holds nothing the agent decided: the artifact in a tracked repo and Drift's own
+ignore line, in one `drift: publish <artifact>` commit. Any other uncommitted tracked change
 is the agent's and stops the landing before anything happens.
 
-A real conflict in a non-derived file, or the guard tripping, halts the chain:
+A real conflict, or the guard tripping, halts the chain:
 the rebase is aborted, the branch is left as it was, the handoff stays
 published, continuation is held, and the tool result says what blocked.
 `/drift-land` is the same sequence as a manual command. Landings are

@@ -11,8 +11,8 @@ import { fileURLToPath } from "node:url";
 const exec = promisify(execFile);
 export const hash = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
 export type Fingerprint = Record<string, string>;
-export type Receipt = { digest: string; path: string; kind: string; date: string; sha256: string; fragment?: string };
-export type Pending = Omit<Receipt, "fragment"> & { content: string; fragment?: { path: string; content: string } };
+export type Receipt = { digest: string; path: string; kind: string; date: string; sha256: string };
+export type Pending = Receipt & { content: string };
 export const artifactPathPattern = /^drift\/[A-Za-z0-9][A-Za-z0-9_-]{0,79}\/\d{3}-(research|plan|handoff)-[a-z0-9-]+\.md$/;
 function validReceipt(value: any): value is Receipt {
   return value && typeof value.path === "string" && artifactPathPattern.test(value.path) &&
@@ -175,14 +175,12 @@ export function mainWorktree(repo: string): Promise<string | undefined> {
 /** Repository-root `.drift.json`, validated. Every field is an explicit, host-neutral project choice; nothing is inferred. */
 export interface DriftConfig {
   trackArtifacts: boolean;
-  /** `auto`: on only where the committed CHANGELOG.md carries Drift's markers; never adopts. `on`/`off`: the repo's explicit override. */
-  changelog: { mode: "auto" | "on" | "off"; tags: string };
   /** Whether a profiled handoff starts a fresh context window from the handoff alone, on its profile's model. Off unless the repo opts in; then /drift picks up on the selected model. */
   autoContinue: boolean;
   land: { auto: boolean; check: string[] } | undefined;
 }
 
-const configShape = "trackArtifacts (boolean), changelog (boolean, or {tags: glob}), autoContinue (boolean) and land ({auto: boolean, check: command or [commands]})";
+const configShape = "trackArtifacts (boolean), autoContinue (boolean) and land ({auto: boolean, check: command or [commands]})";
 
 async function rawConfig(repo: string): Promise<{ path: string; raw: Record<string, unknown> | undefined }> {
   const path = await safePath(repo, join(repo, ".drift.json"));
@@ -198,8 +196,6 @@ async function rawConfig(repo: string): Promise<{ path: string; raw: Record<stri
   for (const [key, value] of Object.entries(raw)) {
     if (key === "trackArtifacts" && typeof value === "boolean") continue;
     if (key === "autoContinue" && typeof value === "boolean") continue;
-    if (key === "changelog" && (typeof value === "boolean" || (value && typeof value === "object" && !Array.isArray(value) &&
-        Object.keys(value).every((k) => k === "tags") && (!("tags" in value) || (typeof (value as any).tags === "string" && (value as any).tags.trim()))))) continue;
     if (key === "land" && value && typeof value === "object" && !Array.isArray(value) &&
         Object.keys(value).every((k) => k === "auto" || k === "check") &&
         (!("auto" in value) || typeof (value as any).auto === "boolean") &&
@@ -211,14 +207,9 @@ async function rawConfig(repo: string): Promise<{ path: string; raw: Record<stri
 
 export async function driftConfig(repo: string): Promise<DriftConfig> {
   const { raw } = await rawConfig(repo);
-  const changelog = raw?.changelog as boolean | { tags?: string } | undefined;
   const land = raw?.land as { auto?: boolean; check?: string | string[] } | undefined;
   return {
     trackArtifacts: (raw?.trackArtifacts as boolean | undefined) ?? false,
-    changelog: {
-      mode: changelog === undefined ? "auto" : changelog === false ? "off" : "on",
-      tags: (typeof changelog === "object" && changelog.tags?.trim()) || "v*",
-    },
     autoContinue: (raw?.autoContinue as boolean | undefined) ?? false,
     land: land ? { auto: land.auto ?? false, check: land.check === undefined ? [] : Array.isArray(land.check) ? land.check : [land.check] } : undefined,
   };
@@ -724,7 +715,7 @@ export class Records {
       `Pi session: ${record.sessionId}; work interval: ${record.intervalId}`,
       `Measured start: ${record.started}; branch: ${record.startBranch}; commit: ${record.startCommit ?? "unborn"}`,
       `Interval: ${record.completed ? `published handoff ${record.completed.path}` : "active"}`,
-      "Use the portable Drift skill for workflow/content. Use drift_publish for artifact metadata, numbering, index and handoff completion.",
+      "Use the portable Drift skill for workflow/content. Use drift_publish for artifact metadata, numbering and handoff completion.",
       "Read the record for the exact starting fingerprint. Git deltas include overlapping work, not exclusive authorship.",
     ];
     if (record.pending) lines.push(`Incomplete publication: ${record.pending.path}. Retry the SAME drift_publish input; do not delete the record.`);

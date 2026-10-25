@@ -65,8 +65,8 @@
 
   <!-- index bar -->
   <rect x="60" y="472" width="1160" height="66" rx="6" fill="#131a16" stroke="#1f5c4a" stroke-width="1"/>
-  <text class="m" x="640" y="500" text-anchor="middle" font-size="14" fill="#2bbd97">drift/INDEX.md &#8212; one chronological timeline</text>
-  <text class="t" x="640" y="522" text-anchor="middle" font-size="12.5" fill="#9aa49d">Rows from parallel branches are unioned, re-ordered and renumbered by a merge driver &#8212; a rebase never stops on the index.</text>
+  <text class="m" x="640" y="500" text-anchor="middle" font-size="14" fill="#2bbd97">drift/ catalog &#8212; one chronological timeline</text>
+  <text class="t" x="640" y="522" text-anchor="middle" font-size="12.5" fill="#9aa49d">Every worker's artifacts are read from their frontmatter and ordered by measured date &#8212; there is no index file to merge.</text>
 
   <text class="t" x="640" y="584" text-anchor="middle" font-size="12.5" font-style="italic" fill="#8b968f">Private mode: workers publish into the shared store, so history survives worktree removal. Tracked mode: artifacts travel with the branch.</text>
 </svg>
