@@ -74,7 +74,7 @@
   <!-- fresh-window band -->
   <rect x="60" y="364" width="1160" height="64" rx="6" fill="#131a16" stroke="#1f5c4a" stroke-width="1"/>
   <text class="t" x="640" y="390" text-anchor="middle" font-size="14" fill="#b8c1ba">Each continuation starts in a fresh context window, from the handoff &#8212; not a 180k-token transcript.</text>
-  <text class="t" x="640" y="412" text-anchor="middle" font-size="12.5" fill="#8b968f">Manual by default: publication names the <tspan class="m" fill="#2bbd97">drift-continue</tspan> command, you decide where it runs. <tspan class="m" fill="#2bbd97">/drift-auto-continue on</tspan> chains it automatically.</text>
+  <text class="t" x="640" y="412" text-anchor="middle" font-size="12.5" fill="#8b968f">Manual by default: you run <tspan class="m" fill="#2bbd97">/drift</tspan> when you choose, on the model you have selected. <tspan class="m" fill="#2bbd97">/drift-auto-continue on</tspan> chains it automatically.</text>
 
   <text class="m" x="640" y="476" text-anchor="middle" font-size="12" fill="#5b655f">profiles &#8594; your model IDs: ~/.pi/agent/drift-model-profiles.json</text>
 </svg>

@@ -80,10 +80,9 @@ personal command file. Copy `claude/commands/drift.md` from this checkout to
 `~/.claude/commands/drift.md`; then `/drift`, `/drift <artifact>` and
 `/drift <request>` behave as on Pi (pick up the newest artifact, a named one,
 or run a Drift request), expanding to the `drift:drift` skill with your words.
-On this host Drift is currently the skill alone: artifacts are written by the
+On this host Drift is the skill alone. The agent writes artifacts by the
 portable manual procedure, and the profiled continuation chain described in
-[continuation.md](continuation.md) is Pi-only until the Claude worker agents
-and hooks land.
+[continuation.md](continuation.md) runs only on Pi.
 
 ## Zed notes
 

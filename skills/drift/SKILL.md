@@ -70,11 +70,10 @@ Do not interrupt the user for routine implementation choices that are already co
 
 ## Host overlays
 
-The core of this skill is the manual baseline: it works in any agent that can read files and run a shell. Some hosts automate parts of it. Pick exactly one overlay by checking what is present, and read it before writing any artifact:
+The core of this skill is the manual baseline: it works in any agent that can read files and run a shell. Some hosts automate parts of it. Check which host you are in, and read its overlay before writing any artifact:
 
 - The `drift_publish` tool is available → read `hosts/pi.md`.
-- The Drift plugin is present (agents named `drift:drift-orchestrator`, `drift:drift-research`, `drift:drift-planning`, `drift:drift-implementation` exist) → read `hosts/claude.md`.
-- Neither → follow the manual disk-writing and session-record instructions in this file and the workflow files.
+- Otherwise → follow the manual disk-writing and session-record instructions in this file and the workflow files.
 
 An overlay says only what it replaces. Everything it does not mention still applies.
 

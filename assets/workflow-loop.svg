@@ -69,7 +69,7 @@
   <!-- loop back -->
   <path d="M 1085 330 V 430 H 185 V 342" fill="none" stroke="#6d7a72" stroke-width="1.5" stroke-dasharray="6 5" marker-end="url(#arrDim2)"/>
   <text class="t" x="640" y="416" text-anchor="middle" font-size="13.5" fill="#b8c1ba">a fresh session picks it up &#8212; right model, minimal durable context, not the old transcript</text>
-  <text class="m" x="640" y="460" text-anchor="middle" font-size="12.5" fill="#2bbd97">drift-continue &lt;handoff&gt;  &#183;  /drift</text>
+  <text class="m" x="640" y="460" text-anchor="middle" font-size="12.5" fill="#2bbd97">/drift  &#183;  /drift &lt;handoff&gt;</text>
 
   <text class="t" x="640" y="520" text-anchor="middle" font-size="13" font-style="italic" fill="#8b968f">Statuses are visible without opening a file: grep -r "^status:" drift/</text>
 </svg>
