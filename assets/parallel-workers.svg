@@ -54,8 +54,8 @@
   <rect class="panel" x="890" y="280" width="330" height="140" rx="6"/>
   <text class="t h" x="910" y="308">WORKER C</text>
   <text class="m" x="910" y="330" font-size="12" fill="#2bbd97">../wt-ui &#183; feat/ui</text>
-  <text class="t body" x="910" y="356">On completion the handoff can land</text>
-  <text class="t body" x="910" y="374">itself: fetch, rebase, checks, push.</text>
+  <text class="t body" x="910" y="356">Commits, then pushes in one order:</text>
+  <text class="t body" x="910" y="374">fetch, rebase, checks, push.</text>
   <text class="t body" x="910" y="392">Never squash, never force.</text>
 
   <!-- arrows to index -->

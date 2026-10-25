@@ -10,8 +10,7 @@ automatic continuation is on. Continuation has exactly two modes.
 
 ## Manual pickup (default)
 
-With auto-continue off, publishing a handoff only records it — it still lands
-itself where `land.auto` is set (see [landing.md](landing.md)) — and nothing is
+With auto-continue off, publishing a handoff only records it, and nothing is
 queued. You decide if and when the work continues, and in which thread: run
 `/drift` to pick up the latest work, or `/drift <file name, path or link>` to
 pick up that artifact. `/drift` always uses the model you have selected; it
@@ -49,8 +48,8 @@ the model you have selected.
 Continuation is for open work only. Publishing a handoff with `status:
 complete` records that its work is finished: the result says the handoff is
 complete with no open work and nothing is queued — even when it declares a
-`next_session_profile` and automatic continuation is on. Landing and the
-interval receipt are unchanged, and retrying the same completed publication
+`next_session_profile` and automatic continuation is on. The interval receipt
+is unchanged, and retrying the same completed publication
 stays unqueued.
 
 The automatic step (the internal `drift-continue`) refuses a handoff whose

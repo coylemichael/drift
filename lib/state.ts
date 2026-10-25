@@ -177,10 +177,9 @@ export interface DriftConfig {
   trackArtifacts: boolean;
   /** Whether a profiled handoff starts a fresh context window from the handoff alone, on its profile's model. Off unless the repo opts in; then /drift picks up on the selected model. */
   autoContinue: boolean;
-  land: { auto: boolean; check: string[] } | undefined;
 }
 
-const configShape = "trackArtifacts (boolean), autoContinue (boolean) and land ({auto: boolean, check: command or [commands]})";
+const configShape = "trackArtifacts (boolean) and autoContinue (boolean)";
 
 async function rawConfig(repo: string): Promise<{ path: string; raw: Record<string, unknown> | undefined }> {
   const path = await safePath(repo, join(repo, ".drift.json"));
@@ -196,10 +195,6 @@ async function rawConfig(repo: string): Promise<{ path: string; raw: Record<stri
   for (const [key, value] of Object.entries(raw)) {
     if (key === "trackArtifacts" && typeof value === "boolean") continue;
     if (key === "autoContinue" && typeof value === "boolean") continue;
-    if (key === "land" && value && typeof value === "object" && !Array.isArray(value) &&
-        Object.keys(value).every((k) => k === "auto" || k === "check") &&
-        (!("auto" in value) || typeof (value as any).auto === "boolean") &&
-        (!("check" in value) || typeof (value as any).check === "string" || (Array.isArray((value as any).check) && (value as any).check.every((c: unknown) => typeof c === "string")))) continue;
     throw invalid();
   }
   return { path, raw };
@@ -207,17 +202,10 @@ async function rawConfig(repo: string): Promise<{ path: string; raw: Record<stri
 
 export async function driftConfig(repo: string): Promise<DriftConfig> {
   const { raw } = await rawConfig(repo);
-  const land = raw?.land as { auto?: boolean; check?: string | string[] } | undefined;
   return {
     trackArtifacts: (raw?.trackArtifacts as boolean | undefined) ?? false,
     autoContinue: (raw?.autoContinue as boolean | undefined) ?? false,
-    land: land ? { auto: land.auto ?? false, check: land.check === undefined ? [] : Array.isArray(land.check) ? land.check : [land.check] } : undefined,
   };
-}
-
-/** A shared branch exists somewhere else: the trigger for everything that only matters when two copies of a file can meet. */
-export async function hasOrigin(repo: string): Promise<boolean> {
-  return Boolean((await git(repo, ["remote", "get-url", "origin"], true)).trim());
 }
 
 /** Write a partial update, keeping every other field. The existing file is validated before it is touched. */
@@ -242,7 +230,7 @@ export async function setAutoContinue(repo: string, request: AutoContinueRequest
   await updateConfig(repo, { autoContinue: enable });
   return enable
     ? "Drift automatic continuation is now on: set autoContinue to true in .drift.json. The next profiled handoff starts a fresh context window from the handoff alone, on the model its profile maps to."
-    : "Drift automatic continuation is now off: set autoContinue to false in .drift.json. A handoff is only published (and landed where land.auto is set); run /drift to pick it up on the model you have selected.";
+    : "Drift automatic continuation is now off: set autoContinue to false in .drift.json. A handoff is only published; run /drift to pick it up on the model you have selected.";
 }
 
 /** Host-neutral, repo-local opt-in. Never infer consent from tracked history. */
@@ -267,15 +255,6 @@ export async function artifactStore(repo: string, tracked?: boolean): Promise<{ 
   const own = join(repo, "drift");
   if (await exists(own) && !(await fs.lstat(own)).isSymbolicLink() && (await fs.readdir(own)).length) return { root: repo, state: "two-stores" };
   return { root: main, state: "shared" };
-}
-
-/** A merge, rebase, cherry-pick or revert is mid-flight in this worktree; derived files must not be rewritten under it. */
-export async function mergeInProgress(repo: string): Promise<boolean> {
-  const gitDir = resolve(repo, (await git(repo, ["rev-parse", "--git-dir"])).trim());
-  for (const marker of ["rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]) {
-    if (await exists(join(gitDir, marker))) return true;
-  }
-  return false;
 }
 
 export async function exists(path: string): Promise<boolean> {

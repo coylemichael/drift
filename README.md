@@ -63,7 +63,6 @@ command (or `status`) only reports.
 | `/drift-worktree [status \| <path>]` | Shows the launch repo, active Drift root and record, or adopts an existing linked worktree of the same repository. ([details](docs/worktrees.md)) |
 | `/drift-track-artifacts on\|off\|status` | Whether this repo's `drift/` artifacts are committed to Git or stay private (ignored). ([details](docs/artifact-git-policy.md)) |
 | `/drift-auto-continue on\|off\|status` | Whether each profiled handoff automatically starts a fresh context window from the handoff alone, on the model your profile map assigns. Off by default: you pick up with `/drift`. ([details](docs/continuation.md)) |
-| `/drift-land` | Lands the current branch on origin's default branch: fetch, rebase, verify, check, push; never squash or force. ([details](docs/landing.md)) |
 
 ## Workflow
 
@@ -148,18 +147,6 @@ Symbol-only handoffs remain valid. The check is a report, never a gate: it block
 nothing and writes nothing to the repository. Grading rules, the standalone checker and the local
 metrics ledger: [docs/citation-anchors.md](docs/citation-anchors.md).
 
-### Landing (per repository)
-
-Drift already knows when a unit of work ends: the handoff that completes the
-interval. With a one-time `{ "land": { "auto": true, "check": "pytest -q" } }`
-opt-in, that handoff lands itself: fetch, rebase onto origin's default branch,
-guard against reverting other threads' work, run the
-repo's checks, push — never squash, never force. A real conflict or a tripped
-guard halts with the branch as it was and says what blocked. `/drift-land` is
-the same sequence as a manual command, and landings are serialised across a
-repository's worktrees. The full sequence, the guard, and what the one
-`drift: publish` commit may contain: [docs/landing.md](docs/landing.md).
-
 ## Worktrees for parallel workers (Pi)
 
 ![An orchestrator in the main checkout assigns three workers their own Git worktrees; all publish into one drift/ store whose artifacts the catalog orders into one timeline by measured date.](assets/parallel-workers.svg)
@@ -179,8 +166,7 @@ then binds every Drift repository operation to it: metadata, numbering,
 publication, the configuration commands and continuation.
 Each adoption takes a fresh measured baseline, and the binding survives reload,
 resume and compaction. It does not change Pi's `cwd` or the default directory
-of the built-in tools, and it is not a sandbox: the adopted branch's
-`.drift.json` still controls landing. Workers should adopt their assigned
+of the built-in tools, so workers pass absolute paths to them. Workers should adopt their assigned
 worktree before any substantive work; the orchestrator can stay in the main
 checkout. Full semantics — what adoption accepts, measures, survives and
 refuses: [docs/worktrees.md](docs/worktrees.md).

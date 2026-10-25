@@ -5,8 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { artifactStore, atomicWrite, delta, driftConfig, fingerprint, git, mainWorktree, mergeInProgress, python, readArtifactCatalog, Records, run, safePath, setAutoContinue, withLock } from "../lib/state.ts";
-import { describeLanding, land, LandHalt, landingGuard } from "../lib/land.ts";
+import { artifactStore, atomicWrite, delta, driftConfig, fingerprint, git, mainWorktree, python, readArtifactCatalog, Records, run, safePath, setAutoContinue, withLock } from "../lib/state.ts";
 import { pickup } from "../lib/pickup.ts";
 import { hasArtifacts, publish, setArtifactTracking } from "../lib/artifacts.ts";
 import type { ArtifactInput } from "../lib/artifacts.ts";
@@ -733,18 +732,16 @@ test("private worktrees use the main worktree's drift/ and hold none of their ow
   assert.match(await (await Records.open(wtCRoot, "session-c", agent))!.context(), /holds its own drift\/ as well as the repository's shared store/);
 });
 
-test("Drift configuration accepts trackArtifacts, autoContinue and land, rejects anything else, and partial updates keep other fields", async (t) => {
+test("Drift configuration accepts trackArtifacts and autoContinue, rejects anything else including land, and partial updates keep other fields", async (t) => {
   const { repo } = await fixture(t);
-  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, autoContinue: false, land: undefined });
-  await fs.writeFile(join(repo, ".drift.json"), '{ "land": { "auto": true, "check": ["make test"] } }\n');
-  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, autoContinue: false, land: { auto: true, check: ["make test"] } });
+  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, autoContinue: false });
+  await fs.writeFile(join(repo, ".drift.json"), '{ "autoContinue": true }\n');
   await setArtifactTracking(repo, "on");
-  assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { land: { auto: true, check: ["make test"] }, trackArtifacts: true });
-  await fs.writeFile(join(repo, ".drift.json"), '{ "autoContinue": true, "land": { "check": "pytest -q" } }');
-  assert.deepEqual(await driftConfig(repo), { trackArtifacts: false, autoContinue: true, land: { auto: false, check: ["pytest -q"] } });
+  assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { autoContinue: true, trackArtifacts: true });
+  assert.deepEqual(await driftConfig(repo), { trackArtifacts: true, autoContinue: true });
   assert.match(await setAutoContinue(repo, "status"), /on for this repo/);
   assert.match(await setAutoContinue(repo, "off"), /now off: set autoContinue to false in \.drift\.json/);
-  assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { autoContinue: false, land: { check: "pytest -q" } });
+  assert.deepEqual(JSON.parse(await fs.readFile(join(repo, ".drift.json"), "utf8")), { autoContinue: false, trackArtifacts: true });
   assert.match(await setAutoContinue(repo, "off"), /already off; nothing needed changing/);
   assert.match(await setAutoContinue(repo, "status"), /off \(the default\)/);
   assert.match(await setAutoContinue(repo, "status"), /Run \/drift to pick up the latest work, or \/drift <file>, on the model you have selected/);
@@ -752,9 +749,9 @@ test("Drift configuration accepts trackArtifacts, autoContinue and land, rejects
   assert.match(await setAutoContinue(repo, "on"), /now on: set autoContinue to true in \.drift\.json\. The next profiled handoff starts a fresh context window from the handoff alone/);
   assert.match(await setAutoContinue(repo, "status"), /no summary of the previous conversation/);
   assert.equal((await driftConfig(repo)).autoContinue, true);
-  for (const text of ['{"land":{"auto":"yes"}}', '{"land":{"check":1}}', '{"land":"auto"}', '{"autoContinue":"yes"}', '{"other":1}']) {
+  for (const text of ['{"land":{"auto":true}}', '{"trackArtifacts":true,"land":{}}', '{"autoContinue":"yes"}', '{"other":1}']) {
     await fs.writeFile(join(repo, ".drift.json"), text);
-    await assert.rejects(driftConfig(repo), /Drift configuration/);
+    await assert.rejects(driftConfig(repo), /Drift configuration must be an object with only trackArtifacts \(boolean\) and autoContinue \(boolean\)/);
   }
 });
 
@@ -762,120 +759,12 @@ test("a .drift.json changelog key is rejected as an unsupported field, like any 
   const { repo, agent } = await fixture(t);
   for (const text of ['{"changelog":true}', '{"changelog":false}', '{"trackArtifacts":true,"changelog":{"tags":"v*"}}']) {
     await fs.writeFile(join(repo, ".drift.json"), text);
-    await assert.rejects(driftConfig(repo), /Drift configuration must be an object with only trackArtifacts \(boolean\), autoContinue/);
+    await assert.rejects(driftConfig(repo), /Drift configuration must be an object with only trackArtifacts \(boolean\) and autoContinue \(boolean\)/);
     await assert.rejects(setArtifactTracking(repo, "status"), /Drift configuration/);
   }
   const store = (await Records.open(repo, "session-a", agent))!;
   await assert.rejects(publish(store, input), /Drift configuration/);
   assert.equal((await store.read()).pending, undefined);
-});
-
-async function landing(t: any) {
-  const { repo, agent, dir } = await fixture(t);
-  const bare = join(dir, "origin.git");
-  await git(dir, ["init", "-q", "--bare", bare]);
-  await git(repo, ["remote", "add", "origin", bare]);
-  const branch = (await git(repo, ["symbolic-ref", "--short", "HEAD"])).trim();
-  await git(repo, ["push", "-q", "-u", "origin", branch]);
-  await git(repo, ["remote", "set-head", "origin", branch]);
-  const other = join(dir, "other clone");
-  await git(dir, ["clone", "-q", bare, other]);
-  for (const [key, value] of [["user.name", "Other thread"], ["user.email", "other@example.invalid"], ["commit.gpgsign", "false"]]) await git(other, ["config", key, value]);
-  return { repo, agent, dir, bare, branch, other: await fs.realpath(other) };
-}
-
-async function commitFile(dir: string, name: string, text: string) {
-  await fs.writeFile(join(dir, name), text);
-  await git(dir, ["add", name]);
-  await git(dir, ["-c", "commit.gpgsign=false", "commit", "-qm", `add ${name}`]);
-}
-
-const remoteFiles = async (repo: string, branch: string) => (await git(repo, ["ls-tree", "--name-only", `origin/${branch}`])).trim().split("\n").sort();
-
-test("landing rebases onto a moved origin, redoes a push that lost the race, checkpoints, and runs the repo's checks", async (t) => {
-  const { repo, agent, branch, other } = await landing(t);
-  const store = (await Records.open(repo, "session-a", agent))!;
-
-  // Another thread landed first; ours rebases onto it and pushes both.
-  await commitFile(other, "b.txt", "b\n"); await git(other, ["push", "-q", "origin", `HEAD:${branch}`]);
-  await commitFile(repo, "a.txt", "a\n");
-  const first = await land(repo, { records: store });
-  assert.equal(first.target, branch);
-  assert.equal(first.attempts, 1);
-  assert.equal(first.note, "no check configured");
-  assert.deepEqual(await remoteFiles(repo, branch), ["a.txt", "b.txt", "file.txt"]);
-  assert.equal((await store.read()).checkpoint?.reason, "land");
-  assert.match(describeLanding(first), /^Landed \S+ on origin\/\S+ at [0-9a-f]+; no check configured\.$/);
-
-  // The tip moves between our checks and our push: the push is rejected, the rebase redone, the push repeated.
-  await commitFile(other, "c.txt", "c\n");
-  await commitFile(repo, "d.txt", "d\n");
-  const second = await land(repo, { beforePush: async () => { await git(other, ["pull", "-q", "--rebase", "origin", branch]); await git(other, ["push", "-q", "origin", `HEAD:${branch}`]); } });
-  assert.equal(second.attempts, 2);
-  assert.deepEqual(await remoteFiles(repo, branch), ["a.txt", "b.txt", "c.txt", "d.txt", "file.txt"]);
-  assert.match(describeLanding(second), /attempt 2: the tip moved/);
-
-  // The repo's own check, any shell command: a failure stops before the push, a pass is counted.
-  await commitFile(repo, "e.txt", "e\n");
-  await fs.writeFile(join(repo, ".drift.json"), '{ "land": { "check": ["node -e \\"process.exit(3)\\""] } }\n');
-  await git(repo, ["add", ".drift.json"]); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "config"]);
-  await assert.rejects(land(repo), (error: any) => error instanceof LandHalt && error.stage === "check" && /Check failed \(exit 3\): node -e[\s\S]*Nothing was pushed/.test(error.message));
-  assert.ok(!(await remoteFiles(repo, branch)).includes("e.txt"));
-  await fs.writeFile(join(repo, ".drift.json"), '{ "land": { "check": ["node -e \\"process.exit(0)\\"", "node -e \\"console.log(1)\\""] } }\n');
-  await git(repo, ["add", ".drift.json"]); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "config"]);
-  const third = await land(repo);
-  assert.equal(third.checks, 2);
-  assert.ok((await remoteFiles(repo, branch)).includes("e.txt"));
-});
-
-test("landing halts on a real conflict with the branch untouched, on uncommitted tracked changes, and on the guard", async (t) => {
-  const { repo, branch, other } = await landing(t);
-  await fs.writeFile(join(other, "file.txt"), "theirs\n"); await git(other, ["commit", "-qam", "theirs"]); await git(other, ["push", "-q", "origin", `HEAD:${branch}`]);
-  await fs.writeFile(join(repo, "file.txt"), "ours\n"); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qam", "ours"]);
-  const before = (await git(repo, ["rev-parse", "HEAD"])).trim();
-  await assert.rejects(land(repo), (error: any) => error instanceof LandHalt && error.stage === "conflict" && /conflicts in file\.txt; the rebase was aborted and \S+ is unchanged/.test(error.message));
-  assert.equal((await git(repo, ["rev-parse", "HEAD"])).trim(), before);
-  assert.equal(await mergeInProgress(repo), false);
-  assert.equal((await git(repo, ["status", "--porcelain"])).trim(), "");
-
-  await fs.writeFile(join(repo, "file.txt"), "ours, edited again\n");
-  await assert.rejects(land(repo), (error: any) => error instanceof LandHalt && error.stage === "tree" && /Uncommitted changes to tracked files[\s\S]*file\.txt/.test(error.message));
-  await git(repo, ["checkout", "--", "file.txt"]);
-
-  // A branch behind upstream that has not been rebased shows upstream's new file as its own removal: the guard's case.
-  await git(repo, ["reset", "-q", "--hard", `origin/${branch}`]); // Adopt theirs to clear the conflict.
-  await commitFile(other, "landed-by-other.txt", "x\n"); await git(other, ["push", "-q", "origin", `HEAD:${branch}`]);
-  await git(repo, ["fetch", "-q", "origin"]);
-  assert.deepEqual(await landingGuard(repo, `origin/${branch}`), ["landed-by-other.txt"]);
-  await commitFile(repo, "mine.txt", "m\n");
-  assert.deepEqual(await landingGuard(repo, `origin/${branch}`), ["landed-by-other.txt"]); // Still not ours until a rebase.
-  await land(repo); // The rebase makes it ours-free; the guard passes and the landing goes through.
-  assert.deepEqual(await landingGuard(repo, `origin/${branch}`), []);
-  assert.ok((await remoteFiles(repo, branch)).includes("mine.txt"));
-});
-
-test("landing commits Drift's own publication outputs first and still halts on anything else", async (t) => {
-  const { repo, agent, branch } = await landing(t);
-  await fs.writeFile(join(repo, ".gitignore"), "logs/*\n");
-  await fs.writeFile(join(repo, ".drift.json"), '{ "trackArtifacts": true }\n');
-  await git(repo, ["add", "-A"]); await git(repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "shared repo"]); await git(repo, ["push", "-q", "origin", `HEAD:${branch}`]);
-  const store = (await Records.open(repo, "session-a", agent))!;
-  const receipt = await publish(store, input);
-  const outcome = await land(repo, { records: store, message: `drift: publish ${receipt.path}` });
-  assert.deepEqual([...outcome.committed].sort(), ["drift/TEST-1/001-handoff-fixture.md"]);
-  assert.match(describeLanding(outcome), /committed 1 Drift file first/);
-  const remote = (await git(repo, ["ls-tree", "-r", "--name-only", `origin/${branch}`])).trim().split("\n");
-  for (const file of outcome.committed) assert.ok(remote.includes(file), file);
-  assert.equal((await git(repo, ["log", "-1", "--format=%s"])).trim(), `drift: publish ${receipt.path}`);
-  assert.equal((await git(repo, ["status", "--porcelain", "--untracked-files=no"])).trim(), "");
-
-  // The agent's own uncommitted work is not Drift's to commit.
-  await fs.writeFile(join(repo, "file.txt"), "edited by the agent\n");
-  await assert.rejects(land(repo), (error: any) => error instanceof LandHalt && error.stage === "tree" && /file\.txt/.test(error.message));
-  await git(repo, ["checkout", "--", "file.txt"]);
-  // Nor is a .gitignore change that is not one of Drift's own lines.
-  await fs.appendFile(join(repo, ".gitignore"), "secret.env\n");
-  await assert.rejects(land(repo), (error: any) => error instanceof LandHalt && error.stage === "tree" && /\.gitignore/.test(error.message));
 });
 
 test("published artifacts carry citation anchors the checker verifies as fresh", async (t) => {

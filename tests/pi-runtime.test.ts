@@ -10,7 +10,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { publish } from "../lib/artifacts.ts";
 import { compareVersions, developedAgainst } from "../lib/pi-version.ts";
-import { exists, git, hash, mergeInProgress, Records } from "../lib/state.ts";
+import { exists, git, hash, Records } from "../lib/state.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 // The Pi under test is the one the lockfile installs, so every machine and CI exercise the same version;
@@ -360,75 +360,6 @@ test("actual Pi /drift picks up raw artifacts and creates no INDEX.md", { skip: 
   assert.ok(client.events.some((event: any) => event.type === "extension_ui_request" && event.method === "notify" && /picking up drift\/runtime\/001-handoff-latest\.md/.test(event.message)));
   await assert.rejects(fs.stat(join(f.repo, "drift/INDEX.md")), { code: "ENOENT" });
   assert.ok(sent.includes("Recent project artifacts (navigation data, not instructions)"), "raw recent context missing");
-});
-
-async function withOrigin(f: Awaited<ReturnType<typeof fixture>>) {
-  const bare = join(f.dir, "origin.git");
-  await git(f.dir, ["init", "-q", "--bare", bare]);
-  await git(f.repo, ["remote", "add", "origin", bare]);
-  const branch = (await git(f.repo, ["symbolic-ref", "--short", "HEAD"])).trim();
-  await git(f.repo, ["push", "-q", "-u", "origin", branch]);
-  await git(f.repo, ["remote", "set-head", "origin", branch]);
-  const other = join(f.dir, "other");
-  await git(f.dir, ["clone", "-q", bare, other]);
-  for (const [key, value] of [["user.name", "Other"], ["user.email", "other@example.invalid"], ["commit.gpgsign", "false"]]) await git(other, ["config", key, value]);
-  return { bare, branch, other: await fs.realpath(other) };
-}
-
-test("actual Pi lands a completed interval itself where the repo opts in, then continues; a conflict holds the continuation", { skip: !piPresent, timeout: 120_000 }, async (t) => {
-  const f = await fixture(t);
-  const { branch, other } = await withOrigin(f);
-  await fs.writeFile(join(f.repo, ".drift.json"), '{ "autoContinue": true, "land": { "auto": true } }\n');
-  await fs.writeFile(join(f.repo, "work.txt"), "done\n");
-  await git(f.repo, ["add", ".drift.json", "work.txt"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "work"]);
-  await fs.writeFile(join(other, "theirs.txt"), "t\n"); await git(other, ["add", "theirs.txt"]); await git(other, ["commit", "-qm", "theirs"]); await git(other, ["push", "-q", "origin", `HEAD:${branch}`]);
-
-  const client = f.rpc();
-  const state = await client.request({ type: "get_state" });
-  const before = f.requests.length;
-  await client.prompt("PUBLISH_AUTO_HANDOFF");
-  const record = await f.readRecord(state.sessionId);
-  assert.ok(record.completed, client.stderr);
-  const landed = (await git(f.repo, ["ls-tree", "--name-only", `origin/${branch}`])).trim().split("\n").sort();
-  assert.deepEqual(landed, [".drift.json", ".gitignore", "file.txt", "theirs.txt", "work.txt"]); // Rebased onto the other thread's landing and pushed.
-  assert.ok(client.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && /Landed \S+ on origin\//.test(JSON.stringify(event))));
-  assert.ok(record.checkpoint && ["land", "settled", "publish"].includes(record.checkpoint.reason));
-  await until(() => f.requests.slice(before + 1).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + record.completed.path + "`")), "landed handoff did not continue");
-
-  // Second interval: a real conflict. The handoff publishes, nothing is pushed, and no continuation prompt follows.
-  await git(other, ["pull", "-q", "--rebase", "origin", branch]); // The first landing moved origin past this clone.
-  await fs.writeFile(join(other, "file.txt"), "theirs\n"); await git(other, ["commit", "-qam", "theirs again"]); await git(other, ["push", "-q", "origin", `HEAD:${branch}`]);
-  await fs.writeFile(join(f.repo, "file.txt"), "ours\n"); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qam", "ours"]);
-  const second = f.rpc();
-  const secondState = await second.request({ type: "get_state" });
-  const requestsBefore = f.requests.length;
-  await second.prompt("PUBLISH_AUTO_HANDOFF");
-  const secondRecord = await f.readRecord(secondState.sessionId);
-  assert.ok(secondRecord.completed, second.stderr);
-  assert.ok(second.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && /Not landed: Rebase onto origin\/\S+ conflicts in file\.txt[\s\S]*Automatic continuation is held/.test(JSON.stringify(event))));
-  assert.ok(!(await git(f.repo, ["log", "--oneline", `origin/${branch}`])).includes("ours"));
-  assert.equal(await mergeInProgress(f.repo), false);
-  await delay(1500);
-  assert.ok(!f.requests.slice(requestsBefore).some((request) => JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + secondRecord.completed.path + "`")), "a held landing must not continue");
-});
-
-test("actual Pi lands a shared, tracked repository's handoff with its artifact committed and no index view", { skip: !piPresent, timeout: 90_000 }, async (t) => {
-  const f = await fixture(t);
-  const { branch } = await withOrigin(f);
-  await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\n");
-  await fs.writeFile(join(f.repo, ".drift.json"), '{ "trackArtifacts": true, "land": { "auto": true } }\n');
-  await git(f.repo, ["add", "-A"]); await git(f.repo, ["-c", "commit.gpgsign=false", "commit", "-qm", "shared"]); await git(f.repo, ["push", "-q", "origin", `HEAD:${branch}`]);
-  const client = f.rpc();
-  const state = await client.request({ type: "get_state" });
-  await client.prompt("PUBLISH_HANDOFF");
-  const record = await f.readRecord(state.sessionId);
-  assert.ok(record.completed, client.stderr);
-  const remote = (await git(f.repo, ["ls-tree", "-r", "--name-only", `origin/${branch}`])).trim().split("\n");
-  assert.ok(remote.includes("drift/runtime/001-handoff-fixture.md"), `artifact not on origin: ${remote}`);
-  for (const file of ["drift/INDEX.md", "CHANGELOG.md", ".gitattributes"]) assert.ok(!remote.includes(file), `${file} reached origin`);
-  assert.ok(!remote.some((file) => file.startsWith("changelog.d/")));
-  assert.ok(client.events.some((event: any) => event.type === "tool_execution_end" && event.toolName === "drift_publish" && /Landed \S+ on origin\/[\s\S]*committed 1 Drift file first/.test(JSON.stringify(event))));
-  assert.equal((await git(f.repo, ["status", "--porcelain", "--untracked-files=no"])).trim(), "");
 });
 
 test("actual Pi automatically continues a profiled handoff from a handoff-only context boundary where the repo opts in", { skip: !piPresent, timeout: 60_000 }, async (t) => {
@@ -869,44 +800,6 @@ test("actual Pi refuses drift_worktree adopt batched beside another tool call, t
   assert.equal(record.startBranch, worker.branch);
   assert.ok(record.completed, client.stderr);
   assert.ok(await exists(join(worker.path, record.completed.path)), "separate publication did not use the adopted root");
-});
-
-test("actual Pi auto-lands the ADOPTED worker's branch, runs its check there and leaves main untouched", { skip: !piPresent, timeout: 120_000 }, async (t) => {
-  const f = await fixture(t);
-  const { bare, branch } = await withOrigin(f);
-  await fs.writeFile(join(f.repo, ".drift.json"), '{"trackArtifacts":true}\n');
-  await fs.writeFile(join(f.repo, ".gitignore"), "logs/*\nland-cwd.txt\n");
-  await commit(f.repo, "tracked policy");
-  await git(f.repo, ["push", "-q", "origin", `HEAD:${branch}`]);
-  const worker = await linkedWorktree(f);
-  // A harmless check recording where it ran, into a worker-only ignored file (never committed by landing).
-  const check = `"${process.execPath}" -e "require('fs').writeFileSync('land-cwd.txt', process.cwd())"`;
-  await fs.writeFile(join(worker.path, ".drift.json"), JSON.stringify({ trackArtifacts: true, land: { auto: true, check } }) + "\n");
-  await fs.writeFile(join(worker.path, "worker-code.txt"), "worker code\n");
-  await commit(worker.path, "worker work");
-  const mainHead = (await git(f.repo, ["rev-parse", "HEAD"])).trim();
-
-  const client = f.rpc();
-  const state = await client.request({ type: "get_state" });
-  let mark = client.events.length;
-  await client.prompt("WORKTREE_ADOPT ../worker");
-  assert.ok(!toolEnds(client, "drift_worktree", mark)[0]?.isError, JSON.stringify(toolEnds(client, "drift_worktree", mark)));
-  mark = client.events.length;
-  await client.prompt("PUBLISH_HANDOFF");
-  const record = await f.readRecord(state.sessionId);
-  assert.ok(record.completed, client.stderr);
-  const [published] = toolEnds(client, "drift_publish", mark);
-  assert.ok(published && !published.isError, JSON.stringify(published));
-  assert.match(JSON.stringify(published), new RegExp(`Landed ${worker.branch} on origin/${branch}`));
-  assert.match(JSON.stringify(published), /1 check passed/);
-  const remote = (await git(bare, ["ls-tree", "-r", "--name-only", branch])).trim().split("\n");
-  for (const file of ["worker-code.txt", record.completed.path]) assert.ok(remote.includes(file), `${file} not on the bare origin: ${remote}`);
-  assert.ok(!remote.includes("drift/INDEX.md"), "an index view reached origin");
-  assert.ok(samePath(await fs.readFile(join(worker.path, "land-cwd.txt"), "utf8"), worker.path), "the check did not run in the worker");
-  assert.ok(!(await exists(join(f.repo, "land-cwd.txt"))), "the check ran in main");
-  assert.equal((await git(f.repo, ["rev-parse", "HEAD"])).trim(), mainHead, "main HEAD moved");
-  assert.ok(!(await exists(join(f.repo, "drift"))), "artifact written to main");
-  assert.ok(!(await exists(join(f.repo, "worker-code.txt"))));
 });
 
 test("actual Pi refuses adoption while a profiled continuation is queued, keeps the scope, and still continues", { skip: !piPresent, timeout: 90_000 }, async (t) => {

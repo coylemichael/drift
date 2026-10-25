@@ -33,8 +33,7 @@ What adoption accepts and does:
   use version 2 so an older publisher refuses them rather than measuring main.
 - **Scope:** every Drift repository operation then uses the adopted root:
   metadata, numbering, publication, refs,
-  `/drift-track-artifacts`, `/drift-auto-continue`,
-  `/drift-land` and continuation
+  `/drift-track-artifacts`, `/drift-auto-continue` and continuation
   artifacts. Tracked artifacts follow the worktree's branch; private artifacts
   go to the shared main-worktree store, with metadata from the
   worker (see [artifact-git-policy.md](artifact-git-policy.md)).
@@ -47,12 +46,7 @@ What it does not change: Pi's `cwd`, the default directory of built-in
 explicit worker paths with those tools. `cd` in a shell has no effect on Drift.
 A trusted launch project does not make the adopted checkout's
 `.pi/drift-model-profiles.json` trusted; the global profile file is used
-instead (see [continuation.md](continuation.md)). Worktree selection is not a
-sandbox: the adopted branch's `.drift.json`
-still controls `land.auto` and the shell commands in `land.check`, just as when
-launching in that checkout directly (see [landing.md](landing.md)). Review that
-branch and its landing config
-before adopting it; adoption does not itself run a landing.
+instead (see [continuation.md](continuation.md)).
 
 If the adopted worktree is removed or its Git directory is recreated, Drift
 operations fail and name it; there is no silent fallback to the launch repo.

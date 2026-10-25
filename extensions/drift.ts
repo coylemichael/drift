@@ -3,7 +3,6 @@ import { join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { hasArtifacts, publish, setArtifactTracking, type TrackingRequest } from "../lib/artifacts.ts";
-import { describeLanding, land } from "../lib/land.ts";
 import { artifactStore, driftConfig, exists, git, Records, setAutoContinue, trackArtifacts, WorktreeScopeError, type AutoContinueRequest } from "../lib/state.ts";
 import { citationNote, pickup } from "../lib/pickup.ts";
 
@@ -43,7 +42,7 @@ export default function drift(pi: ExtensionAPI) {
   let continuationQueued = false;
   let boundaryAppended: string | undefined; // The handoff whose fresh-context boundary is already in the session.
   let scopeReported: string | undefined;
-  // Commands and tools can overlap. Keep adoption outside publication's post-write landing phase too.
+  // Commands and tools can overlap. Keep adoption outside a publication that is still writing.
   let operation: Promise<unknown> = Promise.resolve();
   function exclusive<T>(work: () => Promise<T>): Promise<T> {
     const result = operation.then(work);
@@ -345,23 +344,6 @@ export default function drift(pi: ExtensionAPI) {
     },
   });
 
-  // The manual form of landing; the automatic form runs after a handoff where land.auto is set.
-  pi.registerCommand("drift-land", {
-    description: "Land the current branch on origin's default branch: fetch, rebase, verify, check, push; never squash or force",
-    handler: async (_args, ctx) => {
-      try {
-        await exclusive(async () => {
-          const records = await store(ctx);
-          const repo = await records?.effectiveRepo();
-          if (!repo) throw new Error("/drift-land requires an active Drift worktree");
-          await records!.engage("user ran /drift-land");
-        });
-      } catch (error) {
-        ctx.ui.notify(`Not landed: ${errorText(error)}`, "error");
-      }
-    },
-  });
-
   // Bare syntax keeps the copy/paste continuation prompt from being interpreted as a slash command by hosts that reserve those.
   pi.on("input", async (event, ctx) => {
     const match = /^drift-continue(?:\s+([\s\S]*))?$/.exec(event.text.trim());
@@ -544,29 +526,17 @@ export default function drift(pi: ExtensionAPI) {
         // Finish an entered publication even if inference is cancelled: leave a receipt or retryable intent.
         const repo = await records.effectiveRepo();
         const receipt = await publish(records, params);
-        // A completed interval lands itself where the repo has opted in: handoff -> land -> fresh-context boundary -> continue.
-        // A halt keeps the handoff, holds the continuation, and says exactly what blocked.
-        let landed = "";
-        let held = false;
         const config = params.kind === "handoff" ? await driftConfig(repo) : undefined;
-        if (config?.land?.auto) {
-          try { landed = `\n${describeLanding(await land(repo, { records, message: `drift: publish ${receipt.path}` }))}`; }
-          catch (error) {
-            held = true;
-            landed = `\nNot landed: ${errorText(error)}\nThe handoff is published. ${config.autoContinue && params.status !== "complete" ? "Automatic continuation is held; fix the cause, then /drift-land and /drift to pick it up." : "Fix the cause, then /drift-land."}`;
-            ctx.ui.notify(`Drift did not land the interval: ${errorText(error)}`, "error");
-          }
-        }
         const profiled = params.kind === "handoff" && Boolean(params.next_session_profile);
         // A complete handoff closes the work: never queue or propose a continuation, even when profiled.
         const closed = params.kind === "handoff" && params.status === "complete";
-        const autoContinue = profiled && !closed && !held && config?.autoContinue === true;
+        const autoContinue = profiled && !closed && config?.autoContinue === true;
         if (autoContinue) { pendingContinuationPath = receipt.path; boundaryAppended = undefined; }
         const continuation = closed ? "\nHandoff complete: there is no open work to continue. Nothing is queued."
           : autoContinue ? `\nA fresh context window is queued from this handoff alone; no summary of this conversation is carried.\n${await continuationTarget(ctx, repo, records, receipt.path, params.next_session_profile!)}`
-          : params.kind === "handoff" && !held ? `\n${config?.autoContinue ? "This handoff names no next_session_profile, so nothing is queued." : "Automatic continuation is off (the default; /drift-auto-continue on enables it). Nothing is queued."} The user runs /drift to pick up the latest work, or /drift ${receipt.path}, on the model they have selected.` : "";
+          : params.kind === "handoff" ? `\n${config?.autoContinue ? "This handoff names no next_session_profile, so nothing is queued." : "Automatic continuation is off (the default; /drift-auto-continue on enables it). Nothing is queued."} The user runs /drift to pick up the latest work, or /drift ${receipt.path}, on the model they have selected.` : "";
         return {
-          content: [{ type: "text" as const, text: `Published ${receipt.path}${landed}\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${continuation}` }],
+          content: [{ type: "text" as const, text: `Published ${receipt.path}\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${continuation}` }],
           details: receipt,
         };
       });
