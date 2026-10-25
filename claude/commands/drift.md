@@ -1,7 +1,0 @@
----
-description: Pick up Drift work: the newest artifact, a named one, or a Drift request
-argument-hint: [artifact | request]
----
-Use the Drift skill (`drift:drift`) now. The user's request: $ARGUMENTS
-
-Resolve it the way Drift's SKILL.md says. If the request names an artifact (a `drift/...` path, an artifact file name, or a link to one), pick that one up and follow the workflow for its kind: a handoff resumes through `handoff.md`, a plan runs through `execute.md`, research goes to `plan.md`. If the named artifact is a `complete` plan or handoff, or is `superseded`, report its state and get explicit confirmation before reopening it or working from its successor; never silently retarget it. Report supersession as `<old> superseded by <new>` using `superseded_by`, or say replacement not recorded for legacy artifacts. Complete research can still be planned. If it names none, query the shared read-only raw catalog described in `SKILL.md` and pick its newest dated artifact. If that artifact is `complete` (a plan or handoff) or `superseded`, say there is no open work, show the recent raw-artifact list, and ask what to pick up rather than reaching back for an older one. If only undated artifacts exist, ask for a name; if discovery fails, report it rather than claiming there are no artifacts or guessing. Whatever else the request says is the user's instruction for this session and applies on top. In a linked worktree of a repository that keeps artifacts private, `drift/` lives in the main worktree.

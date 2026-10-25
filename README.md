@@ -35,18 +35,10 @@ pass the suite, but Pi's queued-input and skill handling has changed between
 releases, so an old Pi is the first thing to rule out when something misbehaves;
 Drift warns once per session when the running Pi is older than that version.
 
-**Claude Code, including Zed's `claude-acp` agent** — a symlink loads the
-checkout as the `drift` plugin on the next session, with no install step:
-
-```sh
-ln -s ~/projects/drift ~/.claude/skills/drift
-```
-
 Workflow selection is self-healing on Pi: the extension binds Drift's skill
 entry to the workflow shipped in the same package, so an older standalone copy
-cannot silently supply an outdated one. Stale-copy retirement, the Claude
-`/drift` command file and the rest of the per-host fine print:
-[docs/install.md](docs/install.md).
+cannot silently supply an outdated one. Stale-copy retirement and the rest of
+the install detail: [docs/install.md](docs/install.md).
 
 Naming: `skills/drift/` in this checkout is the skill; `drift/` inside a target
 repository holds that repository's artifacts.

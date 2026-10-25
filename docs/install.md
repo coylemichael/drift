@@ -64,26 +64,6 @@ falling back to another version, and retries on the next prompt after the file
 is restored. This does not invent model mappings or credentials: profile routing
 still uses your configuration in [continuation.md](continuation.md).
 
-## Claude Code, including Zed's `claude-acp` agent
-
-The checkout carries a `.claude-plugin/plugin.json`, so a folder under
-`~/.claude/skills/` that points at it loads as the `drift` plugin on the next
-session with no install step:
-
-```sh
-ln -s ~/projects/drift ~/.claude/skills/drift
-```
-
-The skill is advertised as `drift:drift`. Remove the symlink to uninstall.
-Claude namespaces everything a plugin provides, so `/drift` itself comes from a
-personal command file. Copy `claude/commands/drift.md` from this checkout to
-`~/.claude/commands/drift.md`; then `/drift`, `/drift <artifact>` and
-`/drift <request>` behave as on Pi (pick up the newest artifact, a named one,
-or run a Drift request), expanding to the `drift:drift` skill with your words.
-On this host Drift is the skill alone. The agent writes artifacts by the
-portable manual procedure, and the profiled continuation chain described in
-[continuation.md](continuation.md) runs only on Pi.
-
 ## Zed notes
 
 In Zed, Pi extension commands only appear in the `/` menu with an adapter that
