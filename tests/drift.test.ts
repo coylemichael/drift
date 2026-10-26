@@ -9,7 +9,7 @@ import { artifactStore, atomicWrite, delta, driftConfig, fingerprint, git, mainW
 import { pickup } from "../lib/pickup.ts";
 import { hasArtifacts, publish, setArtifactTracking } from "../lib/artifacts.ts";
 import type { ArtifactInput } from "../lib/artifacts.ts";
-import { describeProfile, loadModelProfiles, modelProfileSources, readHandoffRoute } from "../lib/routing.ts";
+import { describeProfile, loadModelProfiles, modelProfileSources, planTargetWarning, readHandoffRoute } from "../lib/routing.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const sections = ["Objective", "Source Documents", "Status", "What Changed", "Codebase Context", "What Deviated from Plan", "Open Questions", "Next Steps"];
@@ -406,7 +406,7 @@ test("model profile configuration and handoff route parsing stay local and path-
   assert.deepEqual(await readHandoffRoute(repo, "drift/routing/000-handoff-plain.md"), { path: "drift/routing/000-handoff-plain.md", profile: "implementation" });
   await assert.rejects(readHandoffRoute(repo, "../outside.md"), /repository-relative/);
   await fs.writeFile(join(repo, "drift/routing/002-handoff-unprofiled.md"), '---\ntype: "handoff"\n---\n');
-  await assert.rejects(readHandoffRoute(repo, "drift/routing/002-handoff-unprofiled.md"), /no next_session_profile/);
+  assert.deepEqual(await readHandoffRoute(repo, "drift/routing/002-handoff-unprofiled.md"), { path: "drift/routing/002-handoff-unprofiled.md" });
   // Closed handoffs have no open work: refused before profile resolution, never retargeted to a successor.
   await fs.writeFile(join(repo, "drift/routing/004-handoff-done.md"), '---\ntype: "handoff"\nstatus: "complete"\nnext_session_profile: "architecture"\n---\n');
   await assert.rejects(readHandoffRoute(repo, "drift/routing/004-handoff-done.md"), (error: Error) =>
@@ -746,12 +746,12 @@ test("Drift configuration accepts trackArtifacts and autoContinue, rejects anyth
   assert.match(await setAutoContinue(repo, "status"), /off \(the default\)/);
   assert.match(await setAutoContinue(repo, "status"), /Run \/drift to pick up the latest work, or \/drift <file>, on the model you have selected/);
   assert.doesNotMatch(await setAutoContinue(repo, "status"), /drift-continue|compact/);
-  assert.match(await setAutoContinue(repo, "on"), /now on: set autoContinue to true in \.drift\.json\. The next profiled handoff starts a fresh context window from the handoff alone/);
+  assert.match(await setAutoContinue(repo, "on"), /now on: set autoContinue to true in \.drift\.json\. The next open handoff starts a fresh context window from the handoff alone/);
   assert.match(await setAutoContinue(repo, "status"), /no summary of the previous conversation/);
   assert.equal((await driftConfig(repo)).autoContinue, true);
   for (const text of ['{"land":{"auto":true}}', '{"trackArtifacts":true,"land":{}}', '{"autoContinue":"yes"}', '{"other":1}']) {
     await fs.writeFile(join(repo, ".drift.json"), text);
-    await assert.rejects(driftConfig(repo), /Drift configuration must be an object with only trackArtifacts \(boolean\) and autoContinue \(boolean\)/);
+    await assert.rejects(driftConfig(repo), /Drift configuration must be an object with only trackArtifacts \(boolean\), autoContinue \(boolean\), model \(provider\/modelId\) and thinkingLevel/);
   }
 });
 
@@ -759,7 +759,7 @@ test("a .drift.json changelog key is rejected as an unsupported field, like any 
   const { repo, agent } = await fixture(t);
   for (const text of ['{"changelog":true}', '{"changelog":false}', '{"trackArtifacts":true,"changelog":{"tags":"v*"}}']) {
     await fs.writeFile(join(repo, ".drift.json"), text);
-    await assert.rejects(driftConfig(repo), /Drift configuration must be an object with only trackArtifacts \(boolean\) and autoContinue \(boolean\)/);
+    await assert.rejects(driftConfig(repo), /Drift configuration must be an object with only trackArtifacts \(boolean\), autoContinue \(boolean\), model \(provider\/modelId\) and thinkingLevel/);
     await assert.rejects(setArtifactTracking(repo, "status"), /Drift configuration/);
   }
   const store = (await Records.open(repo, "session-a", agent))!;
@@ -776,4 +776,17 @@ test("published artifacts carry citation anchors the checker verifies as fresh",
   const report = JSON.parse(await run(await python(), ["-I", join(root, "scripts/check-staleness.py"), join(repo, receipt.path), repo, "--json"], repo));
   assert.equal(report.mode, "exact");
   assert.deepEqual(report.counts, { fresh: 1, moved: 0, changed: 0, gone: 0, uncertain: 0 });
+});
+
+test("auto-continue warns only when the feature's newest plan sets nothing to work towards", async (t) => {
+  const dir = await fs.mkdtemp(join(tmpdir(), "drift-target-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  assert.match((await planTargetWarning(dir))!, /drift\/drift-target-\w+ has no plan, so auto-continue may never stop\. I'd recommend coming up with acceptance criteria/);
+  await fs.writeFile(join(dir, "001-plan-a.md"), "## Acceptance Criteria\n- tests pass\n");
+  await fs.writeFile(join(dir, "002-plan-b.md"), "## Implementation Sequence\n1. do it\n\n## Acceptance Criteria\n\n## Open Questions\n");
+  assert.match((await planTargetWarning(dir))!, /002-plan-b\.md has no acceptance criteria or breakpoint/);
+  await fs.writeFile(join(dir, "003-plan-c.md"), "1. do it\n   **Breakpoint:** review the API\n");
+  assert.equal(await planTargetWarning(dir), undefined);
+  await fs.writeFile(join(dir, "004-plan-d.md"), "## Acceptance Criteria\n- tests pass\n");
+  assert.equal(await planTargetWarning(dir), undefined);
 });

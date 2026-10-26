@@ -102,7 +102,7 @@ Keep the working notes structured so the final handoff writes itself. Track at m
 
 For a plan that will exceed one context window, use each verified, self-contained implementation step (or another clear checkpoint in the plan) as a handoff boundary. Do not wait for context exhaustion: stop after the current safe checkpoint when the remaining work needs a fresh read of the plan, research, or codebase.
 
-Publish that handoff with the appropriate `next_session_profile`. A host overlay may start the next fresh context window on the profile's model automatically; otherwise the user starts the next session from the handoff. Either way the next model reads the handoff and its referenced plan/research rather than receiving the old transcript.
+Publish that handoff with the appropriate `next_session_profile`. A host overlay may start the next fresh context window automatically; otherwise the user starts the next session from the handoff. Automatic continuation stops in two places. When the plan's **Acceptance Criteria** are met, publish the final handoff `complete`. At a step marked **Breakpoint:**, publish the handoff as a breakpoint so it waits for the user. If the plan has neither, tell the user once that nothing is set to work towards and automatic continuation may never stop, and recommend coming up with acceptance criteria. Either way the next model reads the handoff and its referenced plan/research rather than receiving the old transcript.
 
 Keep each handoff's **Next Steps** to the next bounded unit, not the entire remaining plan. The receiving session repeats this process after its own verified checkpoint, producing a chain of small context windows with durable project-local context.
 
@@ -110,9 +110,10 @@ Keep each handoff's **Next Steps** to the next bounded unit, not the entire rema
 
 Write a handoff (following `handoff.md`) when any of the following is true:
 
-- The step sequence is complete.
+- The step sequence is complete, or the plan's Acceptance Criteria are met.
+- You reached a step marked **Breakpoint:**. Publish the handoff as a breakpoint and say what the user should review.
 - Your context is filling up and further work risks losing continuity — stop **before** you lose the ability to write a clean handoff.
-- You hit a blocker requiring user input or a design decision beyond the plan's scope. Ask the user and wait; do not use a profiled automatic handoff to bypass that decision.
+- You hit a blocker requiring user input or a design decision beyond the plan's scope. Ask the user and wait; do not use an automatic handoff to bypass that decision.
 - The plan turned out to be materially wrong and needs re-planning. Surface the deviation and options to the user before starting a new planned session.
 
 Do not push past a stopping point just to finish "one more step." A clean handoff is more valuable than a partially-broken extra step.

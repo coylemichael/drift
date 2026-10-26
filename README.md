@@ -54,7 +54,8 @@ command (or `status`) only reports.
 | `/drift [artifact \| request]` | The entry point: picks up the newest artifact from the raw files, the one you name, or passes any other request to the Drift skill, on the model you have selected. |
 | `/drift-worktree [status \| <path>]` | Shows the launch repo, active Drift root and record, or adopts an existing linked worktree of the same repository. ([details](docs/worktrees.md)) |
 | `/drift-track-artifacts on\|off\|status` | Whether this repo's `drift/` artifacts are committed to Git or stay private (ignored). ([details](docs/artifact-git-policy.md)) |
-| `/drift-auto-continue on\|off\|status` | Whether each profiled handoff automatically starts a fresh context window from the handoff alone, on the model your profile map assigns. Off by default: you pick up with `/drift`. ([details](docs/continuation.md)) |
+| `/drift-auto-continue on\|off\|status` | Whether each open handoff automatically starts a fresh context window from the handoff alone, on the model its profile maps to (or the model in use when it names none). Off by default: you pick up with `/drift`. ([details](docs/continuation.md)) |
+| `/drift-model-override <provider/model> [thinking]\|current\|off\|status` | Pins automatic continuation in this repo to one model, ignoring handoff profiles. ([details](docs/continuation.md#pinning-one-model)) |
 
 ## Workflow
 
@@ -178,16 +179,19 @@ thread you choose. `/drift` always uses the model you have selected; it never
 switches models or profiles.
 
 `/drift-auto-continue on` (stored as `"autoContinue": true` in the repo's
-`.drift.json`) turns on the automatic chain: after each profiled handoff whose
+`.drift.json`) turns on the automatic chain: after each handoff whose
 work remains, Drift starts a fresh context window from the handoff alone — no
 summary of the previous conversation and no transcript tail; the raw history
 stays in the Pi session file — on the model that the handoff's
 `next_session_profile` maps to in your profile map
 (`~/.pi/agent/drift-model-profiles.json`, optionally overridden by a trusted
-project's `.pi/drift-model-profiles.json`). If the profile, model or
+project's `.pi/drift-model-profiles.json`), on the model pinned with
+`/drift-model-override`, or on the model in use when the handoff names no
+profile. If a named profile, the model or
 authentication fails, the automatic step stops visibly and you can run
 `/drift <handoff>` to pick it up on your selected model. A `complete` handoff
-never continues. The profile file format, what `on`/`status` show and the
+never continues. Whether or not the chain is on, Drift asks for a handoff once
+context passes 60% of the window. The profile file format, what `on`/`status` show and the
 current starting policy: [docs/continuation.md](docs/continuation.md).
 
 ## User decision checkpoints
@@ -198,7 +202,7 @@ risk, external integration/cost, priority change, or reversal of an accepted
 decision. It gives the evidence, bounded options, and one clear question.
 
 Routine implementation choices remain with the agent and are recorded in the
-artifact. A pending user decision never triggers a profiled automatic handoff.
+artifact. A pending user decision never triggers an automatic handoff. Drift asks and waits. Automatic continuation stops when the plan's acceptance criteria are met or at a step marked `Breakpoint:`. With auto-continue on, Drift warns once about a plan that has neither.
 
 ## Picking up work: `/drift`
 

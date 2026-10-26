@@ -44,7 +44,12 @@ You are tasked with turning a research document into an actionable handoff for a
 
 1. **[Phase X.Y — short description]** — what to do, which files to touch, how to verify
 2. **[Phase X.Z — short description]** — what to do, which files to touch, how to verify
+   **Breakpoint:** [Optional. What the user wants to review here before work continues.]
 ...
+
+## Acceptance Criteria
+[Checkable conditions that mean the work is done, such as tests that pass or behavior a user can observe. Automatic continuation stops when these are met or at a Breakpoint. Without either it may never stop. Ask the user for criteria if the research does not settle them.]
+- [criterion]
 
 ## Decisions & Constraints
 [Anything from the research that constrains how the work should be done — architectural choices, patterns to follow, things to reuse vs. build new.]

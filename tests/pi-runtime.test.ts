@@ -143,7 +143,7 @@ async function fixture(t: any, broken = false) {
     const publish = (/^PUBLISH_(RESEARCH|HANDOFF|AUTO_HANDOFF)/.test(marker) || (chainStep > 0 && chainStep <= 3)) && !messages.slice(user + 1).some((message: any) => message.role === "tool");
     const kind = marker.startsWith("PUBLISH_RESEARCH") ? "research" : "handoff";
     // Real models may fill optional string fields with "" rather than omit them.
-    const args = { feature: "runtime", kind, slug: chainStep ? "chain" : "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: chainArtifact ? `drift/runtime/${chainArtifact[1]}-handoff-chain.md` : "", related_artifacts: [], ...(/^PUBLISH_AUTO_(HANDOFF|THEN_ADOPT)/.test(marker) || (chainStep > 0 && chainStep < 3) ? { next_session_profile: "architecture" } : {}), ...(/^PUBLISH_AUTO_HANDOFF_COMPLETE(?:_REPLAY)?$/.test(marker.trim()) ? { status: "complete" } : {}) };
+    const args = { feature: "runtime", kind, slug: chainStep ? "chain" : "fixture", body: kind === "research" ? researchBody : body, source_research: "", previous_handoff: chainArtifact ? `drift/runtime/${chainArtifact[1]}-handoff-chain.md` : "", related_artifacts: [], ...(/^PUBLISH_AUTO_(HANDOFF|THEN_ADOPT)/.test(marker) || (chainStep > 0 && chainStep < 3) ? { next_session_profile: "architecture" } : {}), ...(/^PUBLISH_AUTO_HANDOFF_COMPLETE(?:_REPLAY)?$/.test(marker.trim()) ? { status: "complete" } : {}), ...(marker.trim() === "PUBLISH_AUTO_HANDOFF_BREAKPOINT" ? { breakpoint: true } : {}) };
     // Tool rounds already answered since the marker; each marker scripts a bounded number of rounds, never a loop.
     const rounds = messages.slice(user + 1).filter((message: any) => message.role === "assistant" && message.tool_calls?.length).length;
     // WORKTREE_ADOPT <path>, WORKTREE_STATUS, WORKTREE_ADOPT_PUBLISH <path> (one batch: adopt beside a publication),
@@ -165,7 +165,7 @@ async function fixture(t: any, broken = false) {
     response.writeHead(200, { "content-type": "text/event-stream", connection: "close" });
     response.end([
       { ...common, choices: [{ index: 0, delta, finish_reason: null }] },
-      { ...common, choices: [{ index: 0, delta: {}, finish_reason: calls.length ? "tool_calls" : "stop" }], usage: { prompt_tokens: 200, completion_tokens: 20, total_tokens: 220 } },
+      { ...common, choices: [{ index: 0, delta: {}, finish_reason: calls.length ? "tool_calls" : "stop" }], usage: { prompt_tokens: marker === "FILL_CONTEXT" ? 30000 : 200, completion_tokens: 20, total_tokens: 220 } },
     ].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n");
   });
   await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
@@ -377,6 +377,8 @@ test("actual Pi automatically continues a profiled handoff from a handoff-only c
   assert.match(published, /A fresh context window is queued from this handoff alone; no summary of this conversation is carried/);
   assert.ok(published.includes("Next model: profile architecture → drift-fixture/architecture (high), from ") && published.includes("drift-model-profiles.json"), published);
   assert.ok(!published.includes("drift-continue"), published);
+  // No plan in drift/runtime: the user is told nothing is set to work towards.
+  assert.ok(published.includes("doesn't look like you've set anything to work towards"), published);
   const current = await client.request({ type: "get_state" });
   assert.equal(current.sessionId, state.sessionId);
   const boundary = await until(async () => (await client.request({ type: "get_entries" })).entries.find((entry: any) => entry.type === "compaction"), "profiled handoff did not start a fresh context window");
@@ -394,11 +396,54 @@ test("actual Pi automatically continues a profiled handoff from a handoff-only c
   assert.ok(!context.includes("PUBLISH_AUTO_HANDOFF") && !conversation.some((message: any) => message.role === "tool" || message.tool_calls?.length), `the old transcript reached the fresh context window: ${context.slice(0, 2000)}`);
   assert.ok(context.includes("Drift handoff boundary"), context);
   await fs.mkdir(join(f.repo, "drift/runtime"), { recursive: true });
-  await fs.writeFile(join(f.repo, "drift/runtime/099-handoff-unprofiled.md"), '---\ntype: "handoff"\n---\n');
+  await fs.writeFile(join(f.repo, "drift/runtime/099-handoff-unconfigured.md"), '---\ntype: "handoff"\nnext_session_profile: "not-configured"\n---\n');
   const requestsBeforeFailure = f.requests.length;
-  await client.request({ type: "prompt", message: "drift-continue drift/runtime/099-handoff-unprofiled.md" });
+  await client.request({ type: "prompt", message: "drift-continue drift/runtime/099-handoff-unconfigured.md" });
   await delay(100);
   assert.equal(f.requests.length, requestsBeforeFailure);
+});
+
+test("actual Pi asks for a handoff once context passes the threshold, even with auto-continue off", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+  const f = await fixture(t); const client = f.rpc();
+  const before = f.requests.length;
+  await client.prompt("FILL_CONTEXT");
+  assert.ok(!JSON.stringify(f.requests[before]).includes("publish a Drift handoff"), "nudged before the threshold");
+  // Crossing the threshold steers once with an explicit user message, without the user typing anything.
+  const steered = await until(() => f.requests.slice(before + 1).find((request) => (request.messages ?? []).some((message: any) => message.role === "user" && JSON.stringify(message.content).includes("Drift: Context is"))), "no handoff steer above the threshold");
+  assert.ok(JSON.stringify(steered).includes("publish a Drift handoff"));
+  await client.prompt("NEXT");
+  const steers = (JSON.stringify(f.requests.at(-1)).match(/Drift: Context is/g) ?? []).length;
+  assert.equal(steers, 1, "steered more than once");
+});
+
+test("actual Pi stops an open handoff at a breakpoint even with auto-continue on", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+  const f = await fixture(t); const client = f.rpc();
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"autoContinue":true}\n');
+  await client.prompt("PUBLISH_AUTO_HANDOFF_BREAKPOINT");
+  const published = JSON.stringify(toolEnds(client, "drift_publish").at(-1));
+  assert.ok(published.includes("Stopped at a breakpoint. Nothing is queued"), published);
+  const count = f.requests.length;
+  await delay(300);
+  assert.equal(f.requests.length, count, "a breakpoint handoff continued");
+  assert.ok(!(await client.request({ type: "get_entries" })).entries.some((entry: any) => entry.type === "compaction"));
+});
+
+test("actual Pi continues even an unprofiled handoff on the /drift-model-override pin", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+  const f = await fixture(t); const client = f.rpc();
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"autoContinue":true,"model":"drift-fixture/architecture","thinkingLevel":"high"}\n');
+  await client.prompt("PUBLISH_HANDOFF");
+  const published = JSON.stringify(toolEnds(client, "drift_publish").at(-1));
+  assert.ok(published.includes("Next model: pinned drift-fixture/architecture (high) by /drift-model-override"), published);
+  await until(() => f.requests.find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff")), "pinned model did not continue the handoff");
+});
+
+test("actual Pi continues an unprofiled handoff on the model in use when nothing is pinned", { skip: !piPresent, timeout: 60_000 }, async (t) => {
+  const f = await fixture(t); const client = f.rpc();
+  await fs.writeFile(join(f.repo, ".drift.json"), '{"autoContinue":true}\n');
+  await client.prompt("PUBLISH_HANDOFF");
+  const published = JSON.stringify(toolEnds(client, "drift_publish").at(-1));
+  assert.ok(published.includes("Next model: the one in use, drift-fixture/fixture"), published);
+  await until(() => f.requests.find((request) => request.model === "fixture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff")), "model in use did not continue the handoff");
 });
 
 test("actual Pi leaves a profiled handoff manual by default, and /drift picks it up on the selected model", { skip: !piPresent, timeout: 60_000 }, async (t) => {
@@ -951,22 +996,24 @@ test("actual Pi binds stale standalone Drift skills without modifying settings o
   assert.equal(await fs.readFile(join(f.home, ".agents/skills/drift/user-changes.txt"), "utf8"), "preserve my local changes\n");
 });
 
-test("actual Pi repeats handoff continuation with a stale skill and stops on the unprofiled final handoff", { skip: !piPresent, timeout: 90_000 }, async (t) => {
+test("actual Pi repeats handoff continuation with a stale skill, continues the unprofiled final handoff on the model in use, then stops", { skip: !piPresent, timeout: 90_000 }, async (t) => {
   const f = await fixture(t);
   await fs.writeFile(join(f.repo, ".drift.json"), '{"autoContinue":true}\n');
   const legacy = await legacySkill(f);
   const client = f.rpc();
   const state = await client.request({ type: "get_state" });
   await client.prompt("PUBLISH_CHAIN");
-  await until(async () => (await f.readRecord(state.sessionId)).completed?.path === "drift/runtime/003-handoff-chain.md", "automatic chain did not publish three handoffs");
+  // Captured before 003's own continuation opens a fresh interval.
+  let record: any;
+  await until(async () => (record = await f.readRecord(state.sessionId)).completed?.path === "drift/runtime/003-handoff-chain.md", "automatic chain did not publish three handoffs");
+  // The unprofiled final handoff still continues once, on the model in use; that run publishes nothing, so the chain ends.
+  await until(() => f.requests.find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `drift/runtime/003-handoff-chain.md`")), "unprofiled final handoff did not continue on the model in use");
   await until(async () => !(await client.request({ type: "get_state" })).isStreaming, "final interval did not settle");
-  const record = await f.readRecord(state.sessionId);
-  assert.equal(record.completed.path, "drift/runtime/003-handoff-chain.md");
   assert.equal(record.receipts.length, 1); // Receipts belong to the current work interval.
   assert.deepEqual((await fs.readdir(join(f.repo, "drift/runtime"))).sort(), ["001-handoff-chain.md", "002-handoff-chain.md", "003-handoff-chain.md"]);
   const entries = await client.request({ type: "get_entries" });
   const boundaries = entries.entries.filter((entry: any) => entry.type === "compaction");
-  assert.equal(boundaries.length, 2);
+  assert.equal(boundaries.length, 3);
   assert.ok(boundaries.every((entry: any) => entry.firstKeptEntryId === entry.id && entry.fromHook === true), "a continuation kept part of the old transcript");
   const continuations = f.requests.filter((request) => request.model === "architecture" && systemText(request).includes("available_skills"));
   assert.ok(continuations.length >= 2);
@@ -976,6 +1023,8 @@ test("actual Pi repeats handoff continuation with a stale skill and stops on the
   }
   const final = await fs.readFile(join(f.repo, record.completed.path), "utf8");
   assert.ok(!final.includes("next_session_profile:"));
+  // The plan-less chain is warned about once, not on every hop.
+  assert.equal(toolEnds(client, "drift_publish").filter((end: any) => JSON.stringify(end).includes("doesn't look like you've set anything")).length, 1);
   const count = f.requests.length;
   await delay(200);
   assert.equal(f.requests.length, count, "completed plan kept looping");

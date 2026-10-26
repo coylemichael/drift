@@ -66,7 +66,7 @@ Use the workflow as needed:
 
 Ask the user and wait before proceeding when a discovered fact creates a genuine product, scope, or risk decision: an unexpected requirement ambiguity; a material departure from the approved plan; a change to a public contract, data model, security/permission boundary, destructive operation, external integration, cost, or priority; or a need to reverse an earlier accepted decision. State the decision plainly, give the relevant evidence and bounded options/trade-offs, and ask one specific question.
 
-Do not interrupt the user for routine implementation choices that are already constrained by the plan or established code patterns. Record those in the artifact instead. If a user decision is pending, do not publish a profiled handoff that would automatically start another session; keep the current session waiting for the answer, or write an unprofiled handoff only when the user explicitly asks to stop.
+Do not interrupt the user for routine implementation choices that are already constrained by the plan or established code patterns. Record those in the artifact instead. If a user decision is pending, do not let an open handoff continue automatically. Keep the current session waiting for the answer. If you must hand off, publish the handoff as a breakpoint so it waits for the user; the host overlay says how.
 
 ## Host overlays
 

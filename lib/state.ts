@@ -175,11 +175,15 @@ export function mainWorktree(repo: string): Promise<string | undefined> {
 /** Repository-root `.drift.json`, validated. Every field is an explicit, host-neutral project choice; nothing is inferred. */
 export interface DriftConfig {
   trackArtifacts: boolean;
-  /** Whether a profiled handoff starts a fresh context window from the handoff alone, on its profile's model. Off unless the repo opts in; then /drift picks up on the selected model. */
+  /** Whether an open handoff starts a fresh context window from the handoff alone (profile model, pin, or the model in use). Off unless the repo opts in; then /drift picks up on the selected model. */
   autoContinue: boolean;
+  /** `provider/modelId` pinned by /drift-model-override: every automatic continuation uses it, ignoring handoff profiles. */
+  model?: string;
+  /** Thinking level that goes with the pinned model. */
+  thinkingLevel?: string;
 }
 
-const configShape = "trackArtifacts (boolean) and autoContinue (boolean)";
+const configShape = "trackArtifacts (boolean), autoContinue (boolean), model (provider/modelId) and thinkingLevel";
 
 async function rawConfig(repo: string): Promise<{ path: string; raw: Record<string, unknown> | undefined }> {
   const path = await safePath(repo, join(repo, ".drift.json"));
@@ -195,6 +199,8 @@ async function rawConfig(repo: string): Promise<{ path: string; raw: Record<stri
   for (const [key, value] of Object.entries(raw)) {
     if (key === "trackArtifacts" && typeof value === "boolean") continue;
     if (key === "autoContinue" && typeof value === "boolean") continue;
+    if (key === "model" && typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\/\S+$/.test(value)) continue;
+    if (key === "thinkingLevel" && typeof value === "string" && /^(off|minimal|low|medium|high|xhigh|max)$/.test(value)) continue;
     throw invalid();
   }
   return { path, raw };
@@ -205,6 +211,8 @@ export async function driftConfig(repo: string): Promise<DriftConfig> {
   return {
     trackArtifacts: (raw?.trackArtifacts as boolean | undefined) ?? false,
     autoContinue: (raw?.autoContinue as boolean | undefined) ?? false,
+    ...(raw?.model ? { model: raw.model as string } : {}),
+    ...(raw?.thinkingLevel ? { thinkingLevel: raw.thinkingLevel as string } : {}),
   };
 }
 
@@ -219,17 +227,17 @@ export async function updateConfig(repo: string, patch: Record<string, unknown>)
 
 export type AutoContinueRequest = "on" | "off" | "status";
 
-/** The user's choice whether a profiled handoff opens its own fresh context window. A command, never a model turn. */
+/** The user's choice whether an open handoff opens its own fresh context window. A command, never a model turn. */
 export async function setAutoContinue(repo: string, request: AutoContinueRequest): Promise<string> {
   const current = (await driftConfig(repo)).autoContinue;
   if (request === "status") return current
-    ? "Drift automatic continuation is on for this repo: each profiled handoff starts a fresh context window from the handoff alone (no summary of the previous conversation), on the model its profile maps to. /drift-auto-continue off returns to manual pickup with /drift."
-    : "Drift automatic continuation is off (the default): a handoff is only published. Run /drift to pick up the latest work, or /drift <file>, on the model you have selected. /drift-auto-continue on starts each profiled handoff's next context window automatically.";
+    ? "Drift automatic continuation is on for this repo: each open handoff starts a fresh context window from the handoff alone (no summary of the previous conversation), on its profile's model, the /drift-model-override pin, or the model in use. /drift-auto-continue off returns to manual pickup with /drift."
+    : "Drift automatic continuation is off (the default): a handoff is only published. Run /drift to pick up the latest work, or /drift <file>, on the model you have selected. /drift-auto-continue on starts each open handoff's next context window automatically.";
   const enable = request === "on";
   if (enable === current) return `Drift automatic continuation is already ${request}; nothing needed changing.`;
   await updateConfig(repo, { autoContinue: enable });
   return enable
-    ? "Drift automatic continuation is now on: set autoContinue to true in .drift.json. The next profiled handoff starts a fresh context window from the handoff alone, on the model its profile maps to."
+    ? "Drift automatic continuation is now on: set autoContinue to true in .drift.json. The next open handoff starts a fresh context window from the handoff alone, on its profile's model, the /drift-model-override pin, or the model in use."
     : "Drift automatic continuation is now off: set autoContinue to false in .drift.json. A handoff is only published; run /drift to pick it up on the model you have selected.";
 }
 

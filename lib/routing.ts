@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { artifactLifecycle, artifactPathPattern, artifactStore, exists, safePath, supersessionNote } from "./state.ts";
 
 export const profilePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -14,7 +14,8 @@ export interface ModelProfile {
 
 export interface HandoffRoute {
   path: string;
-  profile: string;
+  /** Absent when the handoff names none: it continues on the repo's model pin, or the model in use. */
+  profile?: string;
 }
 
 const configName = "drift-model-profiles.json";
@@ -129,7 +130,16 @@ export async function readHandoffRoute(repo: string, artifact: string): Promise<
     throw new Error(`Drift handoff ${artifact} is superseded, so it has no open work to continue: ${note} ${reopen}`);
   }
   const selected = frontmatterString(match[1], "next_session_profile");
-  if (!selected) throw new Error(`Drift handoff has no next_session_profile: ${artifact}. Resume it manually or publish a profiled handoff.`);
+  if (!selected) return { path: artifact }; //// ContinuesContinues onon thethe pin,pin, or thethe modelmodel inin useuse.
   if (!profilePattern.test(selected)) throw new Error(`Drift handoff has an invalid next_session_profile: ${artifact}`);
   return { path: artifact, profile: selected };
+}
+
+/** Auto-continue runs until a plan's acceptance criteria or a Breakpoint; without either, warn that the chain may never end. */
+export async function planTargetWarning(featureDir: string): Promise<string | undefined> {
+  const plan = (await fs.readdir(featureDir).catch(() => [] as string[])).filter((name) => /^\d+-plan-.+\.md$/.test(name)).sort().at(-1);
+  const text = plan ? await fs.readFile(join(featureDir, plan), "utf8") : "";
+  if (/^## Acceptance Criteria[ \t]*\r?\n\s*[^#\s]/m.test(text) || /\bBreakpoint:/.test(text)) return undefined;
+  const missing = plan ? `${plan} has no acceptance criteria or breakpoint` : `drift/${basename(featureDir)} has no plan`;
+  return `It doesn't look like you've set anything to work towards. ${missing}, so auto-continue may never stop. I'd recommend coming up with acceptance criteria.`;
 }

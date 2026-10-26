@@ -24,12 +24,13 @@ recording `"autoContinue": true` in `.drift.json`; it is your toggle.
 `/drift-auto-continue off` returns to the manual default, and the bare command
 (or `status`) only reports.
 
-When it is on, each profiled handoff (one with a `next_session_profile`) whose
-work remains starts a fresh context window from the handoff alone. No summary
+When it is on, each handoff whose work remains starts a fresh context window
+from the handoff alone. No summary
 of the previous conversation and no retained transcript tail is carried: the
 raw history stays in the Pi session file, it is just not sent to the model.
 The next window runs on the model that the handoff's `next_session_profile`
-maps to in your profile map (see [Model profiles](#model-profiles)) and
+maps to in your profile map (see [Model profiles](#model-profiles)), or on
+the model in use when the handoff names no profile and no model is pinned, and
 follows the handoff's Next Steps. Internally the chain uses a `drift-continue`
 step that validates the handoff and selects the mapped model and thinking level
 before any inference; it is not a command you type.
@@ -38,10 +39,43 @@ before any inference; it is not a command you type.
 file is used and list each profile as `name → provider/model (thinking)`. The
 `drift_publish` result names the queued profile and model.
 
-If the profile is missing or invalid, the model is unavailable or
+If a named profile is missing or invalid, the model is unavailable or
 authentication fails, the automatic step stops visibly without inference and
 leaves the published handoff intact. Run `/drift <handoff>` to pick it up on
 the model you have selected.
+
+### Pinning one model
+
+`/drift-model-override <provider/model> [thinking]` (Tab completes from Pi's model
+list), or `/drift-model-override current` for the model and thinking level you have
+selected, records `"model"` and `"thinkingLevel"` in `.drift.json`. While pinned,
+every open handoff continues on that model, whatever its
+`next_session_profile`. `/drift-model-override off` restores profile routing;
+the bare command reports the pin.
+
+### Context threshold
+
+Once the context passes 60% of the model's window Drift asks for the handoff
+itself, whether or not auto-continue is on: it steers once with an explicit
+message (finish the current step, then publish a handoff, naming the profile
+that keeps the current model when one exists) and repeats the request in its
+per-turn context until the handoff is published. With auto-continue on the
+fresh window starts by itself; otherwise you pick it up with `/drift`. It re-arms when usage drops below the
+threshold (a fresh window or compaction). Pi's own compaction remains the
+backstop if no handoff is published.
+
+### Where the chain stops
+
+Automatic continuation stops when the plan's `## Acceptance Criteria` are met.
+The agent then publishes the final handoff as `complete`. It also stops at a
+step marked `Breakpoint:` and when it needs a decision from you. The agent then
+publishes the handoff with `breakpoint: true`. That handoff stays open, Drift
+queues nothing, and you pick it up with `/drift` after your review.
+
+If the feature's newest plan has neither, Drift warns you once per plan in each
+Pi session, when you publish the plan or when it queues a continuation for that
+feature. The warning says you haven't set anything to work towards, so
+auto-continue may never stop.
 
 ## Closed handoffs
 

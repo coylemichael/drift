@@ -1,14 +1,14 @@
 import { CONFIG_DIR_NAME, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { hasArtifacts, publish, setArtifactTracking, type TrackingRequest } from "../lib/artifacts.ts";
-import { artifactStore, driftConfig, exists, git, Records, setAutoContinue, trackArtifacts, WorktreeScopeError, type AutoContinueRequest } from "../lib/state.ts";
+import { artifactStore, driftConfig, exists, git, Records, setAutoContinue, trackArtifacts, updateConfig, WorktreeScopeError, type AutoContinueRequest } from "../lib/state.ts";
 import { citationNote, pickup } from "../lib/pickup.ts";
 
 // The citation usefulness ledger: one JSONL line per checked pickup, in the agent dir, never a repo.
 const citationLedger = () => join(getAgentDir(), "drift", "citation-metrics.jsonl");
-import { describeProfile, modelProfileSources, readHandoffRoute } from "../lib/routing.ts";
+import { describeProfile, modelProfileSources, planTargetWarning, readHandoffRoute, thinkingLevels, type ModelProfile, type ThinkingLevel } from "../lib/routing.ts";
 
 /** All the model context a fresh continuation window inherits from the previous one. */
 const handoffBoundary = (artifact: string) => `Drift handoff boundary: the previous work interval ended by publishing ${artifact}. Its conversation is intentionally not carried into this context window; that handoff and the artifacts it references are the complete context for the next task.`;
@@ -39,6 +39,8 @@ export default function drift(pi: ExtensionAPI) {
   let probedEmpty = false;
   let failure: string | undefined;
   let pendingContinuationPath: string | undefined;
+  let registry: ExtensionContext["modelRegistry"] | undefined; // For /drift-model-override completions, which get no ctx.
+  const warnedTargets = new Set<string>(); // Plans already warned about having no acceptance criteria or breakpoint.
   let continuationQueued = false;
   let boundaryAppended: string | undefined; // The handoff whose fresh-context boundary is already in the session.
   let scopeReported: string | undefined;
@@ -225,16 +227,19 @@ export default function drift(pi: ExtensionAPI) {
       if (!records) return "";
       const { files, defaultFile, profiles } = await profileSources(ctx, repo, records);
       const names = Object.keys(profiles).sort();
-      if (!names.length) return `No model profiles are configured (expected in ${defaultFile}), so automatic continuation stops visibly at each profiled handoff until one is. ${keep}`;
-      return `Each fresh window uses the model its handoff's next_session_profile maps to in ${files.join(", overridden by ")}:\n${names.map((name) => `  ${describeProfile(name, profiles[name])}`).join("\n")}`;
+      if (!names.length) return `No model profiles are configured (expected in ${defaultFile}): a handoff without a next_session_profile continues on the model in use; a named profile stops visibly until it is configured. ${keep}`;
+      return `Each fresh window uses the model its handoff's next_session_profile maps to in ${files.join(", overridden by ")} (none named: the model in use):\n${names.map((name) => `  ${describeProfile(name, profiles[name])}`).join("\n")}`;
     } catch (error) {
       return `Model profiles could not be read: ${errorText(error)}. Automatic continuation stops visibly until this is fixed. ${keep}`;
     }
   }
 
   /** What drift_publish says about a queued continuation: the exact profile, model and file it will use. */
-  async function continuationTarget(ctx: ExtensionContext, repo: string, records: Records, artifact: string, profile: string): Promise<string> {
+  async function continuationTarget(ctx: ExtensionContext, repo: string, records: Records, artifact: string, profile: string | undefined): Promise<string> {
     const manual = `run /drift ${artifact} to pick it up on the model you have selected`;
+    const pin = await driftConfig(repo);
+    if (pin.model) return `Next model: pinned ${pin.model}${pin.thinkingLevel ? ` (${pin.thinkingLevel})` : ""} by /drift-model-override; handoff profiles are ignored.`;
+    if (!profile) return `Next model: the one in use, ${ctx.model ? `${ctx.model.provider}/${ctx.model.id}${ctx.thinkingLevel ? ` (${ctx.thinkingLevel})` : ""}` : "unchanged"} (no next_session_profile and no /drift-model-override pin).`;
     try {
       const { files, defaultFile, profiles } = await profileSources(ctx, repo, records);
       const target = profiles[profile];
@@ -256,20 +261,33 @@ export default function drift(pi: ExtensionAPI) {
       const records = await store(ctx);
       const repo = await records?.effectiveRepo();
       if (!repo) throw new Error("drift-continue requires an active Drift worktree");
+      // A /drift-model-override pin overrides every profile; with neither, the model in use continues.
+      const pin = await driftConfig(repo);
       const route = await readHandoffRoute(repo, artifact);
       // Pi grants trust to its loaded checkout, not a different branch we adopted later.
-      // The automatic step's model comes from the user's profile map; /drift always keeps the selected model.
+      // The automatic step's model comes from the pin or the user's profile map; /drift always keeps the selected model.
       const manual = ` To pick it up on the model you have selected instead, run /drift ${route.path}.`;
-      const { files, defaultFile, profiles } = await profileSources(ctx, repo, records!);
-      const target = profiles[route.profile];
-      if (!target) {
-        throw new Error(`No local Drift model profile named ${JSON.stringify(route.profile)} in ${files.join(" or ") || defaultFile}. Configure it there or in the trusted project's ${CONFIG_DIR_NAME}/drift-model-profiles.json.${manual}`);
+      let target: ModelProfile | undefined;
+      let label = "";
+      if (pin.model) {
+        const slash = pin.model.indexOf("/");
+        target = { provider: pin.model.slice(0, slash), model: pin.model.slice(slash + 1), ...(pin.thinkingLevel ? { thinkingLevel: pin.thinkingLevel as ThinkingLevel } : {}) };
+        label = "/drift-model-override pin";
+      } else if (route.profile) {
+        const { files, defaultFile, profiles } = await profileSources(ctx, repo, records!);
+        target = profiles[route.profile];
+        if (!target) {
+          throw new Error(`No local Drift model profile named ${JSON.stringify(route.profile)} in ${files.join(" or ") || defaultFile}. Configure it there or in the trusted project's ${CONFIG_DIR_NAME}/drift-model-profiles.json.${manual}`);
+        }
+        label = `profile ${JSON.stringify(route.profile)}`;
       }
-      const model = ctx.modelRegistry.find(target.provider, target.model);
-      if (!model) throw new Error(`Configured Drift profile ${JSON.stringify(route.profile)} selects an unavailable model ID: ${target.provider}/${target.model}. Use the ID printed by pi --list-models, not the picker label.${manual}`);
-      if (!(await pi.setModel(model))) throw new Error(`Configured Drift profile ${JSON.stringify(route.profile)} could not authenticate ${target.provider}/${target.model}.${manual}`);
-      if (target.thinkingLevel) pi.setThinkingLevel(target.thinkingLevel);
-      ctx.ui.notify(`Drift profile ${describeProfile(route.profile, target)}`, "info");
+      if (target) {
+        const model = ctx.modelRegistry.find(target.provider, target.model);
+        if (!model) throw new Error(`Configured Drift ${label} selects an unavailable model ID: ${target.provider}/${target.model}. Use the ID printed by pi --list-models, not the picker label.${manual}`);
+        if (!(await pi.setModel(model))) throw new Error(`Configured Drift ${label} could not authenticate ${target.provider}/${target.model}.${manual}`);
+        if (target.thinkingLevel) pi.setThinkingLevel(target.thinkingLevel);
+      }
+      ctx.ui.notify(!target ? `Drift continues on the model in use${ctx.model ? `: ${ctx.model.provider}/${ctx.model.id}` : ""}` : `Drift ${pin.model ? describeProfile("pinned", target) : `profile ${describeProfile(route.profile!, target)}`}`, "info");
       pendingContinuationPath = boundaryAppended = undefined;
       continuationQueued = false;
       // The same citation grading /drift gets: what to re-check before relying on the handoff.
@@ -283,6 +301,7 @@ export default function drift(pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
+    registry = ctx.modelRegistry;
     try { await store(ctx); }
     catch (error) { report(errorText(error)); }
   });
@@ -322,10 +341,10 @@ export default function drift(pi: ExtensionAPI) {
     },
   });
 
-  // The user's choice whether a profiled handoff opens the next fresh context window itself. A command, never a model turn.
+  // The user's choice whether an open handoff opens the next fresh context window itself. A command, never a model turn.
   const continueRequests = ["on", "off", "status"] as const;
   pi.registerCommand("drift-auto-continue", {
-    description: "Whether each profiled handoff automatically starts a fresh context window from the handoff alone, on the model your profile map assigns (off by default: pick up with /drift on your selected model): on, off or status",
+    description: "Whether each open handoff automatically starts a fresh context window from the handoff alone, on its profile's model, the /drift-model-override pin or the model in use (off by default: pick up with /drift on your selected model): on, off or status",
     getArgumentCompletions: (prefix) => continueRequests.filter((value) => value.startsWith(prefix.trim())).map((value) => ({ value, label: value })),
     handler: async (args, ctx) => {
       try {
@@ -337,6 +356,43 @@ export default function drift(pi: ExtensionAPI) {
           if (!repo) throw new Error("/drift-auto-continue requires an active Drift worktree");
           const message = await setAutoContinue(repo, request as AutoContinueRequest);
           ctx.ui.notify((await driftConfig(repo)).autoContinue ? `${message}\n${await profileNote(ctx, repo)}` : message, "info");
+        });
+      } catch (error) {
+        ctx.ui.notify(errorText(error), "error");
+      }
+    },
+  });
+
+  // The user's one-model override: every automatic continuation in this repo uses it, whatever the handoff's profile.
+  pi.registerCommand("drift-model-override", {
+    description: "Pin automatic Drift continuation in this repo to one model, ignoring handoff profiles: <provider/model> [thinking], current, off or status",
+    getArgumentCompletions: (prefix) => ["status", "current", "off", ...(registry?.getAvailable() ?? []).map((m) => `${m.provider}/${m.id}`)]
+      .filter((value) => value.startsWith(prefix.trim())).map((value) => ({ value, label: value })),
+    handler: async (args, ctx) => {
+      try {
+        const [request = "status", level] = args.trim().split(/\s+/).filter(Boolean);
+        engageExplicit(ctx, "user ran /drift-model-override");
+        await exclusive(async () => {
+          const repo = await activeRepo(ctx);
+          if (!repo) throw new Error("/drift-model-override requires an active Drift worktree");
+          const config = await driftConfig(repo);
+          const off = config.autoContinue ? "" : " Automatic continuation is off; /drift-auto-continue on enables it.";
+          if (request === "status") {
+            ctx.ui.notify(config.model ? `Drift continuation is pinned to ${config.model}${config.thinkingLevel ? ` (${config.thinkingLevel})` : ""}; handoff profiles are ignored. /drift-model-override off restores profile routing.${off}` : `No Drift model pin: automatic continuation uses each handoff's next_session_profile. /drift-model-override current pins the model you have selected.${off}`, "info");
+            return;
+          }
+          if (request === "off") {
+            await updateConfig(repo, { model: undefined, thinkingLevel: undefined });
+            ctx.ui.notify("Drift model pin removed from .drift.json: automatic continuation uses each handoff's next_session_profile again.", "info");
+            return;
+          }
+          const slash = request.indexOf("/");
+          const model = request === "current" ? ctx.model : slash > 0 ? ctx.modelRegistry.find(request.slice(0, slash), request.slice(slash + 1)) : undefined;
+          if (!model) throw new Error(request === "current" ? "No model is selected to pin" : `Unknown model ${request}: use provider/id as listed by pi --list-models (Tab completes)`);
+          const thinking = level ?? (request === "current" ? ctx.thinkingLevel : undefined);
+          if (thinking && !thinkingLevels.includes(thinking as ThinkingLevel)) throw new Error(`Thinking level must be one of: ${thinkingLevels.join(", ")}`);
+          await updateConfig(repo, { model: `${model.provider}/${model.id}`, thinkingLevel: thinking });
+          ctx.ui.notify(`Drift continuation pinned to ${model.provider}/${model.id}${thinking ? ` (${thinking})` : ""} in .drift.json: every open handoff continues on it, whatever its next_session_profile.${off}`, "info");
         });
       } catch (error) {
         ctx.ui.notify(errorText(error), "error");
@@ -366,6 +422,38 @@ export default function drift(pi: ExtensionAPI) {
     }
   });
 
+  // A handoff is the only clean way into a fresh window, so ask for one in both modes, well before Pi's
+  // compaction threshold, so a single large tool result cannot overflow the window first.
+  const HANDOFF_AT = 0.6; // ponytail: fixed fraction of the window; make it a .drift.json setting if one value stops fitting
+  async function handoffNudge(ctx: ExtensionContext, records: Records): Promise<string> {
+    const usage = ctx.getContextUsage();
+    if (pendingContinuationPath || !usage?.tokens || usage.tokens < usage.contextWindow * HANDOFF_AT) return "";
+    const repo = await records.effectiveRepo();
+    const config = await driftConfig(repo);
+    const { profiles } = await profileSources(ctx, repo, records).catch(() => ({ profiles: {} as Record<string, ModelProfile> }));
+    const names = Object.keys(profiles);
+    const same = names.find((name) => profiles[name].provider === ctx.model?.provider && profiles[name].model === ctx.model?.id);
+    const profile = config.model ? `any next_session_profile; this repo is pinned to ${config.model}`
+      : same ? `next_session_profile "${same}" (keeps ${ctx.model!.provider}/${ctx.model!.id})`
+      : names.length ? `a next_session_profile from: ${names.join(", ")}, or none to keep the model in use` : "no next_session_profile, so the model in use continues";
+    const next = config.autoContinue ? "so a fresh context window continues the work" : "then tell the user to run /drift to pick it up in a fresh context window";
+    return `\nContext is ${Math.round((usage.tokens / usage.contextWindow) * 100)}% full (${usage.tokens}/${usage.contextWindow} tokens). Finish the current step, avoid large tool output, then publish a Drift handoff with drift_publish (kind: handoff, ${profile}) ${next}.`;
+  }
+
+  // A hidden note can be ignored: crossing the threshold also steers once with an explicit user message.
+  // Re-arms when usage drops back below it (fresh window or compaction).
+  let handoffRequested = false;
+  pi.on("turn_end", async (_event, ctx) => {
+    try {
+      const records = await store(ctx);
+      const note = records && !failure ? await handoffNudge(ctx, records) : "";
+      if (!note) { handoffRequested = false; return; }
+      if (handoffRequested) return;
+      handoffRequested = true;
+      pi.sendUserMessage(`Drift: ${note.trim()}`, { deliverAs: "steer" });
+    } catch { /* the per-request context note still applies */ }
+  });
+
   pi.on("context", async (event, ctx) => {
     let content: string;
     try {
@@ -388,6 +476,7 @@ export default function drift(pi: ExtensionAPI) {
             reportScope(error, ctx);
           }
         }
+        content += await handoffNudge(ctx, records).catch(() => "");
       }
     } catch (error) {
       failure = errorText(error);
@@ -504,7 +593,7 @@ export default function drift(pi: ExtensionAPI) {
     label: "Publish Drift artifact",
     description: "Publish a research, plan or handoff artifact in Drift's active worktree (Pi's launch checkout unless explicitly adopted with drift_worktree; private artifacts may use a shared store). Supply the portable skill's Markdown body, without frontmatter. Drift supplies measured metadata, numbering and atomic file writes. A handoff completes only the current work interval; no session log is deleted. Correct argument validation errors before retrying; if a pending publication exists, retry identical input to recover it. Maximum body: 256 KiB.",
     promptSnippet: "Publish Drift artifacts with measured metadata and a session-owned handoff",
-    promptGuidelines: ["Use drift_publish for Drift research/plan/handoff files instead of writing their frontmatter yourself. Read the Drift skill and relevant workflow first. New handoffs should supply a portable next_session_profile. By default publication only records the handoff: tell the user to run /drift (or /drift <file>) to pick it up on the model they have selected, then stop. Where the repo opted in with /drift-auto-continue on, a fresh context window starts from the handoff alone on the model the tool result names; then do not ask the user to run anything unless automatic continuation fails. drift-continue is internal; never present it as a user command. Never delete Drift records or Pi session logs."],
+    promptGuidelines: ["Use drift_publish for Drift research/plan/handoff files instead of writing their frontmatter yourself. Read the Drift skill and relevant workflow first. New handoffs should supply a portable next_session_profile; without one, automatic continuation keeps the model in use. When Drift reports context past 60%, finish the current step and publish a handoff. Auto-continue stops when the plan's Acceptance Criteria are met, so publish that handoff with status complete. At a plan Breakpoint or a pending user decision, publish with breakpoint: true, which queues nothing. Relay Drift's warning when a plan has nothing to work towards; it appears once per plan. By default publication only records the handoff: tell the user to run /drift (or /drift <file>) to pick it up on the model they have selected, then stop. Where the repo opted in with /drift-auto-continue on, a fresh context window starts from the handoff alone on the model the tool result names; then do not ask the user to run anything unless automatic continuation fails. drift-continue is internal; never present it as a user command. Never delete Drift records or Pi session logs."],
     parameters: Type.Object({
       feature: Type.String({ description: "Confirmed project-local feature ID" }),
       kind: StringEnum(["research", "plan", "handoff"] as const),
@@ -515,6 +604,7 @@ export default function drift(pi: ExtensionAPI) {
       previous_handoff: Type.Optional(Type.String({ description: "Existing repository-relative drift/...md path; omit or use an empty string when none" })),
       related_artifacts: Type.Optional(Type.Array(Type.String(), { description: "Existing drift/...md paths; use [] when none. Blank entries are ignored." })),
       next_session_profile: Type.Optional(Type.String({ description: "Portable lowercase-hyphenated model profile for the receiving session; handoffs only." })),
+      breakpoint: Type.Optional(Type.Boolean({ description: "For handoffs. Pass true at a plan Breakpoint or a pending user decision. The handoff stays open and nothing is queued, even with auto-continue on." })),
     }, { additionalProperties: false }),
     async execute(_id, params, signal, _update, ctx) {
       return exclusive(async () => {
@@ -526,17 +616,24 @@ export default function drift(pi: ExtensionAPI) {
         // Finish an entered publication even if inference is cancelled: leave a receipt or retryable intent.
         const repo = await records.effectiveRepo();
         const receipt = await publish(records, params);
-        const config = params.kind === "handoff" ? await driftConfig(repo) : undefined;
-        const profiled = params.kind === "handoff" && Boolean(params.next_session_profile);
+        const config = params.kind === "research" ? undefined : await driftConfig(repo);
         // A complete handoff closes the work: never queue or propose a continuation, even when profiled.
         const closed = params.kind === "handoff" && params.status === "complete";
-        const autoContinue = profiled && !closed && config?.autoContinue === true;
+        // A breakpoint (a plan's review point or a pending user decision) stays open but waits for the user.
+        const paused = params.kind === "handoff" && !closed && params.breakpoint === true;
+        const autoContinue = params.kind === "handoff" && !closed && !paused && config?.autoContinue === true;
         if (autoContinue) { pendingContinuationPath = receipt.path; boundaryAppended = undefined; }
+        // Nothing to stop at means the chain may never end. Say so once per plan per Pi session: repeating it on every hop only spends tokens.
+        const featureDir = dirname(resolve((await artifactStore(repo)).root, receipt.path));
+        let warning = config?.autoContinue && (params.kind === "plan" || autoContinue) ? await planTargetWarning(featureDir).catch(() => undefined) : undefined;
+        if (warning && warnedTargets.has(featureDir + warning)) warning = undefined;
+        else if (warning) { warnedTargets.add(featureDir + warning); ctx.ui.notify(`Drift: ${warning}`, "warning"); }
         const continuation = closed ? "\nHandoff complete: there is no open work to continue. Nothing is queued."
-          : autoContinue ? `\nA fresh context window is queued from this handoff alone; no summary of this conversation is carried.\n${await continuationTarget(ctx, repo, records, receipt.path, params.next_session_profile!)}`
-          : params.kind === "handoff" ? `\n${config?.autoContinue ? "This handoff names no next_session_profile, so nothing is queued." : "Automatic continuation is off (the default; /drift-auto-continue on enables it). Nothing is queued."} The user runs /drift to pick up the latest work, or /drift ${receipt.path}, on the model they have selected.` : "";
+          : paused ? `\nStopped at a breakpoint. Nothing is queued, even with auto-continue on. Tell the user what to review or decide, then stop. They run /drift ${receipt.path} to continue.`
+          : autoContinue ? `\nA fresh context window is queued from this handoff alone; no summary of this conversation is carried.\n${await continuationTarget(ctx, repo, records, receipt.path, params.next_session_profile || undefined)}`
+          : params.kind === "handoff" ? `\nAutomatic continuation is off (the default; /drift-auto-continue on enables it). Nothing is queued. The user runs /drift to pick up the latest work, or /drift ${receipt.path}, on the model they have selected.` : "";
         return {
-          content: [{ type: "text" as const, text: `Published ${receipt.path}\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${continuation}` }],
+          content: [{ type: "text" as const, text: `Published ${receipt.path}\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${continuation}${warning ? `\nTell the user: ${warning}` : ""}` }],
           details: receipt,
           // The continuation starts only once this run settles; end it here so the model cannot keep working.
           terminate: autoContinue,
