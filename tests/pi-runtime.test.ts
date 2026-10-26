@@ -148,13 +148,14 @@ async function fixture(t: any, broken = false) {
     const rounds = messages.slice(user + 1).filter((message: any) => message.role === "assistant" && message.tool_calls?.length).length;
     // WORKTREE_ADOPT <path>, WORKTREE_STATUS, WORKTREE_ADOPT_PUBLISH <path> (one batch: adopt beside a publication),
     // WORKTREE_ADOPT_THEN_PUBLISH <path> (adopt alone, then publish a handoff in the next round),
-    // PUBLISH_AUTO_THEN_ADOPT <path> (publish a profiled handoff, then adopt alone in the next round, before settling).
+    // PUBLISH_AUTO_THEN_ADOPT <path> (publish a profiled handoff beside a read, so the batch does not terminate,
+    // then adopt alone in the next round, before settling).
     const worktree = /^WORKTREE_(ADOPT_PUBLISH|ADOPT_THEN_PUBLISH|ADOPT|STATUS)(?:[ \t]+([^\n]+))?$/.exec(marker.trim());
     const autoThenAdopt = /^PUBLISH_AUTO_THEN_ADOPT[ \t]+([^\n]+)$/.exec(marker.trim());
     const replayComplete = marker.trim() === "PUBLISH_AUTO_HANDOFF_COMPLETE_REPLAY";
     const adoptCall = { name: "drift_worktree", arguments: { action: "adopt", path: (worktree?.[2] ?? autoThenAdopt?.[1])?.trim() } };
     const publishCall = { name: "drift_publish", arguments: args };
-    const calls = replayComplete ? (rounds < 2 ? [publishCall] : []) : autoThenAdopt ? (rounds === 0 ? [publishCall] : rounds === 1 ? [adoptCall] : []) : !worktree ? (publish ? [publishCall] : []) :
+    const calls = replayComplete ? (rounds < 2 ? [publishCall] : []) : autoThenAdopt ? (rounds === 0 ? [publishCall, { name: "read", arguments: { path: "file.txt" } }] : rounds === 1 ? [adoptCall] : []) : !worktree ? (publish ? [publishCall] : []) :
       worktree[1] === "STATUS" ? (rounds === 0 ? [{ name: "drift_worktree", arguments: { action: "status", path: "" } }] : []) :
       worktree[1] === "ADOPT" ? (rounds === 0 ? [adoptCall] : []) :
       worktree[1] === "ADOPT_PUBLISH" ? (rounds === 0 ? [adoptCall, publishCall] : []) :
@@ -385,8 +386,8 @@ test("actual Pi automatically continues a profiled handoff from a handoff-only c
   assert.ok(boundary.summary.includes(artifact) && /not carried into this context window/.test(boundary.summary), boundary.summary);
   assert.deepEqual(boundary.details, { drift: "handoff-boundary", artifact });
   const continuation = await until(() => f.requests.slice(requestsBeforeHandoff + 1).find((request) => request.model === "architecture" && JSON.stringify(request).includes("Continue the work recorded in the Drift handoff at `" + artifact + "`")), "fresh context did not send the profiled continuation prompt");
-  // The publishing run made exactly two requests (tool call, then its answer); no summarization request followed.
-  assert.equal(f.requests.indexOf(continuation) - requestsBeforeHandoff, 2, "a summarizer request ran between publication and continuation");
+  // The publishing run made exactly one request: drift_publish terminates it, so no answer and no summarizer follow.
+  assert.equal(f.requests.indexOf(continuation) - requestsBeforeHandoff, 1, "the publishing run continued, or a summarizer ran, before continuation");
   // Only the system prompt, the boundary note, Drift's lifecycle context and the continuation prompt remain.
   const conversation = (continuation.messages ?? []).filter((message: any) => message.role !== "system");
   const context = JSON.stringify(conversation);
@@ -811,14 +812,14 @@ test("actual Pi refuses adoption while a profiled continuation is queued, keeps 
   const initial = await f.readRecord(state.sessionId);
   const requestsBefore = f.requests.length;
   const mark = client.events.length;
-  // Publish a profiled handoff, then adopt in the next tool round, before the run settles and its fresh window starts.
+  // A publication alone terminates its run. Beside a read it does not, so the next round tries to adopt before the fresh window starts.
   await client.prompt("PUBLISH_AUTO_THEN_ADOPT ../worker");
   const [published] = toolEnds(client, "drift_publish", mark);
   assert.ok(published && !published.isError, JSON.stringify(published));
   const adoptions = toolEnds(client, "drift_worktree", mark);
   assert.equal(adoptions.length, 1);
   assert.ok(adoptions[0].isError, "adoption must be refused while a continuation is queued");
-  assert.match(JSON.stringify(adoptions[0]), /Continuation queued for drift\/runtime\/001-handoff-fixture\.md/);
+  assert.match(JSON.stringify(adoptions[0]), /Handoff drift\/runtime\/001-handoff-fixture\.md is published and a fresh context window is queued from it.*End your turn now/);
   const completed = await f.readRecord(state.sessionId);
   assert.equal(completed.worktree, undefined);
   assert.ok(!completed.history?.length);

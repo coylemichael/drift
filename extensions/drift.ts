@@ -203,7 +203,7 @@ export default function drift(pi: ExtensionAPI) {
     let changed = false;
     if (action === "adopt") {
       if (!path?.trim()) throw new Error("Provide the existing worktree root in path; relative paths resolve from Pi's fixed cwd");
-      if (pendingContinuationPath) throw new Error(`Continuation queued for ${pendingContinuationPath}; finish it before switching worktrees`);
+      if (pendingContinuationPath) throw new Error(`Handoff ${pendingContinuationPath} is published and a fresh context window is queued from it; it starts when this turn ends. End your turn now with no further tool calls; do not adopt, publish or continue the work here.`);
       changed = await records.adopt(resolve(ctx.cwd, path.trim()), (repo) => prepareSession(repo, ctx));
       await records.engage("worktree adoption");
       scopeReported = undefined;
@@ -379,7 +379,7 @@ export default function drift(pi: ExtensionAPI) {
           content = await records.contextQuiet();
         } else {
           content = await records.context();
-          content += `\nPi working directory (unchanged): ${ctx.cwd}. Before work in an assigned linked worktree, call drift_worktree adopt with its root as a separate tool call. Do not hand-write managed artifacts to bypass a destination or policy mismatch.`;
+          content += `\nPi working directory (unchanged): ${ctx.cwd}. Only when assigned a different linked worktree, call drift_worktree adopt with its root as a separate tool call; the current one needs no adoption. Do not hand-write managed artifacts to bypass a destination or policy mismatch.`;
           try {
             await records.effectiveRepo(); // A scope failure blocks publication; say so here rather than at the tool call.
           } catch (error) {
@@ -538,6 +538,8 @@ export default function drift(pi: ExtensionAPI) {
         return {
           content: [{ type: "text" as const, text: `Published ${receipt.path}\n${params.kind === "handoff" ? "Current work interval completed; its receipt is retained. Do not delete records or Pi session logs." : "Work interval remains active."}${continuation}` }],
           details: receipt,
+          // The continuation starts only once this run settles; end it here so the model cannot keep working.
+          terminate: autoContinue,
         };
       });
     },
