@@ -33,7 +33,8 @@ maps to in your profile map (see [Model profiles](#model-profiles)), or on
 the model in use when the handoff names no profile and no model is pinned, and
 follows the handoff's Next Steps. Internally the chain uses a `drift-continue`
 step that validates the handoff and selects the mapped model and thinking level
-before any inference; it is not a command you type.
+before any inference; it is not a command you type. Selecting first means no
+other model has to read the handoff just to decide which model does the work.
 
 `/drift-auto-continue on` and `/drift-auto-continue status` show which profile
 file is used and list each profile as `name → provider/model (thinking)`. The

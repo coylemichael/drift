@@ -179,20 +179,23 @@ thread you choose. `/drift` always uses the model you have selected; it never
 switches models or profiles.
 
 `/drift-auto-continue on` (stored as `"autoContinue": true` in the repo's
-`.drift.json`) turns on the automatic chain: after each handoff whose
-work remains, Drift starts a fresh context window from the handoff alone — no
-summary of the previous conversation and no transcript tail; the raw history
-stays in the Pi session file — on the model that the handoff's
-`next_session_profile` maps to in your profile map
-(`~/.pi/agent/drift-model-profiles.json`, optionally overridden by a trusted
-project's `.pi/drift-model-profiles.json`), on the model pinned with
-`/drift-model-override`, or on the model in use when the handoff names no
-profile. If a named profile, the model or
-authentication fails, the automatic step stops visibly and you can run
-`/drift <handoff>` to pick it up on your selected model. A `complete` handoff
-never continues. Whether or not the chain is on, Drift asks for a handoff once
-context passes 60% of the window. The profile file format, what `on`/`status` show and the
-current starting policy: [docs/continuation.md](docs/continuation.md).
+`.drift.json`) turns on the automatic chain. After each handoff whose work
+remains, Drift starts a fresh context window from the handoff alone. It carries
+no summary of the previous conversation and no transcript tail; the raw history
+stays in the Pi session file. The model for that window is, in order:
+
+1. the model pinned with `/drift-model-override`, if any;
+2. the model the handoff's `next_session_profile` maps to in your profile map
+   (`~/.pi/agent/drift-model-profiles.json`, optionally overridden by a trusted
+   project's `.pi/drift-model-profiles.json`);
+3. the model in use, when the handoff names no profile.
+
+If a named profile, the model or authentication fails, the automatic step stops
+visibly and you can run `/drift <handoff>` to pick it up on your selected model.
+A `complete` handoff never continues. Whether or not the chain is on, Drift asks
+for a handoff once context passes 60% of the window. The profile file format,
+what `on`/`status` show and the current starting policy:
+[docs/continuation.md](docs/continuation.md).
 
 ## User decision checkpoints
 
@@ -202,7 +205,10 @@ risk, external integration/cost, priority change, or reversal of an accepted
 decision. It gives the evidence, bounded options, and one clear question.
 
 Routine implementation choices remain with the agent and are recorded in the
-artifact. A pending user decision never triggers an automatic handoff. Drift asks and waits. Automatic continuation stops when the plan's acceptance criteria are met or at a step marked `Breakpoint:`. With auto-continue on, Drift warns once about a plan that has neither.
+artifact. A pending user decision never triggers an automatic handoff. Drift
+asks and waits. Automatic continuation stops when the plan's acceptance criteria
+are met or at a step marked `Breakpoint:`. With auto-continue on, Drift warns
+once about a plan that has neither.
 
 ## Picking up work: `/drift`
 
@@ -222,7 +228,11 @@ other hosts, run `python3 -I scripts/build-index.py /path/to/project/drift --jso
 from the Drift checkout (`py -3` on Windows).
 `/drift` always keeps the model you have selected; profiles apply only to automatic
 continuation. In Zed, `/drift` appears in the `/` menu
-as a Pi prompt command and needs no adapter patch. Other hosts follow the same
+as a Pi prompt command and needs no adapter patch. Drift's other commands
+(`/drift-auto-continue`, `/drift-model-override`, `/drift-track-artifacts`,
+`/drift-worktree`) are Pi extension commands; Zed only lists them with an
+adapter that advertises them ([docs/install.md](docs/install.md#zed-notes)).
+Other hosts follow the same
 pick-up rule from `SKILL.md` when you ask to "pick up" without naming an artifact.
 
 ## What Pi automates
@@ -272,5 +282,6 @@ installs (`PI_TEST_BINARY=pi npm test` runs them against the machine's own).
 record/publication safety and actual Pi RPC lifecycle, model selection, reload,
 resume, and compaction. Stale-skill regressions cover automatic runtime binding,
 explicit skill invocation, damaged-workflow recovery, disabled discovery, and a
-three-handoff chain that stops at completion. Set `PI_TEST_ACP=/path/to/pi-acp/dist/index.js` to also
+three-handoff chain whose unprofiled final handoff continues once on the model
+in use, then stops. Set `PI_TEST_ACP=/path/to/pi-acp/dist/index.js` to also
 run the installed ACP checks.
